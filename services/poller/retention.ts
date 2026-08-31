@@ -4,7 +4,7 @@
  * are what the timing tables are learned from, so they are kept far longer. Many small Parquet
  * files also make every read slower, so old ones are merged into daily files.
  */
-import { existsSync, readdirSync, statSync, unlinkSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import { REC_DIR, TABLES } from "./recorder";
@@ -67,6 +67,25 @@ export function cleanTemp(): number {
     }
   }
   return removed;
+}
+
+/**
+ * A merge that can safely be repeated. If a crash leaves the sources in place after the merged
+ * file has landed, the next pass reads both and must not double-count what it already has.
+ */
+function dedupe(table: (typeof TABLES)[number], read: string): string {
+  switch (table) {
+    case "ticks":
+      return `SELECT * FROM ${read} QUALIFY row_number() OVER (PARTITION BY feed, ts ORDER BY fetched_at) = 1`;
+    case "trips":
+      return `SELECT * FROM ${read} QUALIFY row_number() OVER (PARTITION BY trip_id ORDER BY last_seen DESC) = 1`;
+    case "weather":
+    case "calendar":
+      return `SELECT * FROM ${read} QUALIFY row_number() OVER (PARTITION BY hour ORDER BY hour) = 1`;
+    default:
+      // Events and observations are fully described by their columns.
+      return `SELECT DISTINCT * FROM ${read}`;
+  }
 }
 
 export function diskUsage(): { bytes: number; files: number; byTable: Record<string, number> } {
@@ -145,6 +164,14 @@ export function enforceBudget(
 /**
  * Merge the many small flush files for a table into one file per day. Only files older than
  * `compactAfterHours` are touched, so nothing being written right now is disturbed.
+ *
+ * Crash safety is the whole difficulty here. Deleting the sources before the merged file is in
+ * place opens a window where a process killed mid-compaction loses both: the sources are gone and
+ * only a partial `.tmp` remains, which the startup cleanup then removes as garbage. That is not
+ * hypothetical — it destroyed several hours of recordings during development. So the merged file
+ * is renamed into place first (rename is atomic) and only then are the sources removed. The worst
+ * a crash can now do is leave the sources behind to be merged a second time, which is why the
+ * merge also de-duplicates: repeating it has to be harmless.
  */
 export async function compact(conn: DuckDBConnection, policy: RetentionPolicy = DEFAULT_POLICY): Promise<Record<string, number>> {
   const merged: Record<string, number> = {};
@@ -162,15 +189,19 @@ export async function compact(conn: DuckDBConnection, policy: RetentionPolicy = 
       (byDay.get(day) ?? byDay.set(day, []).get(day)!).push(full);
     }
     for (const [day, files] of byDay) {
-      if (files.length < 2) continue;
       const target = join(dir, `daily-${day}.parquet`);
+      // Normally there is nothing to do until two files have accumulated. But a single leftover
+      // beside an existing daily file is the signature of a crash mid-compaction: its rows are
+      // already in the daily file, and skipping it would leave the duplicate there for good.
+      if (files.length < 2 && !existsSync(target)) continue;
       const sources = [...files, ...(existsSync(target) ? [target] : [])];
       const list = sources.map((f) => `'${f}'`).join(", ");
       const tmp = join(dir, `daily-${day}.tmp.parquet`);
-      await conn.run(`COPY (SELECT * FROM read_parquet([${list}], union_by_name=true)) TO '${tmp}' (FORMAT PARQUET, COMPRESSION ZSTD)`);
-      for (const f of sources) unlinkSync(f);
-      const { renameSync } = await import("node:fs");
+      const read = `read_parquet([${list}], union_by_name=true)`;
+      await conn.run(`COPY (${dedupe(table, read)}) TO '${tmp}' (FORMAT PARQUET, COMPRESSION ZSTD)`);
+      // Atomic: after this line the merged file is the file, whatever happens next.
       renameSync(tmp, target);
+      for (const f of sources) if (f !== target) unlinkSync(f);
       merged[table] = (merged[table] ?? 0) + files.length;
     }
   }
