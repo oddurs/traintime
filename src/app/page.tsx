@@ -1,69 +1,71 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import Panel from "@/components/Panel";
+import type { Network } from "@/lib/types";
+import { NetworkIndex } from "@/lib/network";
+import { useTrainStream, type StreamMode } from "@/lib/useTrainStream";
+import { asset } from "@/lib/basePath";
+
+const TrainMap = dynamic(() => import("@/components/TrainMap"), { ssr: false });
+
+function App({ index }: { index: NetworkIndex }) {
+  const [mode, setMode] = useState<StreamMode>({ kind: "live" });
+  const [visible, setVisible] = useState<Set<string>>(() => new Set(Object.keys(index.net.routes)));
+  const [showRibbons, setShowRibbons] = useState(true);
+  const { statesRef, trains, feeds, status, clock } = useTrainStream(mode, index);
+
+  const onToggle = useCallback((route: string, solo: boolean) => {
+    setVisible((v) => {
+      if (solo) return new Set([route]);
+      const next = new Set(v);
+      if (next.has(route)) next.delete(route);
+      else next.add(route);
+      return next;
+    });
+  }, []);
+  const onAll = useCallback((on: boolean) => setVisible(on ? new Set(Object.keys(index.net.routes)) : new Set()), [index]);
+
+  return (
+    <main className="app">
+      <TrainMap
+        index={index}
+        statesRef={statesRef}
+        clock={clock}
+        speed={status.live ? 1 : status.speed}
+        visibleRoutes={visible}
+        showRibbons={showRibbons}
+      />
+      <Panel
+        index={index}
+        trains={trains}
+        feeds={feeds}
+        status={status}
+        mode={mode}
+        onMode={setMode}
+        visible={visible}
+        onToggle={onToggle}
+        onAll={onAll}
+        showRibbons={showRibbons}
+        onRibbons={setShowRibbons}
+        clock={clock}
+      />
+    </main>
+  );
+}
 
 export default function Home() {
-  return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>
-            To get started, edit the{" "}
-            <code className={styles.code}>page.tsx</code> file.
-          </h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+  const [index, setIndex] = useState<NetworkIndex | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(asset("/data/network.json"))
+      .then((r) => r.json())
+      .then((n: Network) => setIndex(new NetworkIndex(n)))
+      .catch((e) => setError(`network.json: ${e.message}`));
+  }, []);
+
+  if (!index) return <div className="loading">{error ?? "loading network…"}</div>;
+  return <App index={index} />;
 }

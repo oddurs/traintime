@@ -1,0 +1,93 @@
+// The subset of GTFS-realtime the subway feeds use, plus the NYCT extension fields
+// (field number 1001 on FeedHeader, TripDescriptor and StopTimeUpdate). Fields we don't
+// use (alerts, etc.) are omitted; protobuf skips unknown fields.
+syntax = "proto2";
+package transit_realtime;
+
+message FeedMessage {
+  required FeedHeader header = 1;
+  repeated FeedEntity entity = 2;
+}
+
+message FeedHeader {
+  required string gtfs_realtime_version = 1;
+  optional uint64 timestamp = 3;
+  optional NyctFeedHeader nyct_feed_header = 1001;
+}
+
+message TripReplacementPeriod {
+  optional string route_id = 1;
+  optional TimeRange replacement_period = 2;
+}
+
+message TimeRange {
+  optional uint64 start = 1;
+  optional uint64 end = 2;
+}
+
+message NyctFeedHeader {
+  required string nyct_subway_version = 1;
+  repeated TripReplacementPeriod trip_replacement_period = 2;
+}
+
+message FeedEntity {
+  required string id = 1;
+  optional bool is_deleted = 2 [default = false];
+  optional TripUpdate trip_update = 3;
+  optional VehiclePosition vehicle = 4;
+}
+
+message TripUpdate {
+  required TripDescriptor trip = 1;
+  repeated StopTimeUpdate stop_time_update = 2;
+  optional uint64 timestamp = 4;
+  optional int32 delay = 5;
+
+  message StopTimeUpdate {
+    optional uint32 stop_sequence = 1;
+    optional string stop_id = 4;
+    optional StopTimeEvent arrival = 2;
+    optional StopTimeEvent departure = 3;
+    optional NyctStopTimeUpdate nyct_stop_time_update = 1001;
+  }
+}
+
+message StopTimeEvent {
+  optional int32 delay = 1;
+  optional int64 time = 2;
+  optional int32 uncertainty = 3;
+}
+
+message NyctStopTimeUpdate {
+  optional string scheduled_track = 1;
+  optional string actual_track = 2;
+}
+
+message TripDescriptor {
+  optional string trip_id = 1;
+  optional string route_id = 5;
+  optional string start_time = 2;
+  optional string start_date = 3;
+  optional NyctTripDescriptor nyct_trip_descriptor = 1001;
+}
+
+message NyctTripDescriptor {
+  optional string train_id = 1;
+  optional bool is_assigned = 2;
+  enum Direction { NORTH = 1; EAST = 2; SOUTH = 3; WEST = 4; }
+  optional Direction direction = 3;
+}
+
+message VehiclePosition {
+  optional TripDescriptor trip = 1;
+  optional uint32 current_stop_sequence = 3;
+  optional string stop_id = 7;
+  optional VehicleStopStatus current_status = 4 [default = IN_TRANSIT_TO];
+  optional uint64 timestamp = 5;
+
+  enum VehicleStopStatus {
+    INCOMING_AT = 0;
+    STOPPED_AT = 1;
+    IN_TRANSIT_TO = 2;
+  }
+}
