@@ -405,10 +405,21 @@ export class Tracker {
       // Pushing an arrival later is a real claim, so widen the spread with it rather than
       // pretending the new number is as certain as the old one.
       s.sigma = Math.max(s.sigma, Math.min(120, (earliest - s.eta) / 2));
+      const pushedBy = earliest - s.eta;
       s.eta = earliest;
       s.heldBehind = true;
       if (s.stops.length && parentOf(s.stops[0].id) === parentOf(s.nextStop)) {
         s.stops[0] = { ...s.stops[0], eta: earliest, sigma: s.sigma };
+        // Holding the first stop back without moving the rest would leave the second arriving
+        // before the first. A train held at one platform is late for everything after it, so the
+        // delay is carried down the run, decaying as later stops have room to make it up.
+        for (let i = 1; i < s.stops.length; i++) {
+          const carried = pushedBy * Math.max(0, 1 - i / 6);
+          const shifted = s.stops[i].eta + carried;
+          const ordered = Math.max(shifted, s.stops[i - 1].eta + 15);
+          if (ordered === s.stops[i].eta) break;
+          s.stops[i] = { ...s.stops[i], eta: ordered };
+        }
       }
     }
   }

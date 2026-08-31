@@ -136,3 +136,35 @@ test("a dwelling train never reports having arrived later than now", () => {
   const state = tracker.states(now + 30)[0];
   assert.ok((state.arrivedAt ?? 0) <= now + 30, `arrivedAt ${state.arrivedAt} must not exceed the clock ${now + 30}`);
 });
+
+test("holding a train behind another keeps its whole run in order", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  // Two trains on the same track heading for the same platform: the follower's own prediction
+  // has it arriving almost on top of the leader, which the clearance rule must push back.
+  const leader: TrainUpdate = {
+    id: "100000_1..S03R", route: "1", direction: "S", assigned: true, trainId: "01 A",
+    vehicle: { stopId: "120S", status: "STOPPED_AT", timestamp: now - 20 },
+    stops: [
+      { id: "120S", arrival: now, departure: now },
+      { id: "121S", arrival: now + 120, departure: now + 120 },
+    ],
+  };
+  const follower: TrainUpdate = {
+    id: "100100_1..S03R", route: "1", direction: "S", assigned: true, trainId: "01 B",
+    vehicle: { stopId: "120S", status: "IN_TRANSIT_TO", timestamp: now - 5 },
+    stops: [
+      { id: "120S", arrival: now + 10, departure: now + 10 },
+      { id: "121S", arrival: now + 40, departure: now + 40 },
+      { id: "122S", arrival: now + 70, departure: now + 70 },
+    ],
+  };
+  tracker.ingest(at(now, [leader, follower]));
+  const behind = tracker.states(now).find((s) => s.id === follower.id)!;
+  for (let i = 1; i < behind.stops.length; i++) {
+    assert.ok(
+      behind.stops[i].eta >= behind.stops[i - 1].eta,
+      `after being held, ${behind.stops[i].id} must not precede ${behind.stops[i - 1].id}`,
+    );
+  }
+});
