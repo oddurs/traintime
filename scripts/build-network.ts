@@ -8,6 +8,7 @@
  *                   keyed by canonical (sorted) station pair, sliced from shapes.txt
  *   prevOf        - per route: for each directional stop id, which stops precede it
  *   routeSegments - per route: which segment keys make up the line (for drawing)
+ *   stationRoutes - per parent station: which routes serve it
  *
  * Usage: npx tsx scripts/build-network.ts [--zip path/to/gtfs_subway.zip]
  */
@@ -184,6 +185,7 @@ async function main() {
   const segments: Record<string, LonLat[]> = {};
   const prevOf: Record<string, Record<string, Set<string>>> = {};
   const routeSegments: Record<string, Set<string>> = {};
+  const stationRoutes: Record<string, Set<string>> = {};
   const schedRunSum: Record<string, { sum: number; n: number }> = {};
   let straightFallbacks = 0;
 
@@ -212,6 +214,7 @@ async function main() {
 
     routeSegments[route] ??= new Set();
     prevOf[route] ??= {};
+    for (const st of stops) (stationRoutes[parent(st.stop)] ??= new Set()).add(route);
     for (let i = 1; i < proj.length; i++) {
       const a = proj[i - 1], b = proj[i];
       const pa = parent(a.stop), pb = parent(b.stop);
@@ -260,6 +263,12 @@ async function main() {
     ),
     routeSegments: Object.fromEntries(Object.entries(routeSegments).map(([r, s]) => [r, [...s]])),
     schedRun: Object.fromEntries(Object.entries(schedRunSum).map(([k, v]) => [k, Math.round(v.sum / v.n)])),
+    stationRoutes: Object.fromEntries(
+      Object.entries(stationRoutes).map(([k, v]) => [
+        k,
+        [...v].sort((a, b) => (routes[a]?.sortOrder ?? 999) - (routes[b]?.sortOrder ?? 999)),
+      ]),
+    ),
   };
   mkdirSync(join(ROOT, "public", "data"), { recursive: true });
   writeFileSync(OUT, JSON.stringify(out));

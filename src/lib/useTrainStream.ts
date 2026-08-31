@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { FeedStatus, StateDelta, StateSnapshot, TrainState } from "./types";
 import type { NetworkIndex } from "./network";
 import { BrowserSource } from "./browserSource";
-import { asset } from "./basePath";
+import { POLLER_URL } from "./basePath";
 
 export type StreamMode = { kind: "live" } | { kind: "replay"; from: number; to: number; speed: number };
 export type StreamSource = "poller" | "browser" | "none";
@@ -21,12 +21,14 @@ export interface StreamStatus {
   ended: boolean;
   error?: string;
   messages: number;
+  /** In-browser mode: the residual model finished loading in the background. */
+  modelReady: boolean;
 }
 
 /** Is a poller reachable through the site's /api proxy? (Never on the static deployment.) */
 async function pollerAvailable(): Promise<boolean> {
   try {
-    const r = await fetch(asset("/api/poller/health"), { cache: "no-store", signal: AbortSignal.timeout(3000) });
+    const r = await fetch(`${POLLER_URL}/health`, { cache: "no-store", signal: AbortSignal.timeout(3000) });
     if (!r.ok) return false;
     const j = (await r.json()) as { ok?: boolean };
     return j.ok === true;
@@ -37,16 +39,17 @@ async function pollerAvailable(): Promise<boolean> {
 
 /**
  * Subscribes to train states: the poller's live stream or a replay when a poller is reachable,
- * otherwise in-browser tracking straight from the MTA feeds. States live in a ref (mutated in
- * place for the animation loop) and are mirrored into `trains` state for React consumers.
+ * otherwise in-browser tracking straight from the MTA feeds (which needs the network, so it waits
+ * for it). States live in a ref (mutated in place for the animation loop) and are mirrored into
+ * `trains` state for React consumers.
  */
-export function useTrainStream(mode: StreamMode, index: NetworkIndex) {
+export function useTrainStream(mode: StreamMode, index: NetworkIndex | null) {
   const statesRef = useRef(new Map<string, TrainState>());
   const [trains, setTrains] = useState<TrainState[]>([]);
   const [feeds, setFeeds] = useState<FeedStatus[]>([]);
   const [status, setStatus] = useState<StreamStatus>({
     connected: false, live: mode.kind === "live", source: "none", clockTs: 0, wallAt: 0,
-    speed: mode.kind === "replay" ? mode.speed : 1, ended: false, messages: 0,
+    speed: mode.kind === "replay" ? mode.speed : 1, ended: false, messages: 0, modelReady: false,
   });
   const statusRef = useRef(status);
   useEffect(() => { statusRef.current = status; }, [status]);
@@ -74,7 +77,7 @@ export function useTrainStream(mode: StreamMode, index: NetworkIndex) {
       setStatus((s) => ({ ...s, connected: true, live, source, clockTs: ts, wallAt: performance.now(), error: undefined, messages: s.messages + 1 }));
 
     const connectPoller = () => {
-      const url = m.kind === "live" ? asset("/api/poller/stream") : asset(`/api/poller/replay?from=${m.from}&to=${m.to}&speed=${m.speed}`);
+      const url = m.kind === "live" ? `${POLLER_URL}/stream` : `${POLLER_URL}/replay?from=${m.from}&to=${m.to}&speed=${m.speed}`;
       es = new EventSource(url);
       es.onopen = () => {
         setTrains([]);
@@ -90,8 +93,10 @@ export function useTrainStream(mode: StreamMode, index: NetworkIndex) {
     };
 
     const connectBrowser = () => {
+      if (!index) return; // in-browser tracking needs the network; retried when it lands
       setStatus((s) => ({ ...s, source: "browser", live: true, speed: 1, ended: false, error: "fetching feeds…", clockTs: 0, messages: 0 }));
       local = new BrowserSource(index, (msg) => {
+        if (msg.kind === "timing") { setStatus((s) => ({ ...s, modelReady: msg.model })); return; }
         if (msg.kind === "snapshot") applySnapshot(msg.data); else applyDelta(msg.data);
         tick(msg.data.ts, true, "browser");
       });

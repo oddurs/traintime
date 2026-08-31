@@ -4,31 +4,54 @@ import { useEffect, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { TrainPosition, TrainState } from "@/lib/types";
-import { NetworkIndex, parentOf } from "@/lib/network";
+import type { Selection, TrainPosition, TrainState } from "@/lib/types";
+import { NetworkIndex } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
+import { addRouteIcons, chevronId } from "@/lib/icons";
 import { asset } from "@/lib/basePath";
+import { readHash } from "@/lib/urlState";
 
 const STYLE = "https://tiles.openfreemap.org/styles/dark";
 // MapLibre's module worker URL doesn't survive Next's bundler; serve a copy from /public instead
-// (see the prepare:maplibre script in package.json).
+// (see the prepare:assets script in package.json).
 maplibregl.setWorkerUrl(asset("/maplibre/maplibre-gl-worker.mjs"));
 
+const NYC: [number, number] = [-73.955, 40.735];
+/** Trains are re-uploaded to the GPU at this rate; motion is still integrated every frame. */
+const DRAW_HZ = 30;
+
+export interface View { lat: number; lon: number; zoom: number }
+
 interface Props {
-  index: NetworkIndex;
+  index: NetworkIndex | null;
   statesRef: React.RefObject<Map<string, TrainState>>;
+  positionsRef: React.RefObject<Map<string, TrainPosition>>;
   clock: () => number;
   speed: number;
-  visibleRoutes: Set<string>;
+  /** null means "every route". */
+  visibleRoutes: Set<string> | null;
   showRibbons: boolean;
+  selection: Selection;
+  onSelect: (s: Selection) => void;
+  follow: boolean;
+  onFollowEnd: () => void;
+  highlight: Set<string>;
+  /** Bump to (re-)frame the current selection. */
+  focusKey: number;
+  fitRoute: string | null;
+  onView?: (v: View) => void;
+  reducedMotion: boolean;
+  minimal?: boolean;
 }
+
+const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
 function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
   const net = index.net;
-  const routes = Object.values(net.routes).sort((a, b) => b.sortOrder - a.sortOrder);
   return {
     type: "FeatureCollection",
-    features: routes
+    features: Object.values(net.routes)
+      .sort((a, b) => b.sortOrder - a.sortOrder)
       .filter((r) => net.routeSegments[r.id]?.length)
       .map((r) => ({
         type: "Feature",
@@ -49,129 +72,125 @@ function stationPoints(index: NetworkIndex): GeoJSON.FeatureCollection {
   };
 }
 
-function trainFeatures(index: NetworkIndex, trains: TrainPosition[], visible: Set<string>, ribbons: boolean) {
-  const points: GeoJSON.Feature[] = [];
-  const bands: GeoJSON.Feature[] = [];
-  for (const t of trains) {
-    if (!visible.has(t.route)) continue;
-    const r = index.net.routes[t.route];
-    const color = r?.color ?? "#808183";
-    points.push({
-      type: "Feature",
-      id: t.id,
-      properties: {
-        id: t.id, route: t.route, label: t.route.replace(/X$/, "").slice(0, 2), color,
-        textColor: r?.textColor ?? "#ffffff", phase: t.phase, motion: t.motion, assigned: t.state.assigned,
-      },
-      geometry: { type: "Point", coordinates: [t.lon, t.lat] },
-    });
-    if (ribbons && t.ribbon && t.ribbon.length >= 2) {
-      bands.push({ type: "Feature", properties: { color }, geometry: { type: "LineString", coordinates: t.ribbon } });
-    }
-  }
-  return {
-    points: { type: "FeatureCollection", features: points } as GeoJSON.FeatureCollection,
-    bands: { type: "FeatureCollection", features: bands } as GeoJSON.FeatureCollection,
-  };
-}
+export default function TrainMap(props: Props) {
+  const { index, statesRef, positionsRef, clock, speed, visibleRoutes, showRibbons, selection, onSelect,
+    follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal } = props;
 
-function fmtIn(secs: number): string {
-  if (secs < 20) return "now";
-  const m = secs / 60;
-  return m < 1 ? `${Math.round(secs)} s` : `${m.toFixed(m < 10 ? 1 : 0)} min`;
-}
-
-function fmtClock(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" });
-}
-
-function popupHtml(index: NetworkIndex, t: TrainPosition, now: number): string {
-  const st = t.state;
-  const r = index.net.routes[t.route];
-  const dest = st.stops.length ? index.stationName(st.stops[st.stops.length - 1].id) : "?";
-  const next = index.stationName(st.nextStop);
-  let where: string;
-  if (st.phase === "dwelling") {
-    const dwelt = Math.max(0, Math.round(now - (st.arrivedAt ?? now)));
-    const leaves = st.expectedDeparture !== undefined ? st.expectedDeparture - now : undefined;
-    where = `At ${next} · ${dwelt} s${leaves !== undefined ? ` · leaves ${leaves > 5 ? `in ${Math.round(leaves)} s` : "now"}` : ""}`;
-  }
-  else if (st.phase === "unstarted") where = `Not yet departed · leaves ${next} ${fmtIn(st.eta - now)}`;
-  else {
-    const pct = t.length > 0 ? Math.round((100 * t.s) / t.length) : 0;
-    const kmh = Math.round(t.speed * 3.6);
-    const motion = t.motion === "holding" ? (st.leaderId ? "holding behind train ahead" : "holding at signal") : t.motion;
-    where = `${index.stationName(st.prevStop ?? "")} → ${next} · ${pct}% · ${kmh} km/h · ${motion} · arrives ${fmtIn(st.eta - now)}`;
-  }
-  const rows = st.stops
-    .slice(0, 6)
-    .map((s) => {
-      const drift = Math.round(s.eta - s.etaRaw);
-      const driftTxt = Math.abs(drift) >= 5 ? `<i>(MTA ${drift > 0 ? "+" : ""}${-drift} s)</i>` : "";
-      return `<li><span>${index.stationName(s.id)}</span><em>${fmtIn(s.eta - now)} <small>±${Math.round(s.sigma)} s</small>${driftTxt}</em></li>`;
-    })
-    .join("");
-  const meta = [
-    st.trainId ? `train ${st.trainId}` : st.id,
-    st.direction === "N" ? "northbound" : "southbound",
-    st.track ? `track ${st.track}` : "",
-    st.assigned ? "" : "unassigned",
-    st.departedAt ? `left ${fmtClock(st.departedAt)}${st.departedEstimated ? "~" : ""}` : "",
-  ].filter(Boolean).join(" · ");
-  return `
-    <div class="tt-popup">
-      <div class="tt-popup-head">
-        <span class="tt-bullet" style="background:${r?.color ?? "#808183"};color:${r?.textColor ?? "#fff"}">${t.route}</span>
-        <div><div class="tt-dest">to ${dest}</div><div class="tt-state">${where}</div></div>
-      </div>
-      <ul class="tt-stops">${rows}</ul>
-      <div class="tt-id">${meta}</div>
-    </div>`;
-}
-
-export default function TrainMap({ index, statesRef, clock, speed, visibleRoutes, showRibbons }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const kinRef = useRef<Kinematics | null>(null);
-  const visibleRef = useRef(visibleRoutes);
-  const ribbonsRef = useRef(showRibbons);
-  const clockRef = useRef(clock);
-  const speedRef = useRef(speed);
-  const latestRef = useRef<TrainPosition[]>([]);
-  const selectedRef = useRef<string | null>(null);
-  const popupRef = useRef<maplibregl.Popup | null>(null);
   const readyRef = useRef(false);
+  const layersRef = useRef(false);
 
-  useEffect(() => { visibleRef.current = visibleRoutes; }, [visibleRoutes]);
-  useEffect(() => { ribbonsRef.current = showRibbons; }, [showRibbons]);
-  useEffect(() => { clockRef.current = clock; }, [clock]);
-  useEffect(() => { speedRef.current = speed; }, [speed]);
+  // Live props the animation loop reads without re-subscribing.
+  const live = useRef({ visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd });
+  useEffect(() => {
+    live.current = { visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd };
+  }, [visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd]);
 
+  // --- map creation (once)
   useEffect(() => {
     if (!containerRef.current) return;
-    const kin = new Kinematics(index);
-    kinRef.current = kin;
-
+    // Shared links carry the camera in the hash; read it here so the map opens where it should.
+    const start = readHash().view;
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: STYLE,
-      center: [-73.955, 40.735],
-      zoom: 11.4,
+      center: start ? [start.lon, start.lat] : NYC,
+      zoom: start?.zoom ?? 11.4,
       minZoom: 9.5,
       maxZoom: 17,
       attributionControl: { compact: true },
     });
     mapRef.current = map;
     if (process.env.NODE_ENV !== "production") {
-      (window as unknown as { __tt?: unknown }).__tt = { map, kin, statesRef, index };
+      (window as unknown as { __tt?: unknown }).__tt = { map, statesRef, positionsRef };
     }
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+    if (!minimal) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
 
-    map.once("style.load", () => {
+    map.once("style.load", () => { readyRef.current = true; });
+    map.on("dragstart", () => { if (live.current.follow) live.current.onFollowEnd(); });
+    map.on("moveend", () => {
+      if (!onView) return;
+      const c = map.getCenter();
+      onView({ lat: c.lat, lon: c.lng, zoom: map.getZoom() });
+    });
+
+    let raf = 0;
+    let last = performance.now();
+    let lastDraw = 0;
+    const frame = (ts: number) => {
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min(0.25, (ts - last) / 1000);
+      last = ts;
+      const { index: idx, clock: now, speed: sp } = live.current;
+      if (!readyRef.current || !layersRef.current || !kinRef.current || !idx) return;
+      const t = now();
+      const trains = kinRef.current.step([...statesRef.current.values()], t, dt * sp);
+      const positions = positionsRef.current;
+      positions.clear();
+      for (const p of trains) positions.set(p.id, p);
+
+      if (ts - lastDraw < 1000 / DRAW_HZ) return;
+      lastDraw = ts;
+      const { visibleRoutes: vis, showRibbons: ribbons, selection: sel, highlight: hi, follow: fol } = live.current;
+      const points: GeoJSON.Feature[] = [];
+      const bands: GeoJSON.Feature[] = [];
+      for (const p of trains) {
+        if (vis && !vis.has(p.route)) continue;
+        const r = idx.net.routes[p.route];
+        const selected = sel.kind === "train" && sel.id === p.id;
+        const moving = p.phase === "moving" && p.speed > 0.6;
+        points.push({
+          type: "Feature",
+          properties: {
+            id: p.id, route: p.route, label: p.route.replace(/X$/, "").slice(0, 2),
+            color: r?.color ?? "#808183", textColor: r?.textColor ?? "#ffffff",
+            ghost: p.phase === "unstarted" || !p.state.assigned,
+            holding: p.motion === "holding", moving, bearing: Math.round(p.bearing),
+            chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
+          },
+          geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+        });
+        if (p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
+          bands.push({
+            type: "Feature",
+            properties: { color: selected ? "#ffffff" : (r?.color ?? "#808183") },
+            geometry: { type: "LineString", coordinates: p.ribbon },
+          });
+        }
+        if (fol && selected) map.setCenter([p.lon, p.lat]);
+      }
+      (map.getSource("trains") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: points });
+      (map.getSource("ribbons") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: bands });
+    };
+    raf = requestAnimationFrame(frame);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      map.remove();
+      mapRef.current = null;
+      readyRef.current = false;
+      layersRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- network-dependent layers, added as soon as the network arrives
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !index || layersRef.current) return;
+    const add = () => {
+      if (layersRef.current || !mapRef.current) return;
+      layersRef.current = true;
+      kinRef.current = new Kinematics(index);
+      addRouteIcons(map, index);
+
       map.addSource("routes", { type: "geojson", data: routeLines(index) });
       map.addSource("stations", { type: "geojson", data: stationPoints(index) });
-      map.addSource("ribbons", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addSource("trains", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addSource("ribbons", { type: "geojson", data: EMPTY });
+      map.addSource("trains", { type: "geojson", data: EMPTY });
+      map.addSource("focus", { type: "geojson", data: EMPTY });
 
       map.addLayer({
         id: "routes-casing", type: "line", source: "routes",
@@ -184,11 +203,18 @@ export default function TrainMap({ index, statesRef, clock, speed, visibleRoutes
         paint: { "line-color": ["get", "color"], "line-opacity": 0.9, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.4, 14, 4.5] },
       });
       map.addLayer({
-        id: "stations", type: "circle", source: "stations", minzoom: 11.5,
+        id: "focus-ring", type: "circle", source: "focus",
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11.5, 1.5, 14, 4, 16, 6],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 10, 14, 20],
+          "circle-color": "rgba(255,255,255,0.08)", "circle-stroke-color": "#fff", "circle-stroke-width": 2, "circle-stroke-opacity": 0.9,
+        },
+      });
+      map.addLayer({
+        id: "stations", type: "circle", source: "stations", minzoom: 11,
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.6, 14, 4, 16, 6],
           "circle-color": "#f2f2f2", "circle-stroke-color": "#111", "circle-stroke-width": 1,
-          "circle-opacity": ["interpolate", ["linear"], ["zoom"], 11.5, 0.5, 13, 1],
+          "circle-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.45, 13, 1],
         },
       });
       map.addLayer({
@@ -199,87 +225,128 @@ export default function TrainMap({ index, statesRef, clock, speed, visibleRoutes
       map.addLayer({
         id: "ribbons", type: "line", source: "ribbons",
         layout: { "line-cap": "round" },
-        paint: { "line-color": ["get", "color"], "line-opacity": 0.28, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 6, 14, 14], "line-blur": 2 },
+        paint: { "line-color": ["get", "color"], "line-opacity": 0.26, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 6, 14, 14], "line-blur": 2 },
+      });
+      map.addLayer({
+        id: "train-highlight", type: "circle", source: "trains",
+        filter: ["any", ["get", "highlighted"], ["get", "selected"]],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 9, 14, 16],
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-color": ["case", ["get", "selected"], "#ffffff", "#9fd0ff"],
+          "circle-stroke-width": ["case", ["get", "selected"], 2.5, 1.5],
+          "circle-stroke-opacity": 0.95,
+        },
+      });
+      map.addLayer({
+        id: "train-chevrons", type: "symbol", source: "trains",
+        filter: ["get", "moving"],
+        layout: {
+          "icon-image": ["get", "chevron"],
+          "icon-rotate": ["get", "bearing"],
+          "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true, "icon-ignore-placement": true,
+          "icon-size": ["interpolate", ["linear"], ["zoom"], 10, 0.42, 14, 0.85],
+        },
+        paint: { "icon-opacity": ["case", ["get", "ghost"], 0.35, 0.95] },
       });
       map.addLayer({
         id: "trains", type: "circle", source: "trains",
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 4.5, 14, 9],
           "circle-color": ["get", "color"],
-          "circle-opacity": ["case", ["get", "assigned"], 1, 0.45],
-          "circle-stroke-color": ["case", ["==", ["get", "motion"], "holding"], "#ffb454", "#fff"],
-          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 10, 1, 14, 2],
-          "circle-stroke-opacity": ["case", ["get", "assigned"], 1, 0.5],
+          "circle-opacity": ["case", ["get", "ghost"], 0.4, 1],
+          "circle-stroke-color": ["case", ["get", "holding"], "#ffb454", "#ffffff"],
+          // A zoom expression has to sit at the top level, so the per-feature choice goes inside it.
+          "circle-stroke-width": [
+            "interpolate", ["linear"], ["zoom"],
+            10, ["case", ["get", "holding"], 1.8, 1],
+            14, ["case", ["get", "holding"], 3, 2],
+          ],
+          "circle-stroke-opacity": ["case", ["get", "ghost"], 0.45, 1],
         },
       });
       map.addLayer({
         id: "train-labels", type: "symbol", source: "trains", minzoom: 11.5,
-        layout: { "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 8, 14, 11], "text-allow-overlap": true, "text-ignore-placement": true },
-        paint: { "text-color": ["get", "textColor"], "text-opacity": ["case", ["get", "assigned"], 1, 0.6] },
+        layout: {
+          "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 8, 14, 11],
+          "text-allow-overlap": true, "text-ignore-placement": true,
+        },
+        paint: { "text-color": ["get", "textColor"], "text-opacity": ["case", ["get", "ghost"], 0.55, 1] },
       });
 
-      map.on("mouseenter", "trains", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "trains", () => (map.getCanvas().style.cursor = ""));
+      const cursor = (on: boolean) => () => (map.getCanvas().style.cursor = on ? "pointer" : "");
+      for (const id of ["trains", "stations", "station-labels"]) {
+        map.on("mouseenter", id, cursor(true));
+        map.on("mouseleave", id, cursor(false));
+      }
       map.on("click", "trains", (e: MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const f = e.features?.[0];
-        if (!f) return;
-        selectedRef.current = String(f.properties?.id);
-        popupRef.current?.remove();
-        const t = latestRef.current.find((x) => x.id === selectedRef.current);
-        if (!t) return;
-        popupRef.current = new maplibregl.Popup({ closeButton: true, maxWidth: "320px", offset: 12 })
-          .setLngLat([t.lon, t.lat])
-          .setHTML(popupHtml(index, t, clockRef.current()))
-          .addTo(map);
-        popupRef.current.on("close", () => (selectedRef.current = null));
+        if (f) live.current.onSelect({ kind: "train", id: String(f.properties?.id) });
       });
-      readyRef.current = true;
-    });
-
-    let raf = 0;
-    let last = performance.now();
-    let lastPopupRefresh = 0;
-    const frame = (ts: number) => {
-      raf = requestAnimationFrame(frame);
-      const dtWall = Math.min(0.25, (ts - last) / 1000);
-      last = ts;
-      if (!readyRef.current || !kinRef.current) return;
-      const now = clockRef.current();
-      const trains = kinRef.current.step([...statesRef.current.values()], now, dtWall * speedRef.current);
-      latestRef.current = trains;
-      const { points, bands } = trainFeatures(index, trains, visibleRef.current, ribbonsRef.current);
-      (map.getSource("trains") as GeoJSONSource | undefined)?.setData(points);
-      (map.getSource("ribbons") as GeoJSONSource | undefined)?.setData(bands);
-      if (selectedRef.current && popupRef.current) {
-        const t = trains.find((x) => x.id === selectedRef.current);
-        if (t) {
-          popupRef.current.setLngLat([t.lon, t.lat]);
-          if (ts - lastPopupRefresh > 1000) {
-            popupRef.current.setHTML(popupHtml(index, t, now));
-            lastPopupRefresh = ts;
-          }
-        } else popupRef.current.remove();
-      }
+      const pickStation = (e: MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        if (map.queryRenderedFeatures(e.point, { layers: ["trains"] }).length) return;
+        const f = e.features?.[0];
+        if (f) live.current.onSelect({ kind: "station", id: String(f.properties?.id) });
+      };
+      map.on("click", "stations", pickStation);
+      map.on("click", "station-labels", pickStation);
+      map.on("click", (e) => {
+        const hits = map.queryRenderedFeatures(e.point, { layers: ["trains", "stations", "station-labels"] });
+        if (hits.length === 0) live.current.onSelect({ kind: "none" });
+      });
     };
-    raf = requestAnimationFrame(frame);
+    if (readyRef.current) add();
+    else map.once("style.load", add);
+  }, [index]);
 
-    return () => {
-      cancelAnimationFrame(raf);
-      map.remove();
-      mapRef.current = null;
-      readyRef.current = false;
-    };
-  }, [index, statesRef]);
-
+  // --- route visibility
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current) return;
-    const filter: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", [...visibleRoutes]]];
+    if (!map || !layersRef.current || !index) return;
+    const list = visibleRoutes ? [...visibleRoutes] : Object.keys(index.net.routes);
+    const filter: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
     map.setFilter("routes-line", filter);
     map.setFilter("routes-casing", filter);
-  }, [visibleRoutes]);
+  }, [visibleRoutes, index]);
+
+  // --- selection highlight and camera
+  const selId = selection.kind === "none" ? "" : selection.id;
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersRef.current || !index) return;
+    const focus = map.getSource("focus") as GeoJSONSource | undefined;
+    if (selection.kind === "station") {
+      const s = index.station(selection.id);
+      if (s) {
+        focus?.setData({ type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [s.lon, s.lat] } }] });
+        const opts = { center: [s.lon, s.lat] as [number, number], zoom: Math.max(map.getZoom(), 13.5) };
+        if (reducedMotion) map.jumpTo(opts); else map.flyTo({ ...opts, duration: 900, essential: true });
+      }
+      return;
+    }
+    focus?.setData(EMPTY);
+    if (selection.kind === "train") {
+      const p = positionsRef.current.get(selection.id);
+      if (p) {
+        const opts = { center: [p.lon, p.lat] as [number, number], zoom: Math.max(map.getZoom(), 13) };
+        if (reducedMotion) map.jumpTo(opts); else map.flyTo({ ...opts, duration: 900, essential: true });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selection.kind, selId, focusKey, index]);
+
+  // --- zoom to a soloed route
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersRef.current || !index || !fitRoute) return;
+    const keys = index.net.routeSegments[fitRoute] ?? [];
+    if (!keys.length) return;
+    const b = new maplibregl.LngLatBounds();
+    for (const k of keys) for (const p of index.net.segments[k]) b.extend(p as [number, number]);
+    map.fitBounds(b, { padding: { top: 60, bottom: 60, left: minimal ? 60 : 340, right: 60 }, duration: reducedMotion ? 0 : 900 });
+  }, [fitRoute, index, minimal, reducedMotion]);
 
   return <div ref={containerRef} className="map" />;
 }
-
-export { parentOf };

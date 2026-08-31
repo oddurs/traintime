@@ -1,24 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { FeedStatus, TrainState } from "@/lib/types";
+import { useMemo, useState } from "react";
+import type { FeedStatus, Selection, TrainPosition, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
+import type { AlertIndex } from "@/lib/alerts";
+import { routeStatus } from "@/lib/alerts";
 import type { StreamMode, StreamStatus } from "@/lib/useTrainStream";
-import { asset } from "@/lib/basePath";
+import { TrainTimeClient } from "@/lib/client";
+import { fmtAgo, fmtClockSec } from "@/lib/format";
+import { useStoredFlag } from "@/lib/hooks";
+import { BASE_PATH, POLLER_URL } from "@/lib/basePath";
+import Sheet from "./Sheet";
+import SearchBox from "./SearchBox";
+import StationBoard from "./StationBoard";
+import TrainDetail from "./TrainDetail";
+import RouteBullet from "./RouteBullet";
+import AlertList from "./AlertList";
+import Legend from "./Legend";
+import Timeline from "./Timeline";
+import LineHealth from "./LineHealth";
 
 interface Props {
   index: NetworkIndex;
   trains: TrainState[];
+  byId: Map<string, TrainState>;
+  positionsRef: React.RefObject<Map<string, TrainPosition>>;
   feeds: FeedStatus[];
   status: StreamStatus;
-  mode: StreamMode;
-  onMode: (m: StreamMode) => void;
-  visible: Set<string>;
+  now: number;
+  wallNow: number;
+  alerts: AlertIndex | null;
+  selection: Selection;
+  onSelect: (s: Selection) => void;
+  follow: boolean;
+  onFollow: (on: boolean) => void;
+  visible: Set<string> | null;
   onToggle: (route: string, solo: boolean) => void;
   onAll: (on: boolean) => void;
   showRibbons: boolean;
   onRibbons: (on: boolean) => void;
-  clock: () => number;
+  mode: StreamMode;
+  onMode: (m: StreamMode) => void;
+  mobile: boolean;
 }
 
 // Display grouping by trunk line, roughly following the official map.
@@ -27,145 +50,133 @@ const GROUPS: string[][] = [
   ["N", "Q", "R", "W"], ["G"], ["J", "Z"], ["L"], ["GS", "FS", "H", "SI"],
 ];
 
-interface TimingInfo { learned: boolean; model: boolean; tables?: { generatedAt: string; samples: { events: number; etaObs: number }; runTime: number; residual: number } | null }
-interface Recordings { from: number; to: number; ticks: number }
+export default function Panel(props: Props) {
+  const { index, trains, byId, positionsRef, feeds, status, now, wallNow, alerts, selection, onSelect,
+    follow, onFollow, visible, onToggle, onAll, showRibbons, onRibbons, mode, onMode, mobile } = props;
+  const [legendDismissed, setLegendDismissed] = useStoredFlag("tt.legend.dismissed", false);
+  const [showHistory, setShowHistory] = useState(false);
+  const client = useMemo(() => new TrainTimeClient(POLLER_URL), []);
 
-const nyClock = (ts: number) => new Date(ts * 1000).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" });
-const toLocalInput = (ts: number) => {
-  const d = new Date(ts * 1000);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const t of trains) c[t.route] = (c[t.route] ?? 0) + 1;
+    return c;
+  }, [trains]);
 
-export default function Panel({ index, trains, feeds, status, mode, onMode, visible, onToggle, onAll, showRibbons, onRibbons, clock }: Props) {
-  const [timing, setTiming] = useState<TimingInfo | null>(null);
-  const [recordings, setRecordings] = useState<Recordings | null>(null);
-  const [showReplay, setShowReplay] = useState(false);
-  const [from, setFrom] = useState("");
-  const [duration, setDuration] = useState(900);
-  const [speed, setSpeed] = useState(10);
-  const [now, setNow] = useState(0);
-  const [wall, setWall] = useState(0);
-
-  useEffect(() => {
-    const id = setInterval(() => { setNow(clock()); setWall(Date.now() / 1000); }, 500);
-    return () => clearInterval(id);
-  }, [clock]);
-
-  const source = status.source;
-  useEffect(() => {
-    if (source !== "poller") return;
-    const load = () => {
-      fetch(asset("/api/poller/timing")).then((r) => r.json()).then(setTiming).catch(() => setTiming(null));
-      fetch(asset("/api/poller/recordings")).then((r) => (r.ok ? r.json() : Promise.reject(r.status))).then((r: Recordings) => {
-        setRecordings(r);
-        setFrom((f) => f || toLocalInput(Math.max(r.from, r.to - 900)));
-      }).catch(() => setRecordings(null));
-    };
-    load();
-    const id = setInterval(load, 60_000);
-    return () => clearInterval(id);
-  }, [source]);
-
-  const counts: Record<string, number> = {};
-  for (const t of trains) counts[t.route] = (counts[t.route] ?? 0) + 1;
-  const total = trains.length;
-  const shown = trains.filter((t) => visible.has(t.route)).length;
+  const shown = visible ? trains.filter((t) => visible.has(t.route)).length : trains.length;
   const feedsDown = feeds.filter((f) => !f.ok);
-  const age = status.clockTs && wall ? Math.max(0, Math.round(wall - status.clockTs)) : null;
+  const age = status.clockTs && wallNow ? Math.max(0, Math.round(wallNow - status.clockTs)) : null;
   const healthy = status.connected && !feedsDown.length && (age === null || age < 60 || !status.live);
+  const delayAlerts = useMemo(() => (alerts?.all ?? []).filter((a) => a.category === "delay"), [alerts]);
+  const selectedTrain = selection.kind === "train" ? byId.get(selection.id) : undefined;
 
-  const pollerTiming = source === "poller" ? timing : null;
-  const play = () => {
-    const f = Math.floor(new Date(from).getTime() / 1000);
-    if (!Number.isFinite(f)) return;
-    onMode({ kind: "replay", from: f, to: f + duration, speed });
-  };
+  const header = (
+    <header className="panel-head">
+      <div className="title-row">
+        <h1><a href={`${BASE_PATH}/`} aria-label="traintime home">traintime</a></h1>
+        <span className={`mode ${status.live ? "live" : "replay"}`}>
+          {status.live ? "LIVE" : `REPLAY ${status.speed}×`}
+        </span>
+      </div>
+      <div className="status">
+        <span className={`dot ${healthy ? "ok" : "bad"}`} />
+        <span>
+          {status.connected || trains.length
+            ? `${shown === trains.length ? trains.length : `${shown} / ${trains.length}`} trains`
+            : (status.error ?? "connecting…")}
+          {status.live && age !== null ? ` · feed ${age < 3 ? "just now" : `${age}s ago`}` : ""}
+          {!status.live && status.clockTs ? ` · ${fmtClockSec(now)}${status.ended ? " · ended" : ""}` : ""}
+        </span>
+      </div>
+      {feedsDown.length > 0 && <div className="warn">feed down: {feedsDown.map((f) => f.id.replace("gtfs-", "")).join(", ")}</div>}
+    </header>
+  );
 
   return (
-    <aside className="panel">
-      <header className="panel-head">
-        <div className="title-row">
-          <h1>traintime</h1>
-          <span className={`mode ${status.live ? "live" : "replay"}`}>{status.live ? "LIVE" : `REPLAY ${status.speed}×`}</span>
-        </div>
-        <div className="status">
-          <span className={`dot ${healthy ? "ok" : "bad"}`} />
-          <span>
-            {status.connected || total ? `${shown === total ? total : `${shown} / ${total}`} trains` : (status.error ?? "connecting…")}
-            {status.live && age !== null ? ` · feed ${age < 2 ? "just now" : `${age}s ago`}` : ""}
-            {!status.live && status.clockTs ? ` · ${nyClock(now)}${status.ended ? " · ended" : ""}` : ""}
-          </span>
-        </div>
-        {feedsDown.length > 0 && <div className="warn">feed down: {feedsDown.map((f) => f.id.replace("gtfs-", "")).join(", ")}</div>}
-        {status.error && status.connected === false && total > 0 && <div className="warn">{status.error}</div>}
-      </header>
+    <Sheet mobile={mobile} raiseOn={selection.kind === "none" ? undefined : `${selection.kind}:${selection.id}`} header={header}>
+      <SearchBox index={index} onPick={(id) => onSelect({ kind: "station", id })} />
 
-      <div className="routes">
-        {GROUPS.map((group, gi) => (
-          <div className="group" key={gi}>
-            {group.filter((id) => index.net.routes[id]).map((id) => {
-              const r = index.net.routes[id];
-              const on = visible.has(id);
-              return (
-                <button
-                  key={id}
-                  className={`bullet ${on ? "on" : "off"}`}
-                  style={{ background: r.color, color: r.textColor }}
-                  title={`${r.name}${counts[id] ? ` · ${counts[id]} running` : ""} — click to toggle, shift-click to solo`}
-                  onClick={(e) => onToggle(id, e.shiftKey)}
-                >
-                  {id.replace(/X$/, "")}
-                  {id.endsWith("X") && <sup>x</sup>}
-                  {counts[id] ? <span className="count">{counts[id]}</span> : null}
-                </button>
-              );
-            })}
+      {selection.kind === "station" && (
+        <StationBoard
+          index={index} station={selection.id} trains={trains} now={now} alerts={alerts}
+          onSelect={onSelect} onClose={() => onSelect({ kind: "none" })}
+        />
+      )}
+
+      {selection.kind === "train" && selectedTrain && (
+        <TrainDetail
+          index={index} state={selectedTrain} positionsRef={positionsRef} byId={byId} now={now} alerts={alerts} following={follow} onFollow={onFollow}
+          onSelect={onSelect} onClose={() => onSelect({ kind: "none" })}
+        />
+      )}
+      {selection.kind === "train" && !selectedTrain && (
+        <p className="muted">That train has finished its run. <button className="link" onClick={() => onSelect({ kind: "none" })}>Back to the map</button></p>
+      )}
+
+      {selection.kind === "none" && (
+        <>
+          {!legendDismissed && <Legend onDismiss={() => setLegendDismissed(true)} />}
+
+          <div className="routes" role="group" aria-label="Show or hide routes">
+            {GROUPS.map((group, gi) => (
+              <div className="group" key={gi}>
+                {group.filter((id) => index.net.routes[id]).map((id) => {
+                  const on = !visible || visible.has(id);
+                  const alert = routeStatus(alerts, id);
+                  return (
+                    <RouteBullet
+                      key={id} index={index} route={id} size={30} dim={!on}
+                      title={`${index.net.routes[id].name}${counts[id] ? ` · ${counts[id]} running` : ""}${alert ? ` · ${alert.count} service alert${alert.count > 1 ? "s" : ""}` : ""} — click to toggle, shift-click to isolate`}
+                      onClick={(e) => onToggle(id, e.shiftKey)}
+                    >
+                      {counts[id] ? <span className="count">{counts[id]}</span> : null}
+                      {alert && <span className={`alert-pip ${alert.category}`} />}
+                    </RouteBullet>
+                  );
+                })}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
 
-      <div className="panel-row">
-        <button onClick={() => onAll(true)}>all</button>
-        <button onClick={() => onAll(false)}>none</button>
-        <label className="check"><input type="checkbox" checked={showRibbons} onChange={(e) => onRibbons(e.target.checked)} /> uncertainty</label>
-        {source === "poller" && <button className={`link ${showReplay ? "active" : ""}`} onClick={() => setShowReplay((s) => !s)}>replay</button>}
-      </div>
-
-      {showReplay && source === "poller" && (
-        <div className="replay">
-          <div className="replay-grid">
-            <label>from<input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
-            <label>for
-              <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
-                <option value={300}>5 min</option><option value={900}>15 min</option><option value={3600}>1 h</option><option value={10800}>3 h</option>
-              </select>
-            </label>
-            <label>speed
-              <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
-                {[1, 5, 10, 30, 60].map((s) => <option key={s} value={s}>{s}×</option>)}
-              </select>
-            </label>
-          </div>
           <div className="panel-row">
-            <button className="primary" onClick={play} disabled={!(source === "poller" && recordings?.ticks)}>play</button>
-            <button onClick={() => onMode({ kind: "live" })} disabled={mode.kind === "live"}>back to live</button>
-            <span className="hint">
-              {recordings?.ticks ? `recorded ${nyClock(recordings.from)} – ${nyClock(recordings.to)}` : "no recordings yet"}
-            </span>
+            <button onClick={() => onAll(true)}>all</button>
+            <button onClick={() => onAll(false)}>none</button>
+            <label className="check">
+              <input type="checkbox" checked={showRibbons} onChange={(e) => onRibbons(e.target.checked)} /> uncertainty
+            </label>
+            {status.source === "poller" && (
+              <button className={`link ${showHistory ? "active" : ""}`} onClick={() => setShowHistory((s) => !s)}>
+                history
+              </button>
+            )}
           </div>
-        </div>
+
+          {showHistory && status.source === "poller" && (
+            <section className="history">
+              <Timeline client={client} mode={mode} onMode={onMode} now={now} live={status.live} />
+              <LineHealth index={index} client={client} onSolo={(r) => onToggle(r, true)} />
+            </section>
+          )}
+
+          {delayAlerts.length > 0 && (
+            <section className="alerts-section">
+              <h3>Service changes <span className="muted">· {delayAlerts.length} active</span></h3>
+              <AlertList index={index} alerts={delayAlerts} limit={3} />
+            </section>
+          )}
+        </>
       )}
 
       <footer className="panel-foot">
         <span className="hint">
-          {source === "browser"
-            ? "tracking in this browser from the MTA feeds · learned timing snapshot"
-            : source === "poller"
-              ? `timing: ${pollerTiming ? (pollerTiming.learned ? `learned${pollerTiming.model ? " + model" : ""} · ${pollerTiming.tables?.samples.events.toLocaleString()} events` : "schedule defaults") : "…"}`
+          {status.source === "browser"
+            ? `tracking in this browser · timing learned offline${status.modelReady ? " + model" : ""}`
+            : status.source === "poller"
+              ? `poller · ${alerts ? `alerts ${fmtAgo(wallNow - alerts.fetchedAt)}` : "live feeds"}`
               : "connecting…"}
         </span>
+        <a className="hint link-a" href={`${BASE_PATH}/accuracy/`}>how accurate?</a>
       </footer>
-    </aside>
+    </Sheet>
   );
 }

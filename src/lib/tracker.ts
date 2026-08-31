@@ -220,7 +220,12 @@ export class Tracker {
     const head = u.stops[0];
     if (!head) return undefined;
     const v = u.vehicle;
-    const base = { id: u.id, route: u.route, direction: u.direction, trainId: u.trainId, assigned: u.assigned, updatedAt: m.changedAt };
+    const base = {
+      id: u.id, route: u.route, direction: u.direction, trainId: u.trainId, assigned: u.assigned,
+      // The predictions below are capped for the wire; the terminal comes from the full list.
+      destination: u.stops[u.stops.length - 1]?.id,
+      updatedAt: m.changedAt,
+    };
 
     // STOPPED_AT. Transit feeds: dwelling until the vehicle goes IN_TRANSIT_TO. Heartbeat feeds:
     // the departure is never reported, so the train leaves at arrival + typical dwell (sooner if
@@ -269,6 +274,7 @@ export class Tracker {
     }
 
     let prev = m.prevStop;
+    const inferred = !prev;
     if (!prev) {
       m.inferredPrev ??= this.timing.inferPrev(u.route, next.id, next.track, u.stops.slice(nextIdx).map((s) => s.id));
       prev = m.inferredPrev;
@@ -281,7 +287,7 @@ export class Tracker {
     }
     const { eta, sigma } = this.timing.adjustEta({ raw: next.arrival, now, route: u.route, prev, next: next.id, departedAt, hour, dow });
     return {
-      ...base, phase: "moving", prevStop: prev, departedAt, departedEstimated,
+      ...base, phase: "moving", prevStop: prev, departedAt, departedEstimated, prevInferred: inferred,
       nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
       runTime: prev ? this.timing.runTime(prev, next.id, hour) : undefined,
       stops: this.predictions(u, now, hour, dow, prev, nextIdx),

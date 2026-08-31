@@ -32,6 +32,8 @@ export interface Network {
   routeSegments: Record<string, string[]>;
   /** Scheduled run time in seconds keyed by canonical "A-B". */
   schedRun: Record<string, number>;
+  /** Parent station id -> routes that serve it, in official order. */
+  stationRoutes: Record<string, string[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,8 +101,10 @@ export interface TrainState {
   /** Directional id of the stop the train most recently left (moving) or is at (dwelling). */
   prevStop?: string;
   departedAt?: number;
-  /** True when departure time came from our poll clock rather than the feed. */
+  /** True when the departure time was modelled rather than reported by the feed. */
   departedEstimated?: boolean;
+  /** True when we guessed which stop the train came from (first sight mid-segment). */
+  prevInferred?: boolean;
   nextStop: string;
   /** Adjusted arrival time at nextStop. */
   eta: number;
@@ -108,6 +112,8 @@ export interface TrainState {
   /** 1-sigma uncertainty on eta, seconds. */
   sigma: number;
   track?: string;
+  /** Directional stop id of this run's last stop — the terminal, from the full feed list. */
+  destination?: string;
   arrivedAt?: number;
   expectedDeparture?: number;
   /** Train directly ahead on the same track (same segment, or dwelling at nextStop). */
@@ -134,6 +140,9 @@ export interface StateDelta {
 }
 
 export type Motion = "accelerating" | "cruising" | "braking" | "holding" | "stopped";
+
+/** What the panel is showing: nothing in particular, a station board, or one train. */
+export type Selection = { kind: "none" } | { kind: "station"; id: string } | { kind: "train"; id: string };
 
 export interface TrainPosition {
   id: string;

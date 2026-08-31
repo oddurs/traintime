@@ -8,7 +8,10 @@ import { Tracker } from "./tracker";
 import { FEEDS, fetchFeed, makeDecoder, type Decoder } from "./feed";
 import { asset } from "./basePath";
 
-export type SourceMessage = { kind: "snapshot"; data: StateSnapshot } | { kind: "delta"; data: StateDelta };
+export type SourceMessage =
+  | { kind: "snapshot"; data: StateSnapshot }
+  | { kind: "delta"; data: StateDelta }
+  | { kind: "timing"; model: boolean };
 
 /**
  * Runs the whole pipeline in the browser: fetches the MTA feeds directly (their CORS policy
@@ -26,20 +29,33 @@ export class BrowserSource {
 
   constructor(private readonly net: NetworkIndex | Network, private readonly onMessage: (m: SourceMessage) => void) {}
 
+  /**
+   * Start tracking as soon as the small files land: the schema and the learned tables are a few
+   * hundred KB, so trains appear within a second or two. The residual model is an order of
+   * magnitude larger, so it loads in the background and is swapped in when it arrives.
+   */
   async start() {
     const index = this.net instanceof NetworkIndex ? this.net : new NetworkIndex(this.net);
-    const [protoText, tables, model] = await Promise.all([
+    const [protoText, tables] = await Promise.all([
       fetch(asset("/data/nyct-subway.proto")).then((r) => r.text()),
       fetch(asset("/data/timing.json")).then((r) => (r.ok ? (r.json() as Promise<TimingTables>) : null)).catch(() => null),
-      fetch(asset("/data/eta-model.json")).then((r) => (r.ok ? (r.json() as Promise<GbmModel>) : null)).catch(() => null),
     ]);
     const root = protobuf.parse(protoText).root;
     this.decoder = makeDecoder(root.lookupType("transit_realtime.FeedMessage"));
-    this.timing = new Timing(index, tables, model);
+    this.timing = new Timing(index, tables, null);
     this.tracker = new Tracker(index, this.timing);
     if (this.stopped) return;
     for (const [i, f] of FEEDS.entries()) this.timers.push(setTimeout(() => this.poll(f), i * 250));
     this.timers.push(setInterval(() => this.tracker.expire(Math.floor(Date.now() / 1000)), 30_000) as unknown as ReturnType<typeof setTimeout>);
+
+    fetch(asset("/data/eta-model.json"))
+      .then((r) => (r.ok ? (r.json() as Promise<GbmModel>) : null))
+      .then((model) => {
+        if (this.stopped || !model) return;
+        this.timing.model = model;
+        this.onMessage({ kind: "timing", model: true });
+      })
+      .catch(() => {});
   }
 
   stop() {

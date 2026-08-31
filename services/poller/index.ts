@@ -12,11 +12,14 @@ import { FEEDS, fetchFeed, loadDecoder, makeTick } from "./feeds";
 import { Recorder } from "./recorder";
 import { PollerServer } from "./server";
 
+import { DATA_DIR } from "./recorder";
+
 const ROOT = join(import.meta.dirname, "..", "..");
-const PORT = Number(process.env.POLLER_PORT ?? 7118);
+// Railway and friends inject PORT; POLLER_PORT wins locally.
+const PORT = Number(process.env.POLLER_PORT ?? process.env.PORT ?? 7118);
 const FLUSH_EVERY = Number(process.env.FLUSH_EVERY_SEC ?? 300);
-const TIMING_PATH = join(ROOT, "data", "timing.json");
-const MODEL_PATH = join(ROOT, "data", "eta-model.json");
+const TIMING_PATH = join(DATA_DIR, "timing.json");
+const MODEL_PATH = join(DATA_DIR, "eta-model.json");
 // Committed snapshots, used until the learn/train scripts produce fresh ones.
 const TIMING_SNAPSHOT = join(ROOT, "public", "data", "timing.json");
 const MODEL_SNAPSHOT = join(ROOT, "public", "data", "eta-model.json");
@@ -39,7 +42,7 @@ async function main() {
     const m = loadJson<GbmModel>(MODEL_PATH);
     if (t) { timing.tables = t; timing.model = m; console.log(`[poller] timing reloaded (${t.generatedAt}${m ? ", model on" : ""})`); }
   };
-  try { watch(join(ROOT, "data"), (_e, f) => { if (f === "timing.json" || f === "eta-model.json") setTimeout(reload, 500); }); } catch {}
+  try { watch(DATA_DIR, (_e, f) => { if (f === "timing.json" || f === "eta-model.json") setTimeout(reload, 500); }); } catch {}
 
   const stats = { fetches: 0, errors: 0, fresh: 0, lastEvents: 0 };
   const server = new PollerServer({

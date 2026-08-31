@@ -19,7 +19,8 @@
     "rebuild-events": "tsx scripts/rebuild-events.ts",
     "learn": "tsx scripts/learn-timing.ts",
     "train-model": ".venv/bin/python scripts/train_eta_model.py",
-    "evaluate": "tsx scripts/evaluate.ts"
+    "evaluate": "tsx scripts/evaluate.ts",
+    "publish-accuracy": "tsx scripts/publish-accuracy.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",

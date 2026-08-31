@@ -5,7 +5,12 @@ import { join } from "node:path";
 import type { FeedTick } from "../../src/lib/types";
 import type { EtaObservation, StationEvent } from "../../src/lib/tracker";
 
-export const REC_DIR = join(import.meta.dirname, "..", "..", "data", "rec");
+/**
+ * Where recordings are written. On a platform with a mounted volume (Railway, Fly), point
+ * TRAINTIME_DATA_DIR at the mount — the container filesystem is otherwise ephemeral.
+ */
+export const DATA_DIR = process.env.TRAINTIME_DATA_DIR ?? join(import.meta.dirname, "..", "..", "data");
+export const REC_DIR = join(DATA_DIR, "rec");
 export const TABLES = ["ticks", "events", "eta_obs", "trips"] as const;
 
 const SCHEMA = `

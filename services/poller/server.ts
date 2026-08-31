@@ -10,14 +10,17 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { REC_DIR, parquetGlob } from "./recorder";
 
-/** FROM-clause over ticks on disk plus the in-memory buffer; skips the glob when no files exist yet. */
-function ticksSource(): string {
-  const dir = join(REC_DIR, "ticks");
+/** FROM-clause over a recorded table on disk plus the in-memory buffer, skipping an empty glob. */
+function source(table: "ticks" | "events" | "eta_obs", cols: string): string {
+  const dir = join(REC_DIR, table);
   const onDisk = existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".parquet"));
+  const mem = `SELECT ${cols} FROM ${table}`;
   return onDisk
-    ? `(SELECT feed, ts, fetched_at, raw FROM read_parquet('${parquetGlob("ticks")}', union_by_name=true) UNION ALL SELECT feed, ts, fetched_at, raw FROM ticks)`
-    : `(SELECT feed, ts, fetched_at, raw FROM ticks)`;
+    ? `(SELECT ${cols} FROM read_parquet('${parquetGlob(table)}', union_by_name=true) UNION ALL ${mem})`
+    : `(${mem})`;
 }
+
+const ticksSource = () => source("ticks", "feed, ts, fetched_at, raw");
 
 export interface ServerDeps {
   tracker: Tracker;
@@ -60,7 +63,7 @@ export class PollerServer {
 
   listen(port: number) {
     const server = createServer((req, res) => this.handle(req, res).catch((e) => json(res, { error: String(e) }, 500)));
-    server.listen(port, () => console.log(`[server] listening on http://localhost:${port}`));
+    server.listen(port, "0.0.0.0", () => console.log(`[server] listening on 0.0.0.0:${port}`));
     setInterval(() => { for (const c of this.clients) c.write(": ping\n\n"); }, 20_000).unref();
     return server;
   }
@@ -103,6 +106,10 @@ export class PollerServer {
         return this.replay(url, req, res);
       case "/recordings":
         return json(res, await this.recordings());
+      case "/density":
+        return json(res, await this.density(url));
+      case "/lines":
+        return json(res, await this.lines(url));
       default:
         return json(res, { error: "not found" }, 404);
     }
@@ -120,6 +127,59 @@ export class PollerServer {
         await new Promise((r) => setTimeout(r, 500));
       }
     }
+  }
+
+  /** Arrivals per time bucket, so a scrubber can show where the busy hours are. */
+  private async density(url: URL) {
+    const to = Number(url.searchParams.get("to") ?? Math.floor(Date.now() / 1000));
+    const from = Number(url.searchParams.get("from") ?? to - 86_400);
+    const buckets = Math.max(10, Math.min(600, Number(url.searchParams.get("buckets") ?? 120)));
+    const step = Math.max(1, Math.round((to - from) / buckets));
+    const rows = (await this.deps.conn().runAndReadAll(
+      `SELECT (ts - ${from}) // ${step} AS b, count(*) AS n
+       FROM ${source("events", "ts, kind, estimated")}
+       WHERE kind = 'arrive' AND NOT estimated AND ts BETWEEN ${from} AND ${to}
+       GROUP BY 1 ORDER BY 1`,
+    )).getRowObjectsJS() as { b: number; n: number }[];
+    const out = Array.from({ length: buckets }, (_, i) => ({ t: from + i * step, arrivals: 0 }));
+    for (const r of rows) if (out[Number(r.b)]) out[Number(r.b)].arrivals = Number(r.n);
+    return { from, to, step, buckets: out };
+  }
+
+  /** Per-route service quality over a window: how often trains come, and how long they sit. */
+  private async lines(url: URL) {
+    const to = Number(url.searchParams.get("to") ?? Math.floor(Date.now() / 1000));
+    const from = Number(url.searchParams.get("from") ?? to - 3600);
+    const ev = source("events", "ts, trip_id, route, direction, stop_id, kind, estimated");
+    const rows = (await this.deps.conn().runAndReadAll(
+      `WITH a AS (
+         SELECT route, stop_id, direction, ts::DOUBLE AS ts FROM ${ev}
+         WHERE kind = 'arrive' AND NOT estimated AND ts BETWEEN ${from} AND ${to}
+       ), gaps AS (
+         SELECT route, ts - lag(ts) OVER (PARTITION BY route, stop_id, direction ORDER BY ts) AS gap FROM a
+       ), d AS (
+         SELECT route, ts::DOUBLE AS ts, kind, trip_id, stop_id,
+                (lead(ts) OVER w)::DOUBLE AS nts, lead(kind) OVER w AS nk, lead(stop_id) OVER w AS ns
+         FROM ${ev} WHERE NOT estimated AND ts BETWEEN ${from} AND ${to}
+         WINDOW w AS (PARTITION BY trip_id ORDER BY ts, CASE kind WHEN 'arrive' THEN 0 ELSE 1 END)
+       )
+       SELECT a.route AS route,
+              count(*) AS arrivals,
+              (SELECT quantile_cont(gap, 0.5) FROM gaps g WHERE g.route = a.route AND gap BETWEEN 30 AND 3600) AS headway_p50,
+              (SELECT quantile_cont(gap, 0.9) FROM gaps g WHERE g.route = a.route AND gap BETWEEN 30 AND 3600) AS headway_p90,
+              (SELECT quantile_cont(nts - ts, 0.5) FROM d WHERE d.route = a.route AND d.kind = 'arrive' AND d.nk = 'depart' AND d.ns = d.stop_id AND nts - ts BETWEEN 5 AND 900) AS dwell_p50
+       FROM a GROUP BY a.route ORDER BY arrivals DESC`,
+    )).getRowObjectsJS() as { route: string; arrivals: number; headway_p50: number | null; headway_p90: number | null; dwell_p50: number | null }[];
+    return {
+      from, to,
+      lines: rows.map((r) => ({
+        route: r.route, arrivals: Number(r.arrivals),
+        headwayP50: r.headway_p50 === null ? null : Math.round(Number(r.headway_p50)),
+        headwayP90: r.headway_p90 === null ? null : Math.round(Number(r.headway_p90)),
+        dwellP50: r.dwell_p50 === null ? null : Math.round(Number(r.dwell_p50)),
+        etaBias: null,
+      })),
+    };
   }
 
   /**
