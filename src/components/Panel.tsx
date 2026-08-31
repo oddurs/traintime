@@ -126,9 +126,13 @@ export default function Panel(props: Props) {
         <p className="muted">That train has finished its run. <button className="link" onClick={() => onSelect({ kind: "none" })}>Back to the map</button></p>
       )}
 
+      {selection.kind === "none" && trains.length === 0 && (
+        <div className="skeleton" aria-hidden="true"><i /><i /><i /></div>
+      )}
+
       {selection.kind === "none" && (
         <>
-          {!legendDismissed && <Legend onDismiss={() => setLegendDismissed(true)} />}
+          {!legendDismissed && trains.length > 0 && <Legend onDismiss={() => setLegendDismissed(true)} />}
 
           <div className="routes" role="group" aria-label="Show or hide routes">
             {GROUPS.map((group, gi) => (
