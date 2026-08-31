@@ -72,7 +72,7 @@ Motion: 0 reversals and 0 jumps in 460 000 replayed train-seconds. Marker positi
 train really arrived: median 225 m short of the platform, which is what a ~25 s ETA error at
 subway speeds looks like. The learned tables are scored in-sample here; the boosted model's
 time-based holdout is 34.5 s vs the MTA's 37.2 s. Everything improves with more recording —
-see [docs/ROADMAP.md](docs/ROADMAP.md) for what's open.
+see [docs/ROADMAP.md](docs/ROADMAP.md) for what's open on accuracy and [docs/PRODUCT-ROADMAP.md](docs/PRODUCT-ROADMAP.md) for the product plan.
 
 ## Poller API
 
