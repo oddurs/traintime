@@ -5,7 +5,7 @@ import type { Selection, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
 import { arrivalsAt } from "@/lib/arrivals";
-import { directionLabel, fmtMin, etaProvenance } from "@/lib/format";
+import { directionLabel, fmtMin } from "@/lib/format";
 import RouteBullet from "./RouteBullet";
 import AlertList from "./AlertList";
 
@@ -56,27 +56,27 @@ export default function StationBoard({ index, station, trains, now, alerts, onSe
 
       {groups.map((g) => (
         <div className="board-group" key={g.direction}>
-          <h3>
-            {directionLabel(g.direction)} <span className="muted">· toward {g.label}</span>
-          </h3>
+          <h3>{directionLabel(g.direction)}</h3>
+          <span className="board-toward">toward {g.label}</span>
           <ul className="arrivals">
             {g.arrivals.map((a) => {
               const secs = a.eta - now;
+              const here = a.atPlatform || secs < 30;
               return (
                 <li key={a.id}>
                   <button onClick={() => onSelect({ kind: "train", id: a.id })} title="Show this train on the map">
-                    <RouteBullet index={index} route={a.route} size={22} />
+                    <RouteBullet index={index} route={a.route} size={26} />
                     <span className="arr-dest">
-                      {index.stationName(a.destination)}
+                      <b>{index.stationName(a.destination)}</b>
                       <em>
                         {a.atPlatform
-                          ? "at the platform now"
-                          : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`} · ${etaProvenance(a.eta, a.etaRaw, a.sigma)}`}
+                          ? "at the platform"
+                          : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`}
                       </em>
                     </span>
-                    <span className={`arr-eta ${a.atPlatform || secs < 30 ? "here" : ""}`}>
-                      {a.atPlatform ? "here" : fmtMin(secs)}
-                      {!a.atPlatform && secs >= 30 && <i>min</i>}
+                    <span className={`arr-eta ${here ? "here" : ""}`}>
+                      <b>{here ? "now" : fmtMin(secs)}</b>
+                      {!here && <i>min</i>}
                     </span>
                   </button>
                 </li>

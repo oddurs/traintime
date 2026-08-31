@@ -210,11 +210,14 @@ export default function TrainMap(props: Props) {
         },
       });
       map.addLayer({
-        id: "stations", type: "circle", source: "stations", minzoom: 11,
+        id: "stations", type: "circle", source: "stations", minzoom: 12,
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 11, 1.6, 14, 4, 16, 6],
-          "circle-color": "#f2f2f2", "circle-stroke-color": "#111", "circle-stroke-width": 1,
-          "circle-opacity": ["interpolate", ["linear"], ["zoom"], 11, 0.45, 13, 1],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 1.4, 14, 2.8, 16, 4.5],
+          "circle-color": "#0b0b0d",
+          "circle-stroke-color": "#c9c9d2",
+          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 12, 1, 16, 1.6],
+          "circle-opacity": 1,
+          "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.5, 14, 0.9],
         },
       });
       map.addLayer({
@@ -223,9 +226,14 @@ export default function TrainMap(props: Props) {
         paint: { "text-color": "#cfcfcf", "text-halo-color": "#000", "text-halo-width": 1.2 },
       });
       map.addLayer({
-        id: "ribbons", type: "line", source: "ribbons",
+        id: "ribbons", type: "line", source: "ribbons", minzoom: 12.5,
         layout: { "line-cap": "round" },
-        paint: { "line-color": ["get", "color"], "line-opacity": 0.26, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 6, 14, 14], "line-blur": 2 },
+        paint: {
+          "line-color": ["get", "color"],
+          "line-opacity": ["interpolate", ["linear"], ["zoom"], 12.5, 0, 13.5, 0.3],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 12.5, 8, 16, 18],
+          "line-blur": 3,
+        },
       });
       map.addLayer({
         id: "train-highlight", type: "circle", source: "trains",

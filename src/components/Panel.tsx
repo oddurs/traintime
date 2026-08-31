@@ -160,7 +160,7 @@ export default function Panel(props: Props) {
 
           {delayAlerts.length > 0 && (
             <section className="alerts-section">
-              <h3>Service changes <span className="muted">· {delayAlerts.length} active</span></h3>
+              <h3 className="section-title">Service changes · {delayAlerts.length} active</h3>
               <AlertList index={index} alerts={delayAlerts} limit={3} />
             </section>
           )}
