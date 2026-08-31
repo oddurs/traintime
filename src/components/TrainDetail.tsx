@@ -32,18 +32,19 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
     return () => clearInterval(id);
   }, [positionsRef, state.id]);
 
-  const dest = index.stationName(state.destination ?? state.stops[state.stops.length - 1]?.id ?? state.nextStop);
+  const terminal = state.destination ?? state.stops[state.stops.length - 1]?.id;
+  const dest = terminal && index.station(terminal) ? index.stationName(terminal) : null;
   const prov = provenance(index, state, now);
   const hold = position ? holdReason(index, position, byId) : null;
   const routeAlerts = useMemo(() => (alerts?.byRoute.get(state.route) ?? []).filter((a) => a.category === "delay"), [alerts, state.route]);
   const pct = position && position.length > 0 ? Math.round((100 * position.s) / position.length) : null;
 
   return (
-    <section className="detail" aria-label={`${state.route} train to ${dest}`}>
+    <section className="detail" aria-label={dest ? `${state.route} train to ${dest}` : `${state.route} train`}>
       <header className="detail-head">
         <RouteBullet index={index} route={state.route} size={30} />
         <div className="detail-title">
-          <h2>to {dest}</h2>
+          <h2>{dest ? `to ${dest}` : `${state.route} train`}</h2>
           <div className="muted">
             {state.trainId ?? state.id}
             {state.track ? ` · track ${state.track}` : ""}

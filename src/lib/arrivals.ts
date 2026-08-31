@@ -49,7 +49,8 @@ export function arrivalsAt(
     // Neither a train that has not started nor one the feed has stopped updating belongs on a
     // board: both would be presented as something a rider could catch.
     if (st.phase === "unstarted" || st.stale) continue;
-    const dest = st.destination ?? (st.stops.length ? st.stops[st.stops.length - 1].id : st.nextStop);
+    // Fall back to where it is heading next if the run's end is not a nameable station.
+    const dest = st.destination ?? st.nextStop;
     if (st.phase === "dwelling" && target.has(parentOf(st.nextStop))) {
       let destEta: number | undefined;
       if (to) {

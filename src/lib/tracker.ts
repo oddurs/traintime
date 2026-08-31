@@ -74,11 +74,13 @@ const ETA_OBS_STOPS = 3;
  */
 const CLEARANCE_S = 40;
 /**
- * The realtime feed sometimes names stops that are in no published schedule — yard tracks and
- * supplement-only ids such as X22 and H19. There is no geometry and no name for them, so showing
- * one to a rider means showing a raw id where a station should be.
+ * When to stop believing in a train. Two ways it can happen: nothing about its state changes for
+ * a quarter of an hour, or it sits at a platform far longer than any real layover. One had been
+ * "at a platform" for 223 minutes while its record kept twitching just enough to look alive,
+ * which is why the second rule exists as well as the first.
  */
-const UNKNOWN_STOP_LIMIT = 900;
+const STALE_AFTER_S = 900;
+const MAX_DWELL_S = 1800;
 
 const nyTime = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false, weekday: "short" });
 const DOW: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -143,9 +145,10 @@ export class Tracker {
         };
         this.mem.set(u.id, m);
       } else if (v && (v.stopId !== m.stopId || v.status !== m.status)) {
-        // A vehicle timestamp from the future is a feed error, not information; taking it at face
-        // value produces trains that "arrived" after the clock we are drawing them at.
-        if (v.timestamp !== undefined && v.timestamp > tick.ts + 60) v.timestamp = tick.ts;
+        // A wildly future timestamp is a feed error. A slightly future one is not: the lettered
+        // lines deliberately push this value ahead as their own expected-departure estimate, and
+        // the departure model depends on that, so only the implausible cases are corrected here.
+        if (v.timestamp !== undefined && v.timestamp > tick.ts + 300) v.timestamp = tick.ts;
         const ts = v.timestamp ?? tick.ts;
         const base = { feedTs: tick.ts, tripId: u.id, route: u.route, direction: u.direction };
         // Left the stop we were at or heading to. Departures are observed only when the vehicle
@@ -265,7 +268,11 @@ export class Tracker {
     // The feed keeps publishing some trains long after they stop doing anything — one had been
     // "at a platform" for over three hours. It is still data, but it is not a running train, and
     // presenting it as one is worse than admitting we have lost track of it.
-    for (const st of out) if (now - st.updatedAt > UNKNOWN_STOP_LIMIT) st.stale = true;
+    for (const st of out) {
+      const unchanged = now - st.updatedAt > STALE_AFTER_S;
+      const parked = st.phase === "dwelling" && st.arrivedAt !== undefined && now - st.arrivedAt > MAX_DWELL_S;
+      if (unchanged || parked) st.stale = true;
+    }
     return out;
   }
 
@@ -277,8 +284,10 @@ export class Tracker {
     const base = {
       id: u.id, route: u.route, direction: u.direction, trainId: u.trainId, assigned: u.assigned,
       // The predictions below are capped for the wire; the terminal comes from the full list —
-      // the last stop we can actually name, since the feed's tail is sometimes a yard track.
-      destination: [...u.stops].reverse().find((x) => this.net.station(x.id))?.id ?? u.stops[u.stops.length - 1]?.id,
+      // the last stop we can actually name, since the feed's tail is sometimes a yard track. If
+      // none of them are nameable the honest answer is that we do not know where it finishes,
+      // rather than putting an internal id where a station name belongs.
+      destination: [...u.stops].reverse().find((x) => this.net.station(x.id))?.id,
       updatedAt: m.changedAt,
     };
 
@@ -287,7 +296,9 @@ export class Tracker {
     // the trip update has already dropped the stop) and is then modelled as moving.
     if (m.status === "STOPPED_AT" && m.stopId && this.net.station(m.stopId)) {
       const at = m.stopId;
-      const arrivedAt = m.arrivedAt ?? m.vehicleTs ?? now;
+      // Whatever the feed says, a train cannot have arrived later than the moment being drawn:
+      // "arrived in 30 seconds" is not a thing anyone can act on.
+      const arrivedAt = Math.min(m.arrivedAt ?? m.vehicleTs ?? now, now);
       const atHead = parentOf(head.id) === parentOf(at);
       const nextIdx = u.stops.findIndex((s) => parentOf(s.id) !== parentOf(at));
       const next = nextIdx >= 0 ? u.stops[nextIdx] : undefined;

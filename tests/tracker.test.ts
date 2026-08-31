@@ -105,3 +105,34 @@ test("a vehicle timestamp from the future is not taken at face value", () => {
   const state = tracker.states(now + 30)[0];
   assert.ok((state.arrivedAt ?? 0) <= now + 35, `arrivedAt ${state.arrivedAt} must not be ahead of the clock`);
 });
+
+test("a train parked at a platform far beyond any layover is flagged, even if its record twitches", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  // Arrives, then sits. Each tick changes its onward predictions slightly, so the record keeps
+  // looking alive — which is exactly how one train stayed "at a platform" for 223 minutes.
+  const parked = (t: number): TrainUpdate => oneTrain(now, {
+    vehicle: { stopId: "119S", status: "STOPPED_AT", timestamp: now },
+    stops: [
+      { id: "119S", arrival: now, departure: now },
+      { id: "120S", arrival: t + 300, departure: t + 300 },
+      { id: "121S", arrival: t + 420, departure: t + 420 },
+    ],
+  });
+  tracker.ingest(at(now, [parked(now)]));
+  assert.equal(tracker.states(now)[0].stale, undefined, "a train that just arrived is not stale");
+  for (let i = 1; i <= 45; i++) tracker.ingest(at(now + i * 60, [parked(now + i * 60)]));
+  assert.equal(tracker.states(now + 2700)[0].stale, true, "45 minutes at one platform is not a running train");
+});
+
+test("a dwelling train never reports having arrived later than now", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  tracker.ingest(at(now, [oneTrain(now)]));
+  // The lettered lines push this value ahead deliberately; it must not surface as a future arrival.
+  tracker.ingest(at(now + 30, [oneTrain(now, {
+    vehicle: { stopId: "119S", status: "STOPPED_AT", timestamp: now + 120 },
+  })]));
+  const state = tracker.states(now + 30)[0];
+  assert.ok((state.arrivedAt ?? 0) <= now + 30, `arrivedAt ${state.arrivedAt} must not exceed the clock ${now + 30}`);
+});
