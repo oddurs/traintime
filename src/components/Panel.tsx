@@ -42,6 +42,10 @@ interface Props {
   mode: StreamMode;
   onMode: (m: StreamMode) => void;
   mobile: boolean;
+  nearby: boolean;
+  onNearby: () => void;
+  locating: boolean;
+  distance?: number;
 }
 
 // Display grouping by trunk line, roughly following the official map.
@@ -52,7 +56,8 @@ const GROUPS: string[][] = [
 
 export default function Panel(props: Props) {
   const { index, trains, byId, positionsRef, feeds, status, now, wallNow, alerts, selection, onSelect,
-    follow, onFollow, visible, onToggle, onAll, showRibbons, onRibbons, mode, onMode, mobile } = props;
+    follow, onFollow, visible, onToggle, onAll, showRibbons, onRibbons, mode, onMode, mobile,
+    nearby, onNearby, locating, distance } = props;
   const [legendDismissed, setLegendDismissed] = useStoredFlag("tt.legend.dismissed", false);
   const [showHistory, setShowHistory] = useState(false);
   const client = useMemo(() => new TrainTimeClient(POLLER_URL), []);
@@ -94,11 +99,19 @@ export default function Panel(props: Props) {
 
   return (
     <Sheet mobile={mobile} raiseOn={selection.kind === "none" ? undefined : `${selection.kind}:${selection.id}`} header={header}>
-      <SearchBox index={index} onPick={(id) => onSelect({ kind: "station", id })} />
+      <SearchBox
+        index={index}
+        onPick={(id) => onSelect({ kind: "station", id })}
+        onNearby={onNearby}
+        nearby={nearby}
+        locating={locating}
+      />
 
       {selection.kind === "station" && (
         <StationBoard
           index={index} station={selection.id} trains={trains} now={now} alerts={alerts}
+          distance={nearby ? distance : undefined}
+          stale={status.live && !status.connected && status.clockTs ? wallNow - status.clockTs : undefined}
           onSelect={onSelect} onClose={() => onSelect({ kind: "none" })}
         />
       )}

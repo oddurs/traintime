@@ -8,6 +8,8 @@ import { NetworkIndex } from "@/lib/network";
 import { useTrainStream, type StreamMode } from "@/lib/useTrainStream";
 import { useIsMobile, useReducedMotion, useTicker } from "@/lib/hooks";
 import { fetchAlerts, type AlertIndex } from "@/lib/alerts";
+import { useGeolocation, useWakeLock } from "@/lib/geolocation";
+import { nearestStations } from "@/lib/arrivals";
 import { readHash, writeHash } from "@/lib/urlState";
 import { asset } from "@/lib/basePath";
 import type { View } from "@/components/TrainMap";
@@ -27,6 +29,7 @@ function App({ index }: { index: NetworkIndex | null }) {
   const [alerts, setAlerts] = useState<AlertIndex | null>(null);
   const [view, setView] = useState<View | undefined>(undefined);
   const [hydrated, setHydrated] = useState(false);
+  const [nearby, setNearby] = useState(false);
   const positionsRef = useRef(new Map<string, TrainPosition>());
 
   // Restore the state a shared link carries, once, before we start writing the hash back.
@@ -43,6 +46,8 @@ function App({ index }: { index: NetworkIndex | null }) {
   }, []);
 
   const { statesRef, trains, feeds, status, clock } = useTrainStream(mode, index);
+  const geo = useGeolocation(nearby);
+  useWakeLock(follow);
   const mobile = useIsMobile();
   const reducedMotion = useReducedMotion();
   const now = useTicker(clock, 2);
@@ -81,9 +86,26 @@ function App({ index }: { index: NetworkIndex | null }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [follow]);
 
+  // Following the viewer's location: the nearest station's board is what someone standing on a
+  // platform actually wants. Any deliberate choice takes over and stops the following.
+  const nearest = useMemo(
+    () => (nearby && index && geo.lat !== undefined && geo.lon !== undefined
+      ? nearestStations(index, geo.lat, geo.lon, 1)[0]
+      : undefined),
+    [nearby, index, geo.lat, geo.lon],
+  );
+  useEffect(() => {
+    if (!nearest) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- responds to the device's position, an external signal */
+    setSelection((cur) => (cur.kind === "station" && cur.id === nearest.id ? cur : { kind: "station", id: nearest.id }));
+    setFocusKey((k) => k + 1);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [nearest]);
+
   const select = useCallback((s: Selection) => {
     setSelection(s);
     setFollow(false);
+    setNearby(false);
     setFocusKey((k) => k + 1);
   }, []);
 
@@ -144,6 +166,8 @@ function App({ index }: { index: NetworkIndex | null }) {
           visible={visible} onToggle={onToggle} onAll={onAll}
           showRibbons={showRibbons} onRibbons={setShowRibbons}
           mode={mode} onMode={setMode} mobile={mobile}
+          nearby={nearby} onNearby={() => setNearby((n) => !n)}
+          locating={geo.status === "asking"} distance={nearest?.meters}
         />
       )}
       {!index && <div className="booting">loading the network…</div>}

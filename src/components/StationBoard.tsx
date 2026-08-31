@@ -15,15 +15,28 @@ interface Props {
   trains: TrainState[];
   now: number;
   alerts: AlertIndex | null;
+  /** Metres from the viewer, when their location is known. */
+  distance?: number;
+  stale?: number;
   onSelect: (s: Selection) => void;
   onClose: () => void;
+}
+
+/** How a person would say it out loud, for a screen reader. */
+function spoken(index: NetworkIndex, route: string, dest: string, secs: number, atPlatform: boolean, sigma: number): string {
+  const when = atPlatform
+    ? "at the platform now"
+    : secs < 45
+      ? "arriving now"
+      : `in ${Math.round(secs / 60)} minute${Math.round(secs / 60) === 1 ? "" : "s"}${sigma ? `, give or take ${Math.round(sigma)} seconds` : ""}`;
+  return `${route} train to ${index.stationName(dest)}, ${when}`;
 }
 
 /**
  * The arrivals board for one station, computed from the same train states the map draws —
  * so what it says and what you see can never disagree.
  */
-export default function StationBoard({ index, station, trains, now, alerts, onSelect, onClose }: Props) {
+export default function StationBoard({ index, station, trains, now, alerts, distance, stale, onSelect, onClose }: Props) {
   const groups = useMemo(() => arrivalsAt(index, trains, station), [index, trains, station]);
   const st = index.station(station);
   const routes = useMemo(() => index.net.stationRoutes[station] ?? [], [index, station]);
@@ -43,6 +56,12 @@ export default function StationBoard({ index, station, trains, now, alerts, onSe
       <header className="board-head">
         <div>
           <h2>{st?.name ?? station}</h2>
+          {distance !== undefined && (
+            <div className="board-distance">
+              {distance < 1000 ? `${Math.round(distance)} m away` : `${(distance / 1000).toFixed(1)} km away`}
+            </div>
+          )}
+          {stale !== undefined && <div className="board-stale">last seen {Math.round(stale)} s ago · reconnecting</div>}
           <div className="board-routes">
             {routes.map((r) => <RouteBullet key={r} index={index} route={r} size={18} />)}
           </div>
@@ -64,7 +83,11 @@ export default function StationBoard({ index, station, trains, now, alerts, onSe
               const here = a.atPlatform || secs < 30;
               return (
                 <li key={a.id}>
-                  <button onClick={() => onSelect({ kind: "train", id: a.id })} title="Show this train on the map">
+                  <button
+                    onClick={() => onSelect({ kind: "train", id: a.id })}
+                    title="Show this train on the map"
+                    aria-label={spoken(index, a.route, a.destination, secs, a.atPlatform, a.sigma)}
+                  >
                     <RouteBullet index={index} route={a.route} size={26} />
                     <span className="arr-dest">
                       <b>{index.stationName(a.destination)}</b>

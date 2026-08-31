@@ -2,27 +2,28 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
-import { nearestStations, searchStations } from "@/lib/arrivals";
+import { searchStations } from "@/lib/arrivals";
 import RouteBullet from "./RouteBullet";
 
 interface Props {
   index: NetworkIndex;
   onPick: (stationId: string) => void;
+  onNearby: () => void;
+  nearby: boolean;
+  locating: boolean;
 }
 
 type Result = { id: string; name: string; routes: string[]; meters?: number };
 
 /** Station search with a "near me" shortcut. `/` focuses it from anywhere. */
-export default function SearchBox({ index, onPick }: Props) {
+export default function SearchBox({ index, onPick, onNearby, nearby, locating }: Props) {
   const [q, setQ] = useState("");
-  const [near, setNear] = useState<Result[] | null>(null);
-  const [locating, setLocating] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  const results: Result[] = useMemo(() => (q ? searchStations(index, q) : (near ?? [])), [index, q, near]);
+  const results: Result[] = useMemo(() => (q ? searchStations(index, q) : []), [index, q]);
   const active = Math.min(cursor, Math.max(0, results.length - 1));
 
   useEffect(() => {
@@ -54,22 +55,6 @@ export default function SearchBox({ index, onPick }: Props) {
     inputRef.current?.blur();
   };
 
-  const locate = () => {
-    if (!navigator.geolocation) return;
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setNear(nearestStations(index, pos.coords.latitude, pos.coords.longitude));
-        setQ("");
-        setCursor(0);
-        setOpen(true);
-        setLocating(false);
-      },
-      () => { setNear([]); setLocating(false); },
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60_000 },
-    );
-  };
-
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") { setOpen(false); inputRef.current?.blur(); return; }
     if (!results.length) return;
@@ -91,8 +76,13 @@ export default function SearchBox({ index, onPick }: Props) {
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
         />
-        <button className="near-btn" onClick={locate} disabled={locating} title="Stations near me">
-          {locating ? "…" : "near me"}
+        <button
+          className={`near-btn ${nearby ? "on" : ""}`}
+          onClick={onNearby}
+          aria-pressed={nearby}
+          title={nearby ? "Stop following my location" : "Show the station nearest me and keep it up to date"}
+        >
+          {locating ? "locating…" : nearby ? "following you" : "near me"}
         </button>
       </div>
       {open && results.length > 0 && (
@@ -110,7 +100,7 @@ export default function SearchBox({ index, onPick }: Props) {
           ))}
         </ul>
       )}
-      {open && near?.length === 0 && !q && <div className="results empty">Location unavailable</div>}
+
     </div>
   );
 }

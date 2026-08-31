@@ -147,6 +147,9 @@ export default function TrainMap(props: Props) {
     let lastDraw = 0;
     const frame = (ts: number) => {
       raf = requestAnimationFrame(frame);
+      // A hidden tab should cost nothing; the clock is absolute, so the first visible frame
+      // simply picks the trains up where they should be by then.
+      if (document.hidden) { last = ts; return; }
       const dt = Math.min(0.25, (ts - last) / 1000);
       last = ts;
       const { index: idx, clock: now, speed: sp } = live.current;
