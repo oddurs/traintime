@@ -19,6 +19,10 @@ export interface LineHealth {
   headwayP50: number | null;
   headwayP90: number | null;
   dwellP50: number | null;
+  /** What this line normally does at this daypart, from our own history. */
+  headwayUsual: number | null;
+  /** Above 1 means trains are coming less often than usual. */
+  headwayRatio: number | null;
   /** Median seconds the MTA's own prediction was off, at this window. */
   etaBias: number | null;
 }
@@ -40,7 +44,7 @@ export class TrainTimeClient {
   density = (from: number, to: number, buckets = 120, signal?: AbortSignal) =>
     this.json<{ from: number; to: number; step: number; buckets: DensityBucket[] }>(`/density?from=${from}&to=${to}&buckets=${buckets}`, signal);
   lines = (from: number, to: number, signal?: AbortSignal) =>
-    this.json<{ from: number; to: number; lines: LineHealth[] }>(`/lines?from=${from}&to=${to}`, signal);
+    this.json<{ from: number; to: number; daypart: string; lines: LineHealth[] }>(`/lines?from=${from}&to=${to}`, signal);
 
   /** Live states. Returns an unsubscribe function. */
   stream(onMessage: (m: StreamMessage) => void, onError?: (e: Event) => void): () => void {

@@ -32,13 +32,12 @@ export default function LineHealth({ index, client, onSolo }: Props) {
   }, [client, index]);
 
   if (!lines?.length) return null;
-  const worst = Math.max(...lines.map((l) => l.headwayP50 ?? 0));
 
   return (
     <div className="health">
       <table>
         <thead>
-          <tr><th>line</th><th>every</th><th className="wide">worst gap</th><th>dwell</th></tr>
+          <tr><th>line</th><th>every</th><th className="wide">vs usual</th><th>dwell</th></tr>
         </thead>
         <tbody>
           {lines.slice(0, 12).map((l) => (
@@ -46,15 +45,29 @@ export default function LineHealth({ index, client, onSolo }: Props) {
               <td><RouteBullet index={index} route={l.route} size={18} /></td>
               <td className="num">{mins(l.headwayP50)}<em>min</em></td>
               <td className="wide">
-                <span className="gapbar"><i style={{ width: `${((l.headwayP90 ?? 0) / (worst || 1)) * 100}%` }} /></span>
-                <span className="num">{mins(l.headwayP90)}</span>
+                {l.headwayRatio === null ? (
+                  <span className="muted small">no baseline yet</span>
+                ) : (
+                  <>
+                    <span className="gapbar">
+                      <i className={l.headwayRatio > 1.25 ? "worse" : undefined}
+                         style={{ width: `${Math.min(100, (l.headwayRatio / 2) * 100)}%` }} />
+                    </span>
+                    <span className={`num ${l.headwayRatio > 1.25 ? "worse" : ""}`}>
+                      {l.headwayRatio > 1.1 ? `${Math.round((l.headwayRatio - 1) * 100)}% worse` : l.headwayRatio < 0.9 ? "better" : "normal"}
+                    </span>
+                  </>
+                )}
               </td>
               <td className="num">{l.dwellP50 === null ? "–" : `${l.dwellP50}s`}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="muted small">Median time between trains at the same platform, last hour. Dwell is only reported on the numbered lines and the L.</p>
+      <p className="muted small">
+        Median time between trains at the same platform over the last hour, against what this line
+        normally does at this time of week. Dwell is only reported on the numbered lines and the L.
+      </p>
     </div>
   );
 }

@@ -43,6 +43,24 @@ export function stampTime(file: string): number | null {
   return Date.UTC(+y, +mo - 1, +d, +(h ?? 0), +(mi ?? 0), +(se ?? 0));
 }
 
+/**
+ * Remove partial files left behind by an interrupted write. DuckDB stages a COPY as `tmp_...`
+ * in the target directory, so a process killed mid-flush leaves something the *.parquet glob
+ * will happily try to read — and then every query against that table fails.
+ */
+export function cleanTemp(): number {
+  let removed = 0;
+  for (const table of TABLES) {
+    const dir = join(REC_DIR, table);
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      if (!f.startsWith("tmp_") && !f.endsWith(".tmp.parquet")) continue;
+      try { unlinkSync(join(dir, f)); removed++; } catch {}
+    }
+  }
+  return removed;
+}
+
 export function diskUsage(): { bytes: number; files: number; byTable: Record<string, number> } {
   let bytes = 0, files = 0;
   const byTable: Record<string, number> = {};

@@ -1,3 +1,50 @@
+# Sprint plan — status
+
+Built overnight on 31 August 2026. What each sprint became, and what the numbers say.
+
+| sprint | outcome |
+|---|---|
+| **E Lines** | The lane offsets were being computed but an earlier edit to the line builder had silently failed, so the drawn lines were still on the raw centreline — the actual cause of services hiding each other. Fixed; corridors now show every colour side by side. Lane convention adapts: per trunk colour when everything is shown, per route when the view is narrowed, so asking for the 4, 5 and 6 gives three lines 30 m apart instead of one. The "off-route" trains turned out to be genuine overnight reroutes the alerts confirm, not a bug. |
+| **F Craft** | An 8-point grid throughout; arrivals and stop lists rebuilt as iOS-style inset grouped lists; one easing curve and duration scale; pressed states on every control; a shimmer skeleton while the first feed lands. Contrast audit still clean. |
+| **G Commuter** | Save a station from its board; saved stations lead the panel with the next train in the direction you usually take; with a location the app opens on the nearest saved station with no interaction; distance and walking time, and trains too soon to reach on foot are marked rather than offered. |
+| **H Trust** | `/lines` now compares each route's headway to what that route normally does at the same daypart, from our own recorded history, and the UI says "24% worse" rather than a bare number. Needs a day of recording before baselines appear; until then it says so. |
+| **I Predictions** | Per-trip bias, and σ taken from the model's own held-out error rather than the tables' spread. Calibration went from 66/59/57% to **67/69/75%** against a 68% target, with MAE better at every horizon (2–5 min: 84.9 s → 71.9 s). |
+
+## What the numbers say now
+
+Over the overnight window, against arrivals the feed later reported:
+
+| horizon | MTA error | traintime | within our ±1σ |
+|---|---|---|---|
+| under 45 s | 30.5 s | 6.3 s | 90% |
+| 45 s – 2 min | 129.1 s | 116.0 s | 67% |
+| 2 – 5 min | 89.1 s | 71.9 s | 69% |
+| 5 – 15 min | 124.3 s | 78.4 s | 75% |
+
+Overnight is a hard window — the MTA's own error is three times what it is in the evening, because
+service is sparse and half the lines are rerouted for track work. Runs are only comparable within
+the same window.
+
+## Findings worth keeping
+
+- **Per-trip bias has to be scored against our own corrected prediction.** Measuring it against the
+  MTA's raw number double-counts the correction the residual tables already apply, and made things
+  worse (34.1 s → 39.3 s at the near horizon) before it made them better.
+- **A negative result is a result.** The conditional hierarchy loses to the plain per-segment median
+  on four hours of data, so it is gated off until it wins on held-out data. It will switch itself on.
+- **`line-offset` is relative to each feature's drawing direction**, so lanes must be baked into the
+  geometry or two routes can end up in the same lane.
+
+## Still open
+
+- Leader propagation: a train cannot arrive before the one ahead departs, and that is the largest
+  remaining error at the 2–5 minute horizon.
+- Terminal departures, and the approach model (`INCOMING_AT` → arrival) for the last thirty seconds.
+- Crossings are still flat; a line passing under another shows no break.
+- A commute (origin → destination) rather than a single station.
+
+---
+
 # Sprint plan — accuracy, craft, the commuter, and better predictions
 
 Five sprints. Each names what "done" means as something checkable, because that is the only way

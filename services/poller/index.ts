@@ -18,7 +18,7 @@ import { Recorder, DATA_DIR } from "./recorder";
 import { PollerServer } from "./server";
 import { FeedMonitor } from "./health";
 import { ContextRecorder } from "./context";
-import { compact, diskUsage, prune } from "./retention";
+import { cleanTemp, compact, diskUsage, prune } from "./retention";
 import { learnOnce, msUntilNightly, type LearnOutcome } from "./learn";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -36,23 +36,42 @@ function loadJson<T>(path: string): T | null {
   try { return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as T) : null; } catch { return null; }
 }
 
+/**
+ * Choose between what the volume has learned and what this image shipped, by which was built
+ * later. Seeding the volume once and always preferring it would mean a poller keeps stale
+ * tables forever, however much better the ones in a new deploy are; always preferring the image
+ * would throw away everything learned overnight. The timestamp settles it.
+ */
+function newestOf<T extends { generatedAt?: string }>(learned: T | null, shipped: T | null): { tables: T | null; from: string } {
+  if (!learned) return { tables: shipped, from: shipped ? "image" : "none" };
+  if (!shipped) return { tables: learned, from: "volume" };
+  const a = Date.parse(learned.generatedAt ?? "") || 0;
+  const b = Date.parse(shipped.generatedAt ?? "") || 0;
+  return b > a ? { tables: shipped, from: "image" } : { tables: learned, from: "volume" };
+}
+
 async function main() {
   const startedAt = Math.floor(Date.now() / 1000);
   const net = new NetworkIndex(JSON.parse(readFileSync(join(ROOT, "public", "data", "network.json"), "utf8")) as Network);
-  const timing = new Timing(net, loadJson<TimingTables>(TIMING_PATH) ?? loadJson<TimingTables>(TIMING_SNAPSHOT), loadJson<GbmModel>(MODEL_PATH) ?? loadJson<GbmModel>(MODEL_SNAPSHOT));
+  const tablesPick = newestOf(loadJson<TimingTables>(TIMING_PATH), loadJson<TimingTables>(TIMING_SNAPSHOT));
+  const modelPick = newestOf(loadJson<GbmModel>(MODEL_PATH), loadJson<GbmModel>(MODEL_SNAPSHOT));
+  const timing = new Timing(net, tablesPick.tables, modelPick.tables);
   const tracker = new Tracker(net, timing);
   const decoder = await loadDecoder();
+  const stale = cleanTemp();
+  if (stale) console.log(`[recorder] cleared ${stale} partial file(s) from an interrupted write`);
   const recorder = await Recorder.open();
   const monitor = new FeedMonitor(FEEDS);
   const context = new ContextRecorder(recorder.connection);
   await context.init();
-  console.log(`[poller] network ${net.net.feedVersion}; timing ${timing.isLearned ? "learned" : "defaults"}; model ${timing.model ? "on" : "off"}; data ${DATA_DIR}`);
+  console.log(`[poller] network ${net.net.feedVersion}; timing ${timing.isLearned ? `learned (${tablesPick.from}, ${timing.tables?.generatedAt})` : "defaults"}; model ${timing.model ? `on (${modelPick.from})` : "off"}; data ${DATA_DIR}`);
 
   // Hot-reload learned timing whenever the nightly job or an operator rewrites it.
   const reload = () => {
     const t = loadJson<TimingTables>(TIMING_PATH);
     const m = loadJson<GbmModel>(MODEL_PATH);
     if (t) { timing.tables = t; timing.model = m ?? timing.model; console.log(`[poller] timing reloaded (${t.generatedAt})`); }
+    else console.log("[poller] timing file changed but could not be read; keeping the current tables");
   };
   try { watch(DATA_DIR, (_e, f) => { if (f === "timing.json" || f === "eta-model.json") setTimeout(reload, 500); }); } catch {}
 
@@ -132,6 +151,7 @@ async function main() {
   setInterval(async () => {
     try {
       await recorder.flush();
+      cleanTemp();
       const compacted = await compact(recorder.connection);
       const pruned = prune();
       lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted };

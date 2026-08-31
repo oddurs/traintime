@@ -8,10 +8,11 @@ import { Timing } from "../../src/lib/timing";
 import type { Decoder } from "./feeds";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { REC_DIR, parquetGlob } from "./recorder";
+import { REC_DIR, TABLES, parquetGlob } from "./recorder";
+import { calendarRow } from "../../src/lib/calendar";
 
 /** FROM-clause over a recorded table on disk plus the in-memory buffer, skipping an empty glob. */
-function source(table: "ticks" | "events" | "eta_obs", cols: string): string {
+function source(table: (typeof TABLES)[number], cols: string): string {
   const dir = join(REC_DIR, table);
   const onDisk = existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".parquet"));
   const mem = `SELECT ${cols} FROM ${table}`;
@@ -149,11 +150,32 @@ export class PollerServer {
     return { from, to, step, buckets: out };
   }
 
-  /** Per-route service quality over a window: how often trains come, and how long they sit. */
+  /**
+   * Per-route service quality over a window, next to what that line normally does at this time
+   * of week. "Every 9 minutes" means nothing on its own; "every 9 minutes, usually 5" is the
+   * whole point of having kept the history.
+   */
   private async lines(url: URL) {
     const to = Number(url.searchParams.get("to") ?? Math.floor(Date.now() / 1000));
     const from = Number(url.searchParams.get("from") ?? to - 3600);
     const ev = source("events", "ts, trip_id, route, direction, stop_id, kind, estimated");
+    // The comparison is like-for-like: the same daypart, on the same kind of day, excluding the
+    // window being measured so a bad hour cannot quietly become its own baseline.
+    const { daypart: nowDaypart, is_weekend, is_holiday } = calendarRow(to);
+    const baselineRows = (await this.deps.conn().runAndReadAll(
+      `WITH cal AS (SELECT * FROM ${source("calendar", "hour, daypart, is_weekend, is_holiday")}
+                    WHERE daypart = '${nowDaypart}' AND is_weekend = ${is_weekend || is_holiday}),
+            a AS (
+              SELECT e.route, e.stop_id, e.direction, e.ts::DOUBLE AS ts
+              FROM ${ev} e JOIN cal ON cal.hour = (e.ts // 3600) * 3600
+              WHERE e.kind = 'arrive' AND NOT e.estimated AND NOT (e.ts BETWEEN ${from} AND ${to})
+            ), gaps AS (
+              SELECT route, ts - lag(ts) OVER (PARTITION BY route, stop_id, direction ORDER BY ts) AS gap FROM a
+            )
+       SELECT route, quantile_cont(gap, 0.5) AS headway, count(*) AS n
+       FROM gaps WHERE gap BETWEEN 30 AND 3600 GROUP BY route`,
+    )).getRowObjectsJS() as { route: string; headway: number | null; n: number }[];
+    const baseline = new Map(baselineRows.filter((r) => Number(r.n) >= 20).map((r) => [r.route, Math.round(Number(r.headway))]));
     const rows = (await this.deps.conn().runAndReadAll(
       `WITH a AS (
          SELECT route, stop_id, direction, ts::DOUBLE AS ts FROM ${ev}
@@ -175,13 +197,21 @@ export class PollerServer {
     )).getRowObjectsJS() as { route: string; arrivals: number; headway_p50: number | null; headway_p90: number | null; dwell_p50: number | null }[];
     return {
       from, to,
-      lines: rows.map((r) => ({
-        route: r.route, arrivals: Number(r.arrivals),
-        headwayP50: r.headway_p50 === null ? null : Math.round(Number(r.headway_p50)),
-        headwayP90: r.headway_p90 === null ? null : Math.round(Number(r.headway_p90)),
-        dwellP50: r.dwell_p50 === null ? null : Math.round(Number(r.dwell_p50)),
-        etaBias: null,
-      })),
+      daypart: nowDaypart,
+      lines: rows.map((r) => {
+        const headwayP50 = r.headway_p50 === null ? null : Math.round(Number(r.headway_p50));
+        const usual = baseline.get(r.route) ?? null;
+        return {
+          route: r.route, arrivals: Number(r.arrivals),
+          headwayP50,
+          headwayP90: r.headway_p90 === null ? null : Math.round(Number(r.headway_p90)),
+          dwellP50: r.dwell_p50 === null ? null : Math.round(Number(r.dwell_p50)),
+          headwayUsual: usual,
+          // Positive means trains are coming less often than they normally do at this hour.
+          headwayRatio: usual && headwayP50 ? +(headwayP50 / usual).toFixed(2) : null,
+          etaBias: null,
+        };
+      }),
     };
   }
 
