@@ -82,16 +82,31 @@ test("the Staten Island Railway is one service, whatever the feed calls it", () 
   assert.ok(net.net.routes[decoded[0].route], "and it must resolve to a known route");
 });
 
-test("a train the feed stops updating is marked stale rather than presented as running", () => {
+test("a train long overdue at a stop it never reached is flagged, not drawn as if running", () => {
   const now = 1_788_000_000;
   const tracker = fresh();
   const train = oneTrain(now);
   tracker.ingest(at(now, [train]));
   assert.equal(tracker.states(now)[0].stale, undefined, "a fresh train is not stale");
-  // The feed keeps republishing the identical tick for an hour: nothing about the train changes.
-  for (let i = 1; i <= 60; i++) tracker.ingest(at(now + i * 60, [train]));
-  const later = tracker.states(now + 3600)[0];
-  assert.equal(later.stale, true, "an unchanging train must be flagged, not drawn as if it were moving");
+  // The feed keeps republishing the same predictions while the clock runs past them.
+  for (let i = 1; i <= 30; i++) tracker.ingest(at(now + i * 60, [train]));
+  assert.equal(tracker.states(now + 1800)[0].stale, true, "half an hour past its own arrival is not a running train");
+});
+
+test("a train that is simply quiet is not mistaken for a ghost", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  // Predictions that stay put and a vehicle record that does not tick: normal for some feeds,
+  // and it must not be read as the train having stopped existing.
+  for (let i = 0; i <= 10; i++) {
+    tracker.ingest(at(now + i * 60, [oneTrain(now, {
+      stops: [
+        { id: "119S", arrival: now + i * 60 + 300, departure: now + i * 60 + 300 },
+        { id: "120S", arrival: now + i * 60 + 420, departure: now + i * 60 + 420 },
+      ],
+    })]));
+  }
+  assert.equal(tracker.states(now + 600)[0].stale, undefined, "a quiet but progressing train is fine");
 });
 
 test("a vehicle timestamp from the future is not taken at face value", () => {
@@ -167,4 +182,45 @@ test("holding a train behind another keeps its whole run in order", () => {
       `after being held, ${behind.stops[i].id} must not precede ${behind.stops[i - 1].id}`,
     );
   }
+});
+
+test("one physical train published under two trip ids is drawn once", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  // The same carriages, as the feed sometimes reports them: a full trip id and a short
+  // supplement form, sharing the MTA's own train identity.
+  const full = oneTrain(now, { id: "099000_2..S01R", route: "2", trainId: "02 1630 241/FLA" });
+  const short: TrainUpdate = {
+    ...full,
+    id: "099000_2..S",
+    vehicle: undefined,
+    stops: [{ id: "119S", arrival: now + 60, departure: now + 60 }],
+  };
+  tracker.ingest(at(now, [full, short]));
+  const states = tracker.states(now);
+  const sameTrain = states.filter((s) => s.trainId === "02 1630 241/FLA");
+  assert.equal(sameTrain.length, 1, `one physical train, one marker — got ${sameTrain.map((s) => s.id).join(" + ")}`);
+  assert.equal(sameTrain[0].id, "099000_2..S01R", "and it should be the better-informed record");
+});
+
+test("a train turning around at a terminal is one train, not two", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  const identity = "01 1200 SFT/VCP";
+  // Inbound run, finishing at the terminal.
+  const inbound = oneTrain(now, { id: "100000_1..S03R", trainId: identity });
+  tracker.ingest(at(now, [inbound]));
+  // The outbound run is assigned while the inbound trip is still being published: the same
+  // carriages under two trip ids, which is what a turnaround looks like in the feed.
+  const outbound: TrainUpdate = {
+    id: "100500_1..N03R", route: "1", direction: "N", assigned: true, trainId: identity,
+    vehicle: { stopId: "122N", status: "STOPPED_AT", timestamp: now + 60 },
+    stops: [
+      { id: "122N", arrival: now + 60, departure: now + 60 },
+      { id: "121N", arrival: now + 180, departure: now + 180 },
+    ],
+  };
+  tracker.ingest(at(now + 60, [inbound, outbound]));
+  const drawn = tracker.states(now + 60).filter((s) => s.trainId === identity);
+  assert.equal(drawn.length, 1, `a turnaround is one train — drew ${drawn.map((d) => d.id).join(" + ")}`);
 });

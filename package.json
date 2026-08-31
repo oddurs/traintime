@@ -22,7 +22,8 @@
     "evaluate": "tsx scripts/evaluate.ts",
     "publish-accuracy": "tsx scripts/publish-accuracy.ts",
     "test": "tsx --test tests/*.test.ts",
-    "audit": "tsx scripts/audit.ts"
+    "audit": "tsx scripts/audit.ts",
+    "audit:replay": "tsx scripts/audit-replay.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",

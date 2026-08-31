@@ -74,13 +74,14 @@ const ETA_OBS_STOPS = 3;
  */
 const CLEARANCE_S = 40;
 /**
- * When to stop believing in a train. Two ways it can happen: nothing about its state changes for
- * a quarter of an hour, or it sits at a platform far longer than any real layover. One had been
- * "at a platform" for 223 minutes while its record kept twitching just enough to look alive,
- * which is why the second rule exists as well as the first.
+ * When to stop believing in a train. The test is whether it is making progress, not whether its
+ * record is changing: a train with a stable prediction and no vehicle updates looks frozen while
+ * running perfectly well, and keying on that flagged a quarter of the system as ghosts. What
+ * actually gives one away is sitting at a platform beyond any real layover, or being long overdue
+ * at a stop it never reached.
  */
-const STALE_AFTER_S = 900;
 const MAX_DWELL_S = 1800;
+const MAX_OVERDUE_S = 600;
 
 const nyTime = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false, weekday: "short" });
 const DOW: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -258,20 +259,23 @@ export class Tracker {
   states(now: number): TrainState[] {
     const { hour, dow } = nyHourDow(now);
     const cond = conditionsAt(now, this.timing.weather);
-    const out: TrainState[] = [];
+    const seen: { st: TrainState; lastSeen: number }[] = [];
     for (const m of this.mem.values()) {
       const st = this.stateOf(m, now, hour, dow, cond);
-      if (st) out.push(st);
+      if (st) seen.push({ st, lastSeen: m.lastSeen });
     }
+    const out = this.dedupeByTrain(seen);
     const byId = this.assignLeaders(out);
     this.applyLeaderConstraint(out, byId, hour, cond);
     // The feed keeps publishing some trains long after they stop doing anything — one had been
     // "at a platform" for over three hours. It is still data, but it is not a running train, and
     // presenting it as one is worse than admitting we have lost track of it.
     for (const st of out) {
-      const unchanged = now - st.updatedAt > STALE_AFTER_S;
       const parked = st.phase === "dwelling" && st.arrivedAt !== undefined && now - st.arrivedAt > MAX_DWELL_S;
-      if (unchanged || parked) st.stale = true;
+      // Our own eta is floored at the present — it never reads as past — so overdue-ness has to
+      // be judged against the feed's raw prediction, which is not clamped.
+      const overdue = st.phase === "moving" && st.etaRaw < now - MAX_OVERDUE_S;
+      if (parked || overdue) st.stale = true;
     }
     return out;
   }
@@ -382,6 +386,32 @@ export class Tracker {
       adjusted?.set(s.id, ordered);
       p = s.id;
     }
+    return out;
+  }
+
+  /**
+   * The feed sometimes publishes one physical train under two trip ids — a full one and a short
+   * supplement form, as in `099000_2..S01R` alongside `099000_2..S` — and the MTA's own train
+   * identity gives them away as the same carriages. Drawn as-is that is two trains on one piece of
+   * track. Keep whichever record is better informed: most recently seen, then the one that knows
+   * where the train is, then the one that knows further ahead.
+   */
+  private dedupeByTrain(seen: { st: TrainState; lastSeen: number }[]): TrainState[] {
+    const best = new Map<string, { st: TrainState; lastSeen: number }>();
+    const out: TrainState[] = [];
+    for (const entry of seen) {
+      const key = entry.st.trainId;
+      if (!key) { out.push(entry.st); continue; }
+      const cur = best.get(key);
+      if (!cur) { best.set(key, entry); continue; }
+      const rank = (e: { st: TrainState; lastSeen: number }) =>
+        [e.lastSeen, e.st.phase === "unstarted" ? 0 : 1, e.st.prevStop ? 1 : 0, e.st.stops.length] as const;
+      const [al, ap, ad, as_] = rank(entry);
+      const [bl, bp, bd, bs] = rank(cur);
+      const better = al !== bl ? al > bl : ap !== bp ? ap > bp : ad !== bd ? ad > bd : as_ > bs;
+      if (better) best.set(key, entry);
+    }
+    for (const e of best.values()) out.push(e.st);
     return out;
   }
 

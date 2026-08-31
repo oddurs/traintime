@@ -20,6 +20,7 @@ import { FeedMonitor } from "./health";
 import { ContextRecorder } from "./context";
 import { cleanTemp, compact, diskUsage, enforceBudget, prune } from "./retention";
 import { learnOnce, msUntilNightly, type LearnOutcome } from "./learn";
+import { checkInvariants, isFailure } from "../../src/lib/invariants";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 // Railway and friends inject PORT; POLLER_PORT wins locally.
@@ -98,16 +99,13 @@ async function main() {
         // Correctness the deployed system reports about itself, rather than waiting to be asked.
         invariants: (() => {
           const states = tracker.states(now);
-          let backwards = 0, unknownRoute = 0, stale = 0, futureArrival = 0;
-          for (const st of states) {
-            if (!net.net.routes[st.route]) unknownRoute++;
-            if (st.stale) stale++;
-            if (st.arrivedAt && st.arrivedAt > now + 5) futureArrival++;
-            for (let i = 1; i < st.stops.length; i++) {
-              if (st.stops[i].eta < st.stops[i - 1].eta - 1) { backwards++; break; }
-            }
-          }
-          return { trains: states.length, backwards, unknownRoute, stale, futureArrival, unknownStops: [...tracker.unknownStops].sort() };
+          const violations = checkInvariants(net, states, now);
+          return {
+            trains: states.length,
+            failures: violations.filter(isFailure).map((v) => ({ severity: v.severity, rule: v.rule, count: v.count, detail: v.detail })),
+            informational: violations.filter((v) => !isFailure(v)).map((v) => ({ rule: v.rule, count: v.count })),
+            unknownStops: [...tracker.unknownStops].sort(),
+          };
         })(),
         learn: lastLearn,
         maintenance: lastMaintenance,
