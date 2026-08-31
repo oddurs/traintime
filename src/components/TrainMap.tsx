@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
-import { NetworkIndex } from "@/lib/network";
+import { NetworkIndex, type LaneMode } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
 import { addRouteIcons, chevronId } from "@/lib/icons";
 import { asset } from "@/lib/basePath";
@@ -51,7 +51,7 @@ const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: 
  * same lane, so a line joining or leaving a shared corridor is drawn as one unbroken curve with
  * a rounded end, instead of a series of butt-ended pieces.
  */
-function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
+function routeLines(index: NetworkIndex, mode: LaneMode): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   for (const [route, runs] of Object.entries(index.net.routeRuns)) {
     const r = index.net.routes[route];
@@ -59,10 +59,8 @@ function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
     for (const run of runs) {
       const coordinates: LonLat[] = [];
       for (let i = 0; i + 1 < run.stops.length; i++) {
-        const u = run.stops[i], v = run.stops[i + 1];
-        const seg = index.net.segments[u < v ? `${u}-${v}` : `${v}-${u}`];
-        if (!seg) continue;
-        const piece = u < v ? seg : [...seg].reverse();
+        const piece = index.lineSegment(route, run.stops[i], run.stops[i + 1], mode);
+        if (!piece) continue;
         for (const p of piece) {
           const last = coordinates[coordinates.length - 1];
           if (!last || last[0] !== p[0] || last[1] !== p[1]) coordinates.push(p);
@@ -90,15 +88,50 @@ function stationPoints(index: NetworkIndex): GeoJSON.FeatureCollection {
   };
 }
 
+/** Filter the drawn services, and relay the lines out if the lane convention has changed. */
+function applyVisibilityFactory(appliedLane: { current: LaneMode | null }) {
+  const apply = (map: maplibregl.Map, index: NetworkIndex, visible: Set<string> | null, attempt = 0) => {
+    if (!map.getLayer("routes-line")) return;
+    // The layer can exist while the style is still settling its sprites and glyphs, and MapLibre
+    // throws rather than queueing. Waiting for "idle" is no good here — the train layer updates
+    // every frame, so this map never goes idle — so retry briefly instead. Without this, a filter
+    // carried in a shared link is dropped and never reapplied.
+    if (!map.isStyleLoaded()) {
+      if (attempt < 40) setTimeout(() => apply(map, index, visible, attempt + 1), 150);
+      return;
+    }
+    const all = Object.keys(index.net.routes);
+    const list = visible ? [...visible] : all;
+    const filter: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
+    map.setFilter("routes-line", filter);
+    map.setFilter("routes-casing", filter);
+    const mode: LaneMode = visible && visible.size < all.length ? "route" : "trunk";
+    if (process.env.NODE_ENV !== "production") {
+      const w = window as unknown as { __tt?: Record<string, unknown> };
+      w.__tt = { ...(w.__tt ?? {}), laneMode: mode, visibleCount: list.length };
+    }
+    if (mode !== appliedLane.current) {
+      appliedLane.current = mode;
+      (map.getSource("routes") as GeoJSONSource | undefined)?.setData(routeLines(index, mode));
+    }
+  };
+  return apply;
+}
+
 export default function TrainMap(props: Props) {
   const { index, statesRef, positionsRef, clock, speed, visibleRoutes, showRibbons, selection, onSelect,
     follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  // Holds the lane convention currently uploaded, so lines are only rebuilt when it changes.
+  const applyVisibility = useMemo(() => applyVisibilityFactory({ current: null }), []);
   const kinRef = useRef<Kinematics | null>(null);
   const readyRef = useRef(false);
   const layersRef = useRef(false);
+  // Set once the map's own layers exist, so the effects that configure them know to run. Layers
+  // are added from a map callback, which can happen after those effects have already fired.
+  const [layersReady, setLayersReady] = useState(false);
 
   // Live props the animation loop reads without re-subscribing.
   const live = useRef({ visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd });
@@ -207,7 +240,7 @@ export default function TrainMap(props: Props) {
       kinRef.current = new Kinematics(index);
       addRouteIcons(map, index);
 
-      map.addSource("routes", { type: "geojson", data: routeLines(index) });
+      map.addSource("routes", { type: "geojson", data: routeLines(index, "trunk") });
       map.addSource("stations", { type: "geojson", data: stationPoints(index) });
       map.addSource("ribbons", { type: "geojson", data: EMPTY });
       map.addSource("trains", { type: "geojson", data: EMPTY });
@@ -331,20 +364,19 @@ export default function TrainMap(props: Props) {
         const hits = map.queryRenderedFeatures(e.point, { layers: ["trains", "stations", "station-labels"] });
         if (hits.length === 0) live.current.onSelect({ kind: "none" });
       });
+
+      setLayersReady(true);
     };
     if (readyRef.current) add();
     else map.once("style.load", add);
   }, [index]);
 
-  // --- route visibility
+  // --- route visibility, and the lane convention that goes with it
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !layersRef.current || !index) return;
-    const list = visibleRoutes ? [...visibleRoutes] : Object.keys(index.net.routes);
-    const filter: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
-    map.setFilter("routes-line", filter);
-    map.setFilter("routes-casing", filter);
-  }, [visibleRoutes, index]);
+    if (!map || !layersReady || !index) return;
+    applyVisibility(map, index, visibleRoutes);
+  }, [visibleRoutes, index, layersReady, applyVisibility]);
 
   // --- selection highlight and camera
   const selId = selection.kind === "none" ? "" : selection.id;

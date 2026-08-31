@@ -82,6 +82,9 @@ async function main() {
   const turnRates: number[] = [];
   let turnRateMax = 0;
   let duplicateTrainIds = 0, maxConcurrent = 0, offPattern = 0, movingScored = 0;
+  const offByRoute = new Map<string, number>();
+  const offExamples: string[] = [];
+  const offSeen = new Set<string>();
   const routeHasPair = (route: string, a: string, b: string) => {
     const key = a < b ? `${a}-${b}` : `${b}-${a}`;
     return (net.net.routeSegments[route] ?? []).includes(key);
@@ -182,7 +185,14 @@ async function main() {
           const a = parentOf(st.prevStop), b = parentOf(st.nextStop);
           if (a === b) continue;
           movingScored++;
-          if (!routeHasPair(st.route, a, b)) offPattern++;
+          if (!routeHasPair(st.route, a, b)) {
+            offPattern++;
+            offByRoute.set(st.route, (offByRoute.get(st.route) ?? 0) + 1);
+            if (debug && offExamples.length < 12 && !offSeen.has(`${st.route}|${a}-${b}`)) {
+              offSeen.add(`${st.route}|${a}-${b}`);
+              offExamples.push(`${st.route} ${net.stationName(a)} -> ${net.stationName(b)} inferred=${!!st.prevInferred} trip=${st.id.slice(0, 22)}`);
+            }
+          }
         }
         // The same physical train should never be drawn twice.
         const byTrain = new Map<string, number>();
@@ -266,6 +276,8 @@ async function main() {
   console.log(`| heading swing p99 / max | ${f1(report.motion.turnRateP99)}°/s · ${f1(report.motion.turnRateMax)}°/s |`);
   console.log(`| duplicate train ids | ${duplicateTrainIds} |`);
   console.log(`| drawn off their own route | ${pct(report.motion.offPatternShare)} of moving trains |`);
+  if (offByRoute.size) console.log(`  off-route by service: ${[...offByRoute.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([r, n]) => `${r}:${n}`).join(" ")}`);
+  for (const e of offExamples) console.log(`  ${e}`);
   console.log(`| track unknown (straight-line) | ${pct(report.motion.straightFallbackShare)} of segments |`);
   console.log(`\n| horizon | n | MTA MAE | MTA bias | ours MAE | ours bias | 1σ coverage |\n|---|---|---|---|---|---|---|`);
   for (const b of buckets) {

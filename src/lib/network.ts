@@ -10,6 +10,15 @@ export const parentOf = (id: string) => id.replace(/[NS]$/, "");
  */
 export const LANE_M = 18;
 export const TRACK_M = 6;
+/** How far apart same-colour services are drawn once the view is narrowed to a few of them. */
+export const SPLIT_M = 15;
+
+/**
+ * How lines are laid out. Showing everything, services that share a trunk share a lane, because
+ * that is what the system map does and what the colour means. Narrow the view to two services and
+ * that convention hides one of them, so each visible route takes its own lane instead.
+ */
+export type LaneMode = "trunk" | "route";
 
 /** Indexed, query-friendly view of network.json shared by server and client. */
 export class NetworkIndex {
@@ -39,15 +48,18 @@ export class NetworkIndex {
     return lane * LANE_M + track * TRACK_M;
   }
 
-  /** Coordinates for one stretch as drawn, offset into its colour's lane. */
-  lineSegment(route: string, u: string, v: string): LonLat[] | undefined {
+  /** Coordinates for one stretch as drawn, offset into its lane. */
+  lineSegment(route: string, u: string, v: string, mode: LaneMode = "trunk"): LonLat[] | undefined {
     const key = u < v ? `${u}-${v}` : `${v}-${u}`;
     const pts = this.net.segments[key];
     if (!pts) return undefined;
-    const ck = `${route}|${key}`;
+    const ck = `${mode}|${route}|${key}`;
     let laid = this.lineCache.get(ck);
     if (!laid) {
-      laid = offsetPolyline(pts, this.laneMetres(route, key, false));
+      const lane = this.net.segmentSlots[key]?.[route]?.[0] ?? 0;
+      const track = this.net.trackSlots?.[key]?.[route]?.[0] ?? 0;
+      const metres = mode === "route" ? lane * LANE_M + track * SPLIT_M : lane * LANE_M;
+      laid = offsetPolyline(pts, metres);
       this.lineCache.set(ck, laid);
     }
     return u < v ? laid : [...laid].reverse();
