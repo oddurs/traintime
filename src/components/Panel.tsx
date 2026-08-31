@@ -17,6 +17,7 @@ import TrainDetail from "./TrainDetail";
 import RouteBullet from "./RouteBullet";
 import AlertList from "./AlertList";
 import Legend from "./Legend";
+import SavedPlaces from "./SavedPlaces";
 import Timeline from "./Timeline";
 import LineHealth from "./LineHealth";
 
@@ -46,6 +47,9 @@ interface Props {
   onNearby: () => void;
   locating: boolean;
   distance?: number;
+  places: import("@/lib/places").SavedPlace[];
+  onToggleSave: (id: string, name: string) => void;
+  isSaved: (id: string) => boolean;
 }
 
 // Display grouping by trunk line, roughly following the official map.
@@ -57,7 +61,7 @@ const GROUPS: string[][] = [
 export default function Panel(props: Props) {
   const { index, trains, byId, positionsRef, feeds, status, now, wallNow, alerts, selection, onSelect,
     follow, onFollow, visible, onToggle, onAll, showRibbons, onRibbons, mode, onMode, mobile,
-    nearby, onNearby, locating, distance } = props;
+    nearby, onNearby, locating, distance, places, onToggleSave, isSaved } = props;
   const [legendDismissed, setLegendDismissed] = useStoredFlag("tt.legend.dismissed", false);
   const [showHistory, setShowHistory] = useState(false);
   const client = useMemo(() => new TrainTimeClient(POLLER_URL), []);
@@ -110,7 +114,9 @@ export default function Panel(props: Props) {
       {selection.kind === "station" && (
         <StationBoard
           index={index} station={selection.id} trains={trains} now={now} alerts={alerts}
-          distance={nearby ? distance : undefined}
+          distance={distance}
+          saved={isSaved(selection.id)}
+          onToggleSave={() => onToggleSave(selection.id, index.stationName(selection.id))}
           stale={status.live && !status.connected && status.clockTs ? wallNow - status.clockTs : undefined}
           onSelect={onSelect} onClose={() => onSelect({ kind: "none" })}
         />
@@ -132,6 +138,7 @@ export default function Panel(props: Props) {
 
       {selection.kind === "none" && (
         <>
+          <SavedPlaces index={index} places={places} trains={trains} now={now} onSelect={onSelect} />
           {!legendDismissed && trains.length > 0 && <Legend onDismiss={() => setLegendDismissed(true)} />}
 
           <div className="routes" role="group" aria-label="Show or hide routes">

@@ -407,3 +407,9 @@ button.roundel:hover { transform: scale(1.08); }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- saved places ---------- */
+.board-actions { display: flex; gap: var(--s1); flex: none; }
+.icon-btn.on { color: var(--amber); }
+.roundel-blank { width: 26px; height: 26px; border-radius: 50%; background: var(--raise-2); flex: none; }
+.arr-eta.missed b { color: var(--label-3); }

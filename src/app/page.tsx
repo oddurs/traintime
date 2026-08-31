@@ -10,6 +10,7 @@ import { useIsMobile, useReducedMotion, useTicker } from "@/lib/hooks";
 import { fetchAlerts, type AlertIndex } from "@/lib/alerts";
 import { useGeolocation, useWakeLock } from "@/lib/geolocation";
 import { nearestStations } from "@/lib/arrivals";
+import { usePlaces } from "@/lib/places";
 import { readHash, writeHash } from "@/lib/urlState";
 import { asset } from "@/lib/basePath";
 import type { View } from "@/components/TrainMap";
@@ -48,6 +49,7 @@ function App({ index }: { index: NetworkIndex | null }) {
   const { statesRef, trains, feeds, status, clock } = useTrainStream(mode, index);
   const geo = useGeolocation(nearby);
   useWakeLock(follow);
+  const { places, loaded: placesLoaded, toggle: togglePlace, touch: touchPlace, isSaved } = usePlaces();
   const mobile = useIsMobile();
   const reducedMotion = useReducedMotion();
   const now = useTicker(clock, 2);
@@ -102,6 +104,32 @@ function App({ index }: { index: NetworkIndex | null }) {
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [nearest]);
 
+  // A commuter opens the app to see their own station. With a location, that is the nearest
+  // saved one; without, the one they looked at last. Only when nothing was asked for by URL.
+  const [autoOpened, setAutoOpened] = useState(false);
+  useEffect(() => {
+    if (!hydrated || !placesLoaded || autoOpened || !index) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- restores a stored preference once, after the URL has had its say */
+    if (selection.kind !== "none" || places.length === 0) { setAutoOpened(true); return; }
+    const best = geo.lat !== undefined && geo.lon !== undefined
+      ? [...places].sort((a, b) => {
+          const d = (p: typeof a) => {
+            const st = index.station(p.id);
+            return st ? Math.hypot(st.lat - geo.lat!, st.lon - geo.lon!) : Infinity;
+          };
+          return d(a) - d(b);
+        })[0]
+      : [...places].sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0];
+    if (best) setSelection({ kind: "station", id: best.id });
+    setAutoOpened(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [hydrated, placesLoaded, autoOpened, index, selection.kind, places, geo.lat, geo.lon]);
+
+  // Remember which station was looked at, so the saved list can lead with it next time.
+  useEffect(() => {
+    if (selection.kind === "station") touchPlace(selection.id);
+  }, [selection, touchPlace]);
+
   const select = useCallback((s: Selection) => {
     setSelection(s);
     setFollow(false);
@@ -126,6 +154,15 @@ function App({ index }: { index: NetworkIndex | null }) {
   }, [index]);
 
   const onAll = useCallback((on: boolean) => setVisible(on ? null : new Set()), []);
+
+  // Distance to whatever station is open, whenever we know where the viewer is.
+  const selectedDistance = useMemo(() => {
+    if (selection.kind !== "station" || !index || geo.lat === undefined || geo.lon === undefined) return undefined;
+    const st = index.station(selection.id);
+    if (!st) return undefined;
+    const cos = Math.cos((geo.lat * Math.PI) / 180);
+    return Math.hypot((st.lon - geo.lon) * 111_320 * cos, (st.lat - geo.lat) * 111_320);
+  }, [selection, index, geo.lat, geo.lon]);
 
   // Trains listed on the open station board get a ring on the map.
   const highlight = useMemo(() => {
@@ -167,7 +204,8 @@ function App({ index }: { index: NetworkIndex | null }) {
           showRibbons={showRibbons} onRibbons={setShowRibbons}
           mode={mode} onMode={setMode} mobile={mobile}
           nearby={nearby} onNearby={() => setNearby((n) => !n)}
-          locating={geo.status === "asking"} distance={nearest?.meters}
+          locating={geo.status === "asking"} distance={selectedDistance}
+          places={places} onToggleSave={togglePlace} isSaved={isSaved}
         />
       )}
       {!index && <div className="booting">loading the network…</div>}

@@ -6,6 +6,7 @@ import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
 import { arrivalsAt } from "@/lib/arrivals";
 import { directionLabel, fmtMin } from "@/lib/format";
+import { walkSeconds } from "@/lib/places";
 import RouteBullet from "./RouteBullet";
 import AlertList from "./AlertList";
 
@@ -18,6 +19,8 @@ interface Props {
   /** Metres from the viewer, when their location is known. */
   distance?: number;
   stale?: number;
+  saved?: boolean;
+  onToggleSave?: () => void;
   onSelect: (s: Selection) => void;
   onClose: () => void;
 }
@@ -36,8 +39,11 @@ function spoken(index: NetworkIndex, route: string, dest: string, secs: number, 
  * The arrivals board for one station, computed from the same train states the map draws —
  * so what it says and what you see can never disagree.
  */
-export default function StationBoard({ index, station, trains, now, alerts, distance, stale, onSelect, onClose }: Props) {
+export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, onSelect, onClose }: Props) {
   const groups = useMemo(() => arrivalsAt(index, trains, station), [index, trains, station]);
+  // With a location we can say which trains are actually catchable on foot, which is the
+  // difference between a timetable and advice.
+  const walk = distance === undefined ? undefined : walkSeconds(distance);
   const st = index.station(station);
   const routes = useMemo(() => index.net.stationRoutes[station] ?? [], [index, station]);
   const stationAlerts = useMemo(() => {
@@ -59,6 +65,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
           {distance !== undefined && (
             <div className="board-distance">
               {distance < 1000 ? `${Math.round(distance)} m away` : `${(distance / 1000).toFixed(1)} km away`}
+              {walk !== undefined && ` · about ${Math.max(1, Math.round(walk / 60))} min walk`}
             </div>
           )}
           {stale !== undefined && <div className="board-stale">last seen {Math.round(stale)} s ago · reconnecting</div>}
@@ -66,7 +73,20 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
             {routes.map((r) => <RouteBullet key={r} index={index} route={r} size={18} />)}
           </div>
         </div>
-        <button className="icon-btn" onClick={onClose} aria-label="Close station">×</button>
+        <div className="board-actions">
+          {onToggleSave && (
+            <button
+              className={`icon-btn ${saved ? "on" : ""}`}
+              onClick={onToggleSave}
+              aria-pressed={!!saved}
+              aria-label={saved ? "Remove from saved stations" : "Save this station"}
+              title={saved ? "Saved — tap to remove" : "Save this station"}
+            >
+              {saved ? "★" : "☆"}
+            </button>
+          )}
+          <button className="icon-btn" onClick={onClose} aria-label="Close station">×</button>
+        </div>
       </header>
 
       {stationAlerts.length > 0 && <AlertList index={index} alerts={stationAlerts} limit={2} />}
@@ -81,6 +101,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
             {g.arrivals.map((a) => {
               const secs = a.eta - now;
               const here = a.atPlatform || secs < 30;
+              const catchable = walk === undefined ? undefined : secs >= walk;
               return (
                 <li key={a.id}>
                   <button
@@ -94,10 +115,12 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
                       <em>
                         {a.atPlatform
                           ? "at the platform"
-                          : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`}
+                          : catchable === false
+                            ? "too soon to reach on foot"
+                            : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`}
                       </em>
                     </span>
-                    <span className={`arr-eta ${here ? "here" : ""}`}>
+                    <span className={`arr-eta ${here ? "here" : ""} ${catchable === false ? "missed" : ""}`}>
                       <b>{here ? "now" : fmtMin(secs)}</b>
                       {!here && <i>min</i>}
                     </span>
