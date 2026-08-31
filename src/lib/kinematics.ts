@@ -1,6 +1,6 @@
 import type { LonLat, Motion, TrainPosition, TrainState } from "./types";
 import { NetworkIndex, parentOf } from "./network";
-import { alongPath, slicePath, type Path } from "./geo";
+import { alongPath, headingAt, lerpBearing, slicePath, type Path } from "./geo";
 
 export interface KinematicsOptions {
   /** m/s² */
@@ -24,6 +24,8 @@ interface Body {
   s: number;
   v: number;
   motion: Motion;
+  /** Smoothed compass heading, so the marker sweeps through curves instead of snapping. */
+  heading: number;
 }
 
 /**
@@ -56,7 +58,8 @@ export class Kinematics {
   private stationBody(st: TrainState, stop: string): Body {
     const s = this.net.station(stop);
     const p: LonLat = s ? [s.lon, s.lat] : [0, 0];
-    return { key: `at:${parentOf(stop)}`, path: { pts: [p], cum: [0], length: 0 }, L: 0, vMax: 0, s: 0, v: 0, motion: "stopped" };
+    const prev = this.bodies.get(st.id);
+    return { key: `at:${parentOf(stop)}`, path: { pts: [p], cum: [0], length: 0 }, L: 0, vMax: 0, s: 0, v: 0, motion: "stopped", heading: prev?.heading ?? 0 };
   }
 
   private stepOne(st: TrainState, byId: Map<string, TrainState>, now: number, dt: number): TrainPosition | undefined {
@@ -72,6 +75,7 @@ export class Kinematics {
       // Arrived on the segment we were animating: glide the rest of the way in, then sit.
       body!.motion = body!.s < body!.L - 1 ? "braking" : "stopped";
       this.integrate(body!, body!.s < body!.L - 1 ? Math.min(body!.vMax, Math.sqrt(2 * this.opts.brake * (body!.L - body!.s))) : 0, dt);
+      this.steer(body!, dt);
       return this.emit(st, body!, now);
     }
 
@@ -88,7 +92,7 @@ export class Kinematics {
       const runTime = st.runTime ?? Math.max(60, L / 12);
       const vMax = Math.min(this.opts.vMaxAbs, Math.max(6, (1.35 * L) / runTime));
       const departed = body && (body.key === `at:${parentOf(st.prevStop)}` || parentOf(this.keyNext(body.key)) === parentOf(st.prevStop));
-      const fresh: Body = { key, path, L, vMax, s: 0, v: 0, motion: "accelerating" };
+      const fresh: Body = { key, path, L, vMax, s: 0, v: 0, motion: "accelerating", heading: body?.heading ?? headingAt(path, 0) };
       if (!departed) {
         // First sight mid-segment: replay the controller from departure to now so the
         // placement is consistent with how the train would have been animated.
@@ -108,6 +112,7 @@ export class Kinematics {
     const leaderBody = leader ? this.bodies.get(leader.id) : undefined;
     const target = this.control(body, st, now, leader && leaderBody ? { state: leader, body: leaderBody } : undefined);
     this.integrate(body, target, dt);
+    this.steer(body, dt);
     return this.emit(st, body, now);
   }
 
@@ -139,6 +144,17 @@ export class Kinematics {
     return target;
   }
 
+  /**
+   * Turn the marker toward the track's heading. The target is measured across a window of the
+   * path, and the turn itself is rate-limited, so a vertex or a correction cannot snap the arrow.
+   */
+  private steer(b: Body, dt: number) {
+    if (b.L === 0) return;
+    const target = headingAt(b.path, b.s);
+    const k = 1 - Math.exp(-dt * 3.5);
+    b.heading = lerpBearing(b.heading, target, k);
+  }
+
   private integrate(b: Body, target: number, dt: number) {
     const { accel, brake } = this.opts;
     const v0 = b.v;
@@ -153,7 +169,7 @@ export class Kinematics {
   }
 
   private emit(st: TrainState, b: Body, now: number): TrainPosition {
-    const { p, bearing } = alongPath(b.path, b.s);
+    const { p } = alongPath(b.path, b.s);
     let ribbon: LonLat[] | undefined;
     if (st.phase === "moving" && b.L > 0 && st.sigma > 0) {
       const spread = Math.min(b.L, Math.max(b.v, 2) * st.sigma);
@@ -161,7 +177,7 @@ export class Kinematics {
     }
     void now;
     return {
-      id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing,
+      id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing: b.heading,
       speed: b.v, phase: st.phase, motion: b.motion, s: b.s, length: b.L, ribbon, state: st,
     };
   }

@@ -79,6 +79,10 @@ async function main() {
   const dataLatency: number[] = [];
   const etaErr: Record<string, { raw: number[]; adj: number[]; cover: number[] }> = {};
   let reversals = 0, jumps = 0, coldPlacements = 0, steps = 0, maxSpeed = 0, maxAccel = 0, arrivals = 0;
+  const turnRates: number[] = [];
+  let turnRateMax = 0;
+  let duplicateTrainIds = 0, maxConcurrent = 0;
+  const prevBearing = new Map<string, number>();
   const pending = new Map<string, { obsTs: number; predicted: number; adjusted: number; sigma: number }[]>();
   const samples = new Map<string, Sample[]>(); // per train, ring of per-second samples (t, s)
   const prevBody = new Map<string, { key: string; s: number; v: number }>();
@@ -156,7 +160,28 @@ async function main() {
         return { id: st.id, s: smooth(p) * path.length, length: path.length, key: `${st.prevStop}>${st.nextStop}`, speed: 0, next: st.nextStop };
       });
     } else {
-      positions = kin.step(states, t, 1).map((p) => ({ id: p.id, s: p.s, length: p.length, key: `${p.state.prevStop}>${p.state.nextStop}`, speed: p.speed, next: p.state.nextStop, phase: p.phase }));
+      const stepped = kin.step(states, t, 1);
+      if (t >= scoreFrom) {
+        for (const p of stepped) {
+          const was = prevBearing.get(p.id);
+          // How fast the marker's heading swings: a snap at a polyline vertex shows up here.
+          if (was !== undefined && p.phase === "moving" && p.speed > 1) {
+            const swing = Math.abs(((p.bearing - was + 540) % 360) - 180);
+            turnRates.push(swing);
+            if (swing > turnRateMax) turnRateMax = swing;
+          }
+          prevBearing.set(p.id, p.bearing);
+        }
+        // The same physical train should never be drawn twice.
+        const byTrain = new Map<string, number>();
+        for (const st of states) {
+          if (!st.trainId) continue;
+          byTrain.set(st.trainId, (byTrain.get(st.trainId) ?? 0) + 1);
+        }
+        for (const n of byTrain.values()) if (n > 1) duplicateTrainIds++;
+        maxConcurrent = Math.max(maxConcurrent, states.length);
+      }
+      positions = stepped.map((p) => ({ id: p.id, s: p.s, length: p.length, key: `${p.state.prevStop}>${p.state.nextStop}`, speed: p.speed, next: p.state.nextStop, phase: p.phase }));
     }
     const seen = new Set<string>();
     for (const p of positions) {
@@ -194,7 +219,13 @@ async function main() {
       shortMedianM: q(short, 0.5), shortP90M: q(short, 0.9), shortMeanM: mean(short),
       earlyShare: early.length / Math.max(1, short.length + early.length), earlyMedianS: q(early, 0.5), earlyP90S: q(early, 0.9),
     },
-    motion: { steps, reversals, jumps, coldPlacements, maxSpeedMps: maxSpeed, maxAccelMps2: maxAccel },
+    motion: {
+      steps, reversals, jumps, coldPlacements, maxSpeedMps: maxSpeed, maxAccelMps2: maxAccel,
+      turnRateP99: q(turnRates, 0.99), turnRateMax,
+      duplicateTrainIds, maxConcurrent,
+      straightFallbackShare: net.stats.paths ? net.stats.straightFallback / net.stats.paths : 0,
+      chainedShare: net.stats.paths ? net.stats.chained / net.stats.paths : 0,
+    },
     dataLatencyS: { median: q(dataLatency, 0.5), p90: q(dataLatency, 0.9) },
     eta: Object.fromEntries(buckets.filter((b) => etaErr[b]).map((b) => [b, {
       n: etaErr[b].raw.length,
@@ -219,6 +250,9 @@ async function main() {
   console.log(`| jumps > 40 m/s | ${jumps} |`);
   console.log(`| cold mid-segment placements | ${coldPlacements} |`);
   console.log(`| max speed / accel | ${f1(maxSpeed)} m/s · ${f1(maxAccel)} m/s² |`);
+  console.log(`| heading swing p99 / max | ${f1(report.motion.turnRateP99)}°/s · ${f1(report.motion.turnRateMax)}°/s |`);
+  console.log(`| duplicate train ids | ${duplicateTrainIds} |`);
+  console.log(`| track unknown (straight-line) | ${pct(report.motion.straightFallbackShare)} of segments |`);
   console.log(`\n| horizon | n | MTA MAE | MTA bias | ours MAE | ours bias | 1σ coverage |\n|---|---|---|---|---|---|---|`);
   for (const b of buckets) {
     const e = report.eta[b];

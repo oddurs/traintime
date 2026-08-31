@@ -34,6 +34,10 @@ export interface Network {
   schedRun: Record<string, number>;
   /** Parent station id -> routes that serve it, in official order. */
   stationRoutes: Record<string, string[]>;
+  /** Segment key -> route -> [lane offset about the centreline, services sharing the corridor]. */
+  segmentSlots: Record<string, Record<string, [number, number]>>;
+  /** Per route, the continuous strokes to draw: an ordered station sequence sharing one lane. */
+  routeRuns: Record<string, { slot: number; shared: number; stops: string[] }[]>;
 }
 
 // ---------------------------------------------------------------------------

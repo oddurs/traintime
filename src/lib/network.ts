@@ -8,6 +8,8 @@ export class NetworkIndex {
   private pathCache = new Map<string, Path>();
   private segCache = new Map<string, Path>();
   private mergedPrev: Record<string, string[]> = {};
+  /** Diagnostics: how often we had to guess a train's track instead of knowing it. */
+  readonly stats = { paths: 0, chained: 0, straightFallback: 0 };
 
   constructor(public readonly net: Network) {
     for (const m of Object.values(net.prevOf)) {
@@ -64,9 +66,11 @@ export class NetworkIndex {
     const key = `${route}|${prevDir}|${nextDir}`;
     const cached = this.pathCache.get(key);
     if (cached) return cached;
+    this.stats.paths++;
     const pa = parentOf(prevDir), pb = parentOf(nextDir);
     let path = this.segment(pa, pb);
     if (!path) {
+      this.stats.chained++;
       const chain = this.findChain(route, prevDir, nextDir);
       if (chain) {
         const pts: LonLat[] = [];
@@ -80,6 +84,7 @@ export class NetworkIndex {
       }
     }
     if (!path) {
+      this.stats.straightFallback++;
       const a = this.station(pa), b = this.station(pb);
       const pa_: LonLat = a ? [a.lon, a.lat] : [0, 0];
       const pb_: LonLat = b ? [b.lon, b.lat] : pa_;

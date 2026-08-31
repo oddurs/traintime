@@ -9,6 +9,8 @@
  *   prevOf        - per route: for each directional stop id, which stops precede it
  *   routeSegments - per route: which segment keys make up the line (for drawing)
  *   stationRoutes - per parent station: which routes serve it
+ *   segmentSlots  - per segment, the lane each route occupies among the services sharing that
+ *                   corridor, so parallel lines can be fanned out on the map
  *
  * Usage: npx tsx scripts/build-network.ts [--zip path/to/gtfs_subway.zip]
  */
@@ -93,12 +95,59 @@ function projectOnto(
   return best;
 }
 
+/**
+ * Chaikin corner cutting. The GTFS shapes turn a few degrees at half their vertices, which reads
+ * as a jagged line once the track is drawn thick and offset into lanes; cutting corners twice
+ * turns those kinks into curves. Endpoints are pinned so a segment still starts and ends at its
+ * stations.
+ */
+function chaikin(line: LonLat[], iterations = 2): LonLat[] {
+  let out = line;
+  for (let it = 0; it < iterations; it++) {
+    if (out.length < 3) return out;
+    const next: LonLat[] = [out[0]];
+    for (let i = 0; i + 1 < out.length; i++) {
+      const a = out[i], b = out[i + 1];
+      next.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+      next.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+    }
+    next.push(out[out.length - 1]);
+    out = next;
+  }
+  return out;
+}
+
+/** Douglas-Peucker, with the tolerance in metres, to undo the point explosion on straight runs. */
+function simplify(line: LonLat[], toleranceM = 1.5): LonLat[] {
+  if (line.length < 3) return line;
+  const cosLat = Math.cos((line[0][1] * Math.PI) / 180);
+  const xy = line.map((p) => [p[0] * 111_320 * cosLat, p[1] * 111_320] as [number, number]);
+  const keep = new Uint8Array(line.length);
+  keep[0] = keep[line.length - 1] = 1;
+  const stack: [number, number][] = [[0, line.length - 1]];
+  while (stack.length) {
+    const [lo, hi] = stack.pop()!;
+    if (hi - lo < 2) continue;
+    const [ax, ay] = xy[lo], [bx, by] = xy[hi];
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1;
+    let far = -1, best = toleranceM;
+    for (let i = lo + 1; i < hi; i++) {
+      const d = Math.abs((xy[i][0] - ax) * dy - (xy[i][1] - ay) * dx) / len;
+      if (d > best) { best = d; far = i; }
+    }
+    if (far > 0) { keep[far] = 1; stack.push([lo, far], [far, hi]); }
+  }
+  return line.filter((_, i) => keep[i]);
+}
+
 function lerp(a: LonLat, b: LonLat, t: number): LonLat {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
 }
 
 function round(p: LonLat): LonLat {
-  return [Math.round(p[0] * 1e5) / 1e5, Math.round(p[1] * 1e5) / 1e5];
+  // 6 decimals is ~0.1 m: fine enough that corner smoothing is not quantised back into kinks.
+  return [Math.round(p[0] * 1e6) / 1e6, Math.round(p[1] * 1e6) / 1e6];
 }
 
 // --- Main -------------------------------------------------------------------
@@ -248,9 +297,163 @@ async function main() {
         if (!last || last[0] !== p[0] || last[1] !== p[1]) cleaned.push(p);
       }
       if (cleaned.length < 2) { const sa = stations[pa], sb = stations[pb]; cleaned.splice(0, cleaned.length, round([sa.lon, sa.lat]), round([sb.lon, sb.lat])); }
-      segments[key] = forward ? cleaned : cleaned.reverse();
+      const smoothed = simplify(chaikin(cleaned, 4), 0.3).map(round);
+      segments[key] = forward ? smoothed : smoothed.reverse();
     }
   }
+
+  // --- Corridors -------------------------------------------------------------
+  // Two services "share track" when their geometry runs alongside, which is not the same as
+  // sharing a station pair: on Lexington Avenue the 4 and 5 run express over three of the 6's
+  // segments, so they never share a key. Detect it from the geometry instead — sample every
+  // line into a coarse grid, remembering the direction of travel through each cell, and treat
+  // routes as neighbours only where they pass through the same cell going the same way (which
+  // keeps perpendicular crossings from being mistaken for shared track).
+  const routeSegmentList: Record<string, string[]> = Object.fromEntries(
+    Object.entries(routeSegments).map(([r, set]) => [r, [...set]]),
+  );
+  const CELL_M = 35;
+  const STEP_M = 18;
+  const cellKey = (lon: number, lat: number) => {
+    const y = Math.round((lat * 111_320) / CELL_M);
+    const x = Math.round((lon * 111_320 * Math.cos((lat * Math.PI) / 180)) / CELL_M);
+    return `${x}:${y}`;
+  };
+  const bearingOf = (a: LonLat, b: LonLat) => {
+    const cos = Math.cos((((a[1] + b[1]) / 2) * Math.PI) / 180);
+    return (Math.atan2((b[0] - a[0]) * cos, b[1] - a[1]) * 180) / Math.PI;
+  };
+  /** Walk a polyline emitting a point roughly every STEP_M metres, with the local bearing. */
+  function* walk(line: LonLat[]): Generator<{ p: LonLat; bearing: number }> {
+    for (let i = 0; i + 1 < line.length; i++) {
+      const a = line[i], b = line[i + 1];
+      const cos = Math.cos((((a[1] + b[1]) / 2) * Math.PI) / 180);
+      const dx = (b[0] - a[0]) * 111_320 * cos, dy = (b[1] - a[1]) * 111_320;
+      const len = Math.hypot(dx, dy);
+      const bearing = bearingOf(a, b);
+      const steps = Math.max(1, Math.round(len / STEP_M));
+      for (let k = 0; k < steps; k++) {
+        const t = k / steps;
+        yield { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], bearing };
+      }
+    }
+    if (line.length) yield { p: line[line.length - 1], bearing: line.length > 1 ? bearingOf(line[line.length - 2], line[line.length - 1]) : 0 };
+  }
+  /** Angle between two undirected line directions, 0..90. */
+  const align = (a: number, b: number) => {
+    let d = Math.abs(a - b) % 180;
+    if (d > 90) d = 180 - d;
+    return d;
+  };
+
+  const cellRoutes = new Map<string, { route: string; bearing: number }[]>();
+  for (const [route, keys] of Object.entries(routeSegmentList)) {
+    for (const key of keys) {
+      const line = segments[key];
+      if (!line) continue;
+      for (const { p, bearing } of walk(line)) {
+        const k = cellKey(p[0], p[1]);
+        const list = cellRoutes.get(k) ?? cellRoutes.set(k, []).get(k)!;
+        if (!list.some((e) => e.route === route && align(e.bearing, bearing) < 20)) list.push({ route, bearing });
+      }
+    }
+  }
+
+  const routeSegments_ = new Map<string, string[]>();
+  for (const [route, keys] of Object.entries(routeSegmentList)) {
+    for (const key of keys) (routeSegments_.get(key) ?? routeSegments_.set(key, []).get(key)!).push(route);
+  }
+
+  const segmentSlots: Record<string, Record<string, [number, number]>> = {};
+  const order = (r: string) => routes[r]?.sortOrder ?? 999;
+  for (const [key, line] of Object.entries(segments)) {
+    const own = [...(routeSegments_.get(key) ?? [])];
+    if (own.length === 0) continue;
+    const seen = new Map<string, number>();
+    let samples = 0;
+    for (const { p, bearing } of walk(line)) {
+      samples++;
+      const y = Math.round((p[1] * 111_320) / CELL_M);
+      const x = Math.round((p[0] * 111_320 * Math.cos((p[1] * Math.PI) / 180)) / CELL_M);
+      const near = new Set<string>();
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (const e of cellRoutes.get(`${x + dx}:${y + dy}`) ?? []) {
+            if (align(e.bearing, bearing) < 25) near.add(e.route);
+          }
+        }
+      }
+      for (const r of near) seen.set(r, (seen.get(r) ?? 0) + 1);
+    }
+    // A route shares this corridor if it runs alongside for most of the segment.
+    const corridor = [...seen.entries()].filter(([r, n]) => n >= samples * 0.6 || own.includes(r)).map(([r]) => r);
+    corridor.sort((a, b) => order(a) - order(b));
+    // Services sharing a trunk share a colour by design (the 4, 5 and 6 are all Lexington green),
+    // so lanes are assigned per colour: one green trunk here, but red beside green where the
+    // Eastern Parkway lines run together. Routes in the same colour group get the same lane.
+    const lanes: string[] = [];
+    for (const r of corridor) {
+      const c = routes[r]?.color ?? r;
+      if (!lanes.includes(c)) lanes.push(c);
+    }
+    const n = lanes.length;
+    const slots: Record<string, [number, number]> = {};
+    for (const r of own) {
+      const i = lanes.indexOf(routes[r]?.color ?? r);
+      slots[r] = [i < 0 ? 0 : i - (n - 1) / 2, n];
+    }
+    segmentSlots[key] = slots;
+  }
+  const shared = Object.values(segmentSlots).filter((s) => Object.values(s).some(([, n]) => n > 1)).length;
+  console.log(`corridors: ${shared} of ${Object.keys(segmentSlots).length} segments share track`);
+
+  // --- Continuous runs --------------------------------------------------------
+  // Drawing one disconnected feature per segment leaves a hard butt end wherever a lane changes,
+  // which is what makes a converging line look like it was cut off. Instead, chain each route's
+  // segments into the longest runs that keep the same lane, so a line is one continuous stroke
+  // from where it joins a corridor to where it leaves. Runs are stored as station sequences; the
+  // client stitches the geometry it already has.
+  const routeRuns: Record<string, { slot: number; shared: number; stops: string[] }[]> = {};
+  for (const [route, keySet] of Object.entries(routeSegmentList)) {
+    const edges = keySet
+      .filter((k) => segments[k])
+      .map((k) => {
+        const [a, b] = k.split("-");
+        const [slot, shared] = segmentSlots[k]?.[route] ?? [0, 1];
+        return { k, a, b, slot, shared };
+      });
+    const adj = new Map<string, typeof edges>();
+    for (const e of edges) {
+      (adj.get(e.a) ?? adj.set(e.a, []).get(e.a)!).push(e);
+      (adj.get(e.b) ?? adj.set(e.b, []).get(e.b)!).push(e);
+    }
+    const used = new Set<string>();
+    const runs: { slot: number; shared: number; stops: string[] }[] = [];
+    /** Extend from `station` while exactly one unused edge continues with the same lane. */
+    const extend = (station: string, slot: number, stops: string[], append: boolean) => {
+      let cur = station;
+      for (;;) {
+        const options = (adj.get(cur) ?? []).filter((e) => !used.has(e.k) && e.slot === slot);
+        if (options.length !== 1) break;
+        const e = options[0];
+        used.add(e.k);
+        cur = e.a === cur ? e.b : e.a;
+        if (append) stops.push(cur); else stops.unshift(cur);
+      }
+    };
+    for (const e of edges) {
+      if (used.has(e.k)) continue;
+      used.add(e.k);
+      const stops = [e.a, e.b];
+      extend(e.b, e.slot, stops, true);
+      extend(e.a, e.slot, stops, false);
+      runs.push({ slot: e.slot, shared: e.shared, stops });
+    }
+    routeRuns[route] = runs;
+  }
+  const runCount = Object.values(routeRuns).reduce((n, r) => n + r.length, 0);
+  const segCount = Object.values(routeSegmentList).reduce((n, r) => n + r.length, 0);
+  console.log(`runs: ${segCount} route-segments chained into ${runCount} continuous strokes`);
 
   const out = {
     generatedAt: new Date().toISOString(),
@@ -263,6 +466,8 @@ async function main() {
     ),
     routeSegments: Object.fromEntries(Object.entries(routeSegments).map(([r, s]) => [r, [...s]])),
     schedRun: Object.fromEntries(Object.entries(schedRunSum).map(([k, v]) => [k, Math.round(v.sum / v.n)])),
+    segmentSlots,
+    routeRuns,
     stationRoutes: Object.fromEntries(
       Object.entries(stationRoutes).map(([k, v]) => [
         k,

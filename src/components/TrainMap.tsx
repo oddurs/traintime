@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { Selection, TrainPosition, TrainState } from "@/lib/types";
+import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
 import { NetworkIndex } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
 import { addRouteIcons, chevronId } from "@/lib/icons";
@@ -46,20 +46,46 @@ interface Props {
 
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
+/**
+ * One feature per continuous stroke: a route's segments chained together while they keep the
+ * same lane, so a line joining or leaving a shared corridor is drawn as one unbroken curve with
+ * a rounded end, instead of a series of butt-ended pieces.
+ */
 function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
-  const net = index.net;
-  return {
-    type: "FeatureCollection",
-    features: Object.values(net.routes)
-      .sort((a, b) => b.sortOrder - a.sortOrder)
-      .filter((r) => net.routeSegments[r.id]?.length)
-      .map((r) => ({
+  const features: GeoJSON.Feature[] = [];
+  for (const [route, runs] of Object.entries(index.net.routeRuns)) {
+    const r = index.net.routes[route];
+    if (!r) continue;
+    for (const run of runs) {
+      const coordinates: LonLat[] = [];
+      for (let i = 0; i + 1 < run.stops.length; i++) {
+        const u = run.stops[i], v = run.stops[i + 1];
+        const seg = index.net.segments[u < v ? `${u}-${v}` : `${v}-${u}`];
+        if (!seg) continue;
+        const piece = u < v ? seg : [...seg].reverse();
+        for (const p of piece) {
+          const last = coordinates[coordinates.length - 1];
+          if (!last || last[0] !== p[0] || last[1] !== p[1]) coordinates.push(p);
+        }
+      }
+      if (coordinates.length < 2) continue;
+      features.push({
         type: "Feature",
-        properties: { route: r.id, color: r.color },
-        geometry: { type: "MultiLineString", coordinates: net.routeSegments[r.id].map((k) => net.segments[k]) },
-      })),
-  };
+        properties: { route, color: r.color, slot: run.slot, shared: run.shared },
+        geometry: { type: "LineString", coordinates },
+      });
+    }
+  }
+  return { type: "FeatureCollection", features };
 }
+
+/** Perpendicular offset in pixels for a route's slot, widening as the map zooms in. */
+const SLOT_OFFSET: maplibregl.ExpressionSpecification = [
+  "interpolate", ["linear"], ["zoom"],
+  10, ["*", ["get", "slot"], 1.3],
+  13, ["*", ["get", "slot"], 3],
+  16, ["*", ["get", "slot"], 7],
+];
 
 function stationPoints(index: NetworkIndex): GeoJSON.FeatureCollection {
   return {
@@ -194,13 +220,21 @@ export default function TrainMap(props: Props) {
 
       map.addLayer({
         id: "routes-casing", type: "line", source: "routes",
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": "#000", "line-opacity": 0.5, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 3, 14, 8] },
+        layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
+        paint: {
+          "line-color": "#000", "line-opacity": 0.75,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.3, 13, 3.9, 16, 6.6],
+          "line-offset": SLOT_OFFSET,
+        },
       });
       map.addLayer({
         id: "routes-line", type: "line", source: "routes",
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: { "line-color": ["get", "color"], "line-opacity": 0.9, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.4, 14, 4.5] },
+        layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
+        paint: {
+          "line-color": ["get", "color"], "line-opacity": 0.95,
+          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.1, 13, 2.3, 16, 4.2],
+          "line-offset": SLOT_OFFSET,
+        },
       });
       map.addLayer({
         id: "focus-ring", type: "circle", source: "focus",
@@ -317,6 +351,10 @@ export default function TrainMap(props: Props) {
     const filter: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
     map.setFilter("routes-line", filter);
     map.setFilter("routes-casing", filter);
+    // Lanes only mean something when the neighbours are drawn; a single line sits on its track.
+    const offset = list.length === 1 ? 0 : SLOT_OFFSET;
+    map.setPaintProperty("routes-line", "line-offset", offset);
+    map.setPaintProperty("routes-casing", "line-offset", offset);
   }, [visibleRoutes, index]);
 
   // --- selection highlight and camera
