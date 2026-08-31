@@ -13,6 +13,16 @@ export const FEEDS: { id: string; cadence: number }[] = [
   { id: "gtfs-si", cadence: 15 },
 ];
 
+/**
+ * The realtime feed does not always use the schedule's route ids. The Staten Island Railway is
+ * "SS" in the feed and "SI" in the GTFS, which left five trains a day matching no known route:
+ * drawn in the fallback grey, with no chevron, and invisible to the SI filter — the same railway
+ * appearing twice in two colours. Normalise at the boundary so nothing downstream has to know.
+ */
+export const ROUTE_ALIASES: Record<string, string> = { SS: "SI" };
+
+export const canonicalRoute = (id: string) => ROUTE_ALIASES[id] ?? id;
+
 interface RawStopTime {
   stopId?: string;
   arrival?: { time?: number };
@@ -59,10 +69,10 @@ export function normalize(feed: RawFeed): TrainUpdate[] {
     if (!trip?.tripId) continue;
     let t = trains.get(trip.tripId);
     if (!t) {
-      t = { id: trip.tripId, route: trip.routeId ?? "", direction: "N", stops: [], assigned: true };
+      t = { id: trip.tripId, route: canonicalRoute(trip.routeId ?? ""), direction: "N", stops: [], assigned: true };
       trains.set(trip.tripId, t);
     }
-    if (trip.routeId) t.route = trip.routeId;
+    if (trip.routeId) t.route = canonicalRoute(trip.routeId);
     const ext = trip.nyctTripDescriptor;
     if (ext) {
       if (ext.trainId) t.trainId = ext.trainId;

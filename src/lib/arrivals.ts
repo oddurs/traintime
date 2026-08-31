@@ -46,7 +46,9 @@ export function arrivalsAt(
   const to = destination ? new Set(index.complexStations(destination)) : undefined;
   const found: Arrival[] = [];
   for (const st of states) {
-    if (st.phase === "unstarted") continue;
+    // Neither a train that has not started nor one the feed has stopped updating belongs on a
+    // board: both would be presented as something a rider could catch.
+    if (st.phase === "unstarted" || st.stale) continue;
     const dest = st.destination ?? (st.stops.length ? st.stops[st.stops.length - 1].id : st.nextStop);
     if (st.phase === "dwelling" && target.has(parentOf(st.nextStop))) {
       let destEta: number | undefined;

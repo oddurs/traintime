@@ -451,7 +451,7 @@ async function main() {
   }
   const complexOf: Record<string, string> = {};
   const complexes: Record<string, { name: string; stations: string[]; routes: string[] }> = {};
-  for (const [root, ids] of groups) {
+  for (const ids of groups.values()) {
     const best = [...ids].sort((a, b) => {
       const ra = (stationRoutes[a]?.size ?? 0), rb = (stationRoutes[b]?.size ?? 0);
       if (ra !== rb) return rb - ra;

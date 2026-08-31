@@ -134,7 +134,12 @@ function App({ index }: { index: NetworkIndex | null }) {
   }, [selection, touchPlace]);
 
   const select = useCallback((s: Selection) => {
-    setSelection(s);
+    setSelection((cur) => {
+      // Changing where you are starting from ends the old journey: keeping the destination gives
+      // an empty board that reads like broken data rather than a finished trip.
+      if (s.kind === "station" && !(cur.kind === "station" && cur.id === s.id)) setDestination(undefined);
+      return s;
+    });
     setFollow(false);
     setNearby(false);
     setFocusKey((k) => k + 1);

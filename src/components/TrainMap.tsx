@@ -200,7 +200,7 @@ export default function TrainMap(props: Props) {
           properties: {
             id: p.id, route: p.route, label: p.route.replace(/X$/, "").slice(0, 2),
             color: r?.color ?? "#808183", textColor: r?.textColor ?? "#ffffff",
-            ghost: p.phase === "unstarted" || !p.state.assigned,
+            ghost: p.phase === "unstarted" || !p.state.assigned || !!p.state.stale,
             holding: p.motion === "holding", moving, bearing: Math.round(p.bearing),
             chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
           },
@@ -412,7 +412,20 @@ export default function TrainMap(props: Props) {
     if (!keys.length) return;
     const b = new maplibregl.LngLatBounds();
     for (const k of keys) for (const p of index.net.segments[k]) b.extend(p as [number, number]);
-    map.fitBounds(b, { padding: { top: 60, bottom: 60, left: minimal ? 60 : 340, right: 60 }, duration: reducedMotion ? 0 : 900 });
+    // Pad around whatever the panel actually covers. On a phone it is a bottom sheet, not a left
+    // panel, and asking for 340px of inset on a 390px viewport makes MapLibre refuse outright.
+    const { width, height } = map.getCanvas().getBoundingClientRect();
+    const narrow = width < 700;
+    const pad = (v: number, extent: number) => Math.max(20, Math.min(v, extent / 2 - 40));
+    map.fitBounds(b, {
+      padding: {
+        top: pad(48, height),
+        bottom: pad(narrow && !minimal ? height * 0.42 : 48, height),
+        left: pad(narrow || minimal ? 32 : 348, width),
+        right: pad(48, width),
+      },
+      duration: reducedMotion ? 0 : 900,
+    });
   }, [fitRoute, index, minimal, reducedMotion]);
 
   return <div ref={containerRef} className="map" />;

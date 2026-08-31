@@ -95,6 +95,20 @@ async function main() {
         recorder: { ...recorder.counts, disk },
         context: context.status(),
         timing: { learned: timing.isLearned, model: !!timing.model, generatedAt: timing.tables?.generatedAt ?? null, events: timing.tables?.samples.events ?? 0 },
+        // Correctness the deployed system reports about itself, rather than waiting to be asked.
+        invariants: (() => {
+          const states = tracker.states(now);
+          let backwards = 0, unknownRoute = 0, stale = 0, futureArrival = 0;
+          for (const st of states) {
+            if (!net.net.routes[st.route]) unknownRoute++;
+            if (st.stale) stale++;
+            if (st.arrivedAt && st.arrivedAt > now + 5) futureArrival++;
+            for (let i = 1; i < st.stops.length; i++) {
+              if (st.stops[i].eta < st.stops[i - 1].eta - 1) { backwards++; break; }
+            }
+          }
+          return { trains: states.length, backwards, unknownRoute, stale, futureArrival, unknownStops: [...tracker.unknownStops].sort() };
+        })(),
         learn: lastLearn,
         maintenance: lastMaintenance,
       };

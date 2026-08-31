@@ -73,6 +73,12 @@ const ETA_OBS_STOPS = 3;
  * contradicts reality while still catching predictions that are physically impossible.
  */
 const CLEARANCE_S = 40;
+/**
+ * The realtime feed sometimes names stops that are in no published schedule — yard tracks and
+ * supplement-only ids such as X22 and H19. There is no geometry and no name for them, so showing
+ * one to a rider means showing a raw id where a station should be.
+ */
+const UNKNOWN_STOP_LIMIT = 900;
 
 const nyTime = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false, weekday: "short" });
 const DOW: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -102,6 +108,8 @@ export class Tracker {
   feeds = new Map<string, FeedStatus>();
   /** Latest feed timestamp seen across feeds. */
   clock = 0;
+  /** Stops the feeds referenced that the schedule does not contain, for reporting. */
+  readonly unknownStops = new Set<string>();
 
   constructor(
     private readonly net: NetworkIndex,
@@ -135,6 +143,9 @@ export class Tracker {
         };
         this.mem.set(u.id, m);
       } else if (v && (v.stopId !== m.stopId || v.status !== m.status)) {
+        // A vehicle timestamp from the future is a feed error, not information; taking it at face
+        // value produces trains that "arrived" after the clock we are drawing them at.
+        if (v.timestamp !== undefined && v.timestamp > tick.ts + 60) v.timestamp = tick.ts;
         const ts = v.timestamp ?? tick.ts;
         const base = { feedTs: tick.ts, tripId: u.id, route: u.route, direction: u.direction };
         // Left the stop we were at or heading to. Departures are observed only when the vehicle
@@ -251,6 +262,10 @@ export class Tracker {
     }
     const byId = this.assignLeaders(out);
     this.applyLeaderConstraint(out, byId, hour, cond);
+    // The feed keeps publishing some trains long after they stop doing anything — one had been
+    // "at a platform" for over three hours. It is still data, but it is not a running train, and
+    // presenting it as one is worse than admitting we have lost track of it.
+    for (const st of out) if (now - st.updatedAt > UNKNOWN_STOP_LIMIT) st.stale = true;
     return out;
   }
 
@@ -261,8 +276,9 @@ export class Tracker {
     const v = u.vehicle;
     const base = {
       id: u.id, route: u.route, direction: u.direction, trainId: u.trainId, assigned: u.assigned,
-      // The predictions below are capped for the wire; the terminal comes from the full list.
-      destination: u.stops[u.stops.length - 1]?.id,
+      // The predictions below are capped for the wire; the terminal comes from the full list —
+      // the last stop we can actually name, since the feed's tail is sometimes a yard track.
+      destination: [...u.stops].reverse().find((x) => this.net.station(x.id))?.id ?? u.stops[u.stops.length - 1]?.id,
       updatedAt: m.changedAt,
     };
 
@@ -336,11 +352,23 @@ export class Tracker {
   private predictions(u: TrainUpdate, now: number, hour: number, dow: number, prev: string | undefined, from: number, bias = 0, adjusted?: Map<string, number>): StopPrediction[] {
     const out: StopPrediction[] = [];
     let p = prev;
+    let floor = -Infinity;
     for (let i = from; i < Math.min(u.stops.length, 12); i++) {
       const s = u.stops[i];
+      // A stop that is in no schedule cannot be drawn, named or navigated to; leave it out of
+      // what we show rather than surfacing an internal id.
+      if (!this.net.station(s.id)) { this.unknownStops.add(parentOf(s.id)); continue; }
       const { eta, sigma } = this.timing.adjustEta({ raw: s.arrival, now, route: u.route, prev: p, next: s.id, hour, dow, bias });
-      out.push({ id: s.id, eta, etaRaw: s.arrival, sigma, track: s.track });
-      adjusted?.set(s.id, eta);
+      // Each stop is corrected on its own, with its own segment and horizon, so the corrected
+      // series can cross over itself and show a later stop arriving sooner — 158 such pairs across
+      // the system, none of them present in the feed we started from. A train cannot reach a stop
+      // before the one before it, so the sequence is held in order here, pushed later and never
+      // earlier, by at least the time that stretch of track actually takes.
+      const minRun = p ? Math.max(15, this.timing.runTime(p, s.id, hour, u.route) * 0.4) : 15;
+      const ordered = Math.max(eta, floor + minRun);
+      floor = ordered;
+      out.push({ id: s.id, eta: ordered, etaRaw: s.arrival, sigma, track: s.track });
+      adjusted?.set(s.id, ordered);
       p = s.id;
     }
     return out;
