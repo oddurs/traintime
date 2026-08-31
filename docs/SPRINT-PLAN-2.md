@@ -12,18 +12,24 @@ Built overnight on 31 August 2026. What each sprint became, and what the numbers
 
 ## What the numbers say now
 
-Over the overnight window, against arrivals the feed later reported:
+A full day of recording later, scored over the PM rush (2:47–4:37 PM), against the arrivals the
+feed itself went on to report — 20,167 of them:
 
 | horizon | MTA error | traintime | within our ±1σ |
 |---|---|---|---|
-| under 45 s | 30.5 s | 6.3 s | 90% |
-| 45 s – 2 min | 129.1 s | 116.0 s | 67% |
-| 2 – 5 min | 89.1 s | 71.9 s | 69% |
-| 5 – 15 min | 124.3 s | 78.4 s | 75% |
+| under 45 s | 29.8 s | **4.5 s** | 93% |
+| 45 s – 2 min | 35.9 s | **25.0 s** | 68% |
+| 2 – 5 min | 44.4 s | **29.9 s** | 68% |
+| 5 – 15 min | 75.2 s | **48.5 s** | 71% |
 
-Overnight is a hard window — the MTA's own error is three times what it is in the evening, because
-service is sparse and half the lines are rerouted for track work. Runs are only comparable within
-the same window.
+Calibration is now essentially exact at the target of 68%: when the app says "give or take 30
+seconds", it means it. Motion holds up too — 0 reversals across 5.0 million simulated
+train-seconds, and the marker sits a median 178 m from the platform at the moment a train really
+arrives.
+
+Overnight is a much harder window (the MTA's own error is three times its daytime figure, with
+sparse service and half the lines rerouted for track work), so runs are only comparable within the
+same window.
 
 ## Findings worth keeping
 
@@ -35,13 +41,29 @@ the same window.
 - **`line-offset` is relative to each feature's drawing direction**, so lanes must be baked into the
   geometry or two routes can end up in the same lane.
 
+## Done since
+
+- **Leader clearance.** A train cannot reach a platform before the one in front has left it; the
+  floor is 40 s, taken from the 5th percentile of observed departure-to-next-arrival. Measured over
+  the same window it is close to neutral on average, because the feed usually already respects
+  block spacing — it is kept as a guarantee that the map can never show something impossible.
+- **Station complexes.** Built from `transfers.txt`, so "Times Sq" means all thirteen routes a
+  rider can catch there rather than the three on one GTFS platform. Search and "nearest station"
+  work in complexes too.
+- **The trip view.** Name a destination and the board becomes a journey: only trains that serve it,
+  with the arrival time there and the ride length, from our own per-stop predictions.
+- **A hard storage ceiling.** Raw ticks are 98% of the footprint; age-based retention estimates,
+  a byte budget guarantees.
+
 ## Still open
 
-- Leader propagation: a train cannot arrive before the one ahead departs, and that is the largest
-  remaining error at the 2–5 minute horizon.
-- Terminal departures, and the approach model (`INCOMING_AT` → arrival) for the last thirty seconds.
-- Crossings are still flat; a line passing under another shows no break.
-- A commute (origin → destination) rather than a single station.
+- Terminal departures: trains that have not started are placed by schedule alone, which is the
+  worst horizon (>15 min, 130 s).
+- Crossings are still flat; a line passing under another shows no break. The fix needs an
+  arbitrary over/under assignment, so it was left rather than guessed at.
+- Conditioning on hour-of-week and weather still loses to the plain per-segment median, tested
+  four ways on a full day. The machinery is built and gated; it will switch itself on if the data
+  ever supports it.
 
 ---
 
