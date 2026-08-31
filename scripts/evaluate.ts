@@ -91,6 +91,9 @@ async function main() {
   };
   const prevBearing = new Map<string, number>();
   const pending = new Map<string, { obsTs: number; predicted: number; adjusted: number; sigma: number }[]>();
+  /** What the app actually displayed: the state's own eta for its next stop, scored on arrival. */
+  const shown = new Map<string, { at: number; eta: number; sigma: number }[]>();
+  const shownErr: Record<string, { err: number[]; cover: number[] }> = {};
   const samples = new Map<string, Sample[]>(); // per train, ring of per-second samples (t, s)
   const prevBody = new Map<string, { key: string; s: number; v: number }>();
 
@@ -133,6 +136,15 @@ async function main() {
           acc.cover.push(Math.abs(e.ts - o.adjusted) <= o.sigma ? 1 : 0);
         }
         pending.delete(k);
+        for (const o of shown.get(k) ?? []) {
+          const h = o.eta - o.at;
+          if (h < -30) continue;
+          const b = horizonBucket(h);
+          const acc = (shownErr[b] ??= { err: [], cover: [] });
+          acc.err.push(e.ts - o.eta);
+          acc.cover.push(Math.abs(e.ts - o.eta) <= o.sigma ? 1 : 0);
+        }
+        shown.delete(k);
         // Position scoring: where was the marker at the moment of arrival?
         const ring = samples.get(e.tripId);
         const at = ring?.find((s0) => Math.abs((s0 as Sample & { t: number }).t - e.ts) < 0.5) as (Sample & { t: number }) | undefined;
@@ -151,7 +163,22 @@ async function main() {
         }
       }
     }
-    if (ingested) { tracker.expire(t); states = tracker.states(t); }
+    if (ingested) {
+      tracker.expire(t);
+      states = tracker.states(t);
+      if (t >= scoreFrom) {
+        for (const st of states) {
+          if (st.phase !== "moving") continue;
+          const k = `${st.id}|${st.nextStop}`;
+          // Skip predictions clamped to "now": an overdue train is not making a forecast, and
+          // counting those would drown the measurement in zero-horizon samples.
+          if (st.eta <= t + 1) continue;
+          const list = shown.get(k) ?? shown.set(k, []).get(k)!;
+          const last = list[list.length - 1];
+          if (!last || t - last.at >= 30) list.push({ at: t, eta: st.eta, sigma: st.sigma });
+        }
+      }
+    }
 
     // one second of motion
     let positions;
@@ -256,6 +283,12 @@ async function main() {
       adjMae: mean(etaErr[b].adj.map(Math.abs)), adjBias: q(etaErr[b].adj, 0.5),
       coverage: mean(etaErr[b].cover),
     }])),
+    shown: Object.fromEntries(buckets.filter((b) => shownErr[b]).map((b) => [b, {
+      n: shownErr[b].err.length,
+      mae: mean(shownErr[b].err.map(Math.abs)),
+      bias: q(shownErr[b].err, 0.5),
+      coverage: mean(shownErr[b].cover),
+    }])),
   };
   mkdirSync(join(ROOT, "data", "eval"), { recursive: true });
   const out = join(ROOT, "data", "eval", `${name}.json`);
@@ -284,6 +317,12 @@ async function main() {
     const e = report.eta[b];
     if (!e) continue;
     console.log(`| ${labels[b]} | ${e.n} | ${f1(e.rawMae)} s | ${f1(e.rawBias)} s | ${f1(e.adjMae)} s | ${f1(e.adjBias)} s | ${pct(e.coverage)} |`);
+  }
+  console.log(`\n| what the app showed | n | MAE | bias | 1σ coverage |\n|---|---|---|---|---|`);
+  for (const b of buckets) {
+    const e = (report as unknown as { shown: Record<string, { n: number; mae: number; bias: number; coverage: number }> }).shown[b];
+    if (!e) continue;
+    console.log(`| ${labels[b]} | ${e.n} | ${f1(e.mae)} s | ${f1(e.bias)} s | ${pct(e.coverage)} |`);
   }
   console.log(`\nwrote ${out}`);
   conn.closeSync();

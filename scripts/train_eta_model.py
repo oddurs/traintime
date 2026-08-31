@@ -123,6 +123,18 @@ def main():
     base_tab = np.nan_to_num(test["table_median"].values, nan=0.0)
     metrics = {"n_train": int(len(train)), "n_test": int(len(test)), "iters": int(model.n_iter_),
                "mae_raw": mae(y_te), "mae_tables": mae(y_te - base_tab), "mae_model": mae(y_te - pred)}
+
+    # Sigma has to describe the error of the prediction actually served. The tables' spread
+    # describes the spread around *their* median, so once the model moves the estimate, that
+    # number no longer matches - which is why stated confidence drifts from observed coverage.
+    # Measure the model's own held-out error per horizon and publish that instead.
+    resid = y_te - pred
+    sigma_by_bucket = {}
+    for b in sorted(test["bucket"].unique()):
+        m = test["bucket"].values == b
+        if m.sum() >= 50:
+            sigma_by_bucket[b] = float(np.quantile(np.abs(resid[m] - np.median(resid[m])), 0.68))
+    print("model sigma by horizon:", {k: round(v, 1) for k, v in sigma_by_bucket.items()})
     print(f"trained {model.n_iter_} iters in {time.time()-t0:.1f}s on {len(train)} rows; holdout {len(test)} rows")
     print(f"holdout MAE  raw {metrics['mae_raw']:.1f}s  tables {metrics['mae_tables']:.1f}s  model {metrics['mae_model']:.1f}s")
     for b in sorted(test["bucket"].unique()):
@@ -164,7 +176,8 @@ def main():
 
     out = Path(a.out)
     out.write_text(json.dumps(allow_nan=False, obj={"generatedAt": datetime.now(timezone.utc).isoformat(), "features": features, "categories": cats,
-                               "baseline": baseline, "trees": trees, "metrics": metrics}))
+                               "baseline": baseline, "trees": trees, "metrics": metrics,
+                               "sigmaByBucket": sigma_by_bucket}))
     print(f"wrote {out} ({out.stat().st_size // 1024} KB, {len(trees)} trees)")
 
 

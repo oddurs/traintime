@@ -49,6 +49,16 @@ interface Memory {
   beats: number;
   inferredPrev?: string;
   lastEta: Map<string, number>;
+  /**
+   * How far off this particular trip's predictions have been running, in seconds, as an
+   * exponentially weighted mean. A train that has arrived 40 s late at each of its last few
+   * stops is very likely to be 40 s late at the next one, and no amount of per-segment history
+   * captures that — it is a property of this run, not of the track.
+   */
+  bias: number;
+  biasN: number;
+  /** Our own most recent adjusted arrival time per upcoming stop, to score ourselves against. */
+  lastAdjusted: Map<string, number>;
   sig: string;
   changedAt: number;
   dirty: boolean;
@@ -114,7 +124,7 @@ export class Tracker {
           u, feed: tick.feed, firstSeen: tick.ts, lastSeen: tick.ts,
           status: v?.status, stopId: v?.stopId, vehicleTs: v?.timestamp,
           arrivedAt: v?.status === "STOPPED_AT" ? v.timestamp : undefined,
-          beats: 0, lastEta: new Map(), sig: "", changedAt: tick.ts, dirty: true,
+          beats: 0, lastEta: new Map(), lastAdjusted: new Map(), bias: 0, biasN: 0, sig: "", changedAt: tick.ts, dirty: true,
         };
         this.mem.set(u.id, m);
       } else if (v && (v.stopId !== m.stopId || v.status !== m.status)) {
@@ -144,6 +154,16 @@ export class Tracker {
         }
         if (v.status === "STOPPED_AT" && v.stopId) {
           events.push({ ...base, ts, stopId: v.stopId, kind: "arrive", track: this.trackOf(u, v.stopId), estimated: v.timestamp === undefined });
+          // What did *we* last say this arrival would be? Scoring against our own corrected
+          // number is the point: the raw feed prediction is already corrected for by the
+          // residual tables, and measuring against it double-counts that correction.
+          const predicted = m.lastAdjusted.get(v.stopId);
+          if (predicted !== undefined && v.timestamp !== undefined) {
+            const residual = Math.max(-300, Math.min(300, ts - predicted));
+            const w = m.biasN === 0 ? 1 : 0.4;
+            m.bias = m.bias * (1 - w) + residual * w;
+            m.biasN = Math.min(8, m.biasN + 1);
+          }
           m.arrivedAt = ts;
           m.beats = 0;
         } else if (v.status === "INCOMING_AT" && v.stopId) {
@@ -183,6 +203,16 @@ export class Tracker {
       m.lastSeen = tick.ts;
     }
     return { events, etaObs, fresh: true };
+  }
+
+  /**
+   * The bias to apply, shrunk while the evidence is thin so one unusual stop cannot swing the
+   * whole run, and capped so a data glitch cannot produce a nonsense prediction.
+   */
+  private tripBias(m: Memory): number {
+    if (m.biasN === 0 || process.env.TRIP_BIAS === "0") return 0;
+    const shrunk = m.bias * (m.biasN / (m.biasN + 1.5));
+    return Math.max(-120, Math.min(120, shrunk));
   }
 
   private trackOf(u: TrainUpdate, stopId: string): string | undefined {
@@ -286,7 +316,7 @@ export class Tracker {
       departedAt = Math.min(now, m.prevArrivedAt + this.timing.dwell(prev, hour, cond));
       departedEstimated = true;
     }
-    const { eta, sigma } = this.timing.adjustEta({ raw: next.arrival, now, route: u.route, prev, next: next.id, departedAt, hour, dow });
+    const { eta, sigma } = this.timing.adjustEta({ raw: next.arrival, now, route: u.route, prev, next: next.id, departedAt, hour, dow, bias: this.tripBias(m) });
     return {
       ...base, phase: "moving", prevStop: prev, departedAt, departedEstimated, prevInferred: inferred,
       nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
@@ -295,13 +325,14 @@ export class Tracker {
     };
   }
 
-  private predictions(u: TrainUpdate, now: number, hour: number, dow: number, prev: string | undefined, from: number): StopPrediction[] {
+  private predictions(u: TrainUpdate, now: number, hour: number, dow: number, prev: string | undefined, from: number, bias = 0, adjusted?: Map<string, number>): StopPrediction[] {
     const out: StopPrediction[] = [];
     let p = prev;
     for (let i = from; i < Math.min(u.stops.length, 12); i++) {
       const s = u.stops[i];
-      const { eta, sigma } = this.timing.adjustEta({ raw: s.arrival, now, route: u.route, prev: p, next: s.id, hour, dow });
+      const { eta, sigma } = this.timing.adjustEta({ raw: s.arrival, now, route: u.route, prev: p, next: s.id, hour, dow, bias });
       out.push({ id: s.id, eta, etaRaw: s.arrival, sigma, track: s.track });
+      adjusted?.set(s.id, eta);
       p = s.id;
     }
     return out;

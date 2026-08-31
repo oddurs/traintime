@@ -232,6 +232,8 @@ export interface GbmModel {
   baseline: number;
   trees: GbmTree[];
   metrics?: Record<string, number>;
+  /** Held-out 1σ of the model's own error, per horizon bucket — the honest spread to publish. */
+  sigmaByBucket?: Record<string, number>;
 }
 
 export interface GbmTree {

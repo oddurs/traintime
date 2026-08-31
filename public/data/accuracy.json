@@ -1,86 +1,95 @@
 {
-  "generatedAt": "2026-08-31T02:27:57.401Z",
-  "report": "kinematic-timing-model",
+  "generatedAt": "2026-08-31T04:56:18.192Z",
+  "report": "sigma-cal",
   "usesModel": true,
   "window": {
-    "from": 1788135584,
-    "to": 1788142719
+    "from": 1788144224,
+    "to": 1788152011
   },
-  "ticks": 4971,
-  "arrivals": 12007,
+  "ticks": 5394,
+  "arrivals": 9651,
   "dataLatencyS": {
     "median": 8,
-    "p90": 19
+    "p90": 20
   },
   "eta": [
     {
       "bucket": "h0",
       "label": "under 45 s",
-      "n": 4297,
-      "mtaMae": 29.71864091226437,
-      "mtaBias": -32,
-      "ourMae": 6.556046042798535,
-      "ourBias": -0.5962972640991211,
-      "coverage": 0.8708401210146614
+      "n": 3309,
+      "mtaMae": 30.461166515563615,
+      "mtaBias": -31,
+      "ourMae": 6.291192381862572,
+      "ourBias": -0.17429184913635254,
+      "coverage": 0.8996675732849804
     },
     {
       "bucket": "h1",
       "label": "45 s – 2 min",
-      "n": 40256,
-      "mtaMae": 36.598469793322735,
-      "mtaBias": -18,
-      "ourMae": 29.645692837748836,
-      "ourBias": 2.3611037731170654,
-      "coverage": 0.7163901033386327
+      "n": 35859,
+      "mtaMae": 129.11082294542513,
+      "mtaBias": -17,
+      "ourMae": 115.99710756423447,
+      "ourBias": -0.4345226287841797,
+      "coverage": 0.6695948018628517
     },
     {
       "bucket": "h2",
       "label": "2 – 5 min",
-      "n": 47178,
-      "mtaMae": 46.30798253423206,
-      "mtaBias": -21,
-      "ourMae": 37.69094229019928,
-      "ourBias": 0.6804189682006836,
-      "coverage": 0.6393022171351054
+      "n": 40240,
+      "mtaMae": 89.10395129224652,
+      "mtaBias": -19,
+      "ourMae": 71.91688998397846,
+      "ourBias": -0.37475156784057617,
+      "coverage": 0.6877733598409542
     },
     {
       "bucket": "h3",
       "label": "5 – 15 min",
-      "n": 10700,
-      "mtaMae": 87.81878504672898,
-      "mtaBias": -45,
-      "ourMae": 67.63672680623064,
-      "ourBias": 3.464336395263672,
-      "coverage": 0.5969158878504673
+      "n": 6670,
+      "mtaMae": 124.3296851574213,
+      "mtaBias": -47,
+      "ourMae": 78.42679072462994,
+      "ourBias": -1.3785717487335205,
+      "coverage": 0.7523238380809595
     },
     {
       "bucket": "h4",
       "label": "over 15 min",
-      "n": 970,
-      "mtaMae": 106.94639175257731,
-      "mtaBias": -50,
-      "ourMae": 105.16542507545235,
-      "ourBias": 38.67404532432556,
-      "coverage": 0.8608247422680413
+      "n": 569,
+      "mtaMae": 93.78383128295255,
+      "mtaBias": -31,
+      "ourMae": 79.50647864609904,
+      "ourBias": 2.0693519115448,
+      "coverage": 0.5342706502636204
     }
   ],
   "position": {
-    "n": 11915,
+    "n": 9556,
     "behindSegment": 279,
-    "shortMedianM": 220.20177885020757,
-    "shortP90M": 512.3987619626164,
+    "shortMedianM": 190.63614210555204,
+    "shortP90M": 489.476558516116,
     "shortMeanM": null,
-    "earlyShare": 0.26554762903902646,
-    "earlyMedianS": 14,
-    "earlyP90S": 63
+    "earlyShare": 0.17632900795311846,
+    "earlyMedianS": 10,
+    "earlyP90S": 59
   },
   "motion": {
-    "steps": 2839268,
+    "steps": 2198715,
     "reversals": 0,
     "jumps": 0,
-    "coldPlacements": 830,
-    "maxSpeedMps": 27.000000000000057,
-    "maxAccelMps2": 9.242092311363628
+    "coldPlacements": 833,
+    "maxSpeedMps": 27.000000000000114,
+    "maxAccelMps2": 9.241465485519957,
+    "turnRateP99": 6.708329514768593,
+    "turnRateMax": 175.35372812889943,
+    "duplicateTrainIds": 225,
+    "maxConcurrent": 347,
+    "offPattern": 41688,
+    "movingScored": 860260,
+    "offPatternShare": 0.048459767977123196,
+    "straightFallbackShare": 0.013739545997610514,
+    "chainedShare": 0.019115890083632018
   },
   "baseline": {
     "name": "baseline-naive",
@@ -90,21 +99,21 @@
   },
   "learned": {
     "window": {
-      "from": "2026-08-31T00:19:35.000Z",
-      "to": "2026-08-31T00:53:01.000Z"
+      "from": "2026-08-31T01:33:37.000Z",
+      "to": "2026-08-31T03:52:54.000Z"
     },
-    "events": 3337,
-    "etaObs": 12390,
-    "segments": 59,
-    "stops": 76
+    "events": 21472,
+    "etaObs": 102600,
+    "segments": 346,
+    "stops": 320
   },
   "model": {
-    "generatedAt": "2026-08-31T00:40:32.729383+00:00",
-    "n_train": 12501,
-    "n_test": 4167,
+    "generatedAt": "2026-08-31T04:53:39.762228+00:00",
+    "n_train": 67135,
+    "n_test": 22379,
     "iters": 400,
-    "mae_raw": 37.206863450923926,
-    "mae_tables": 38.59563234941205,
-    "mae_model": 34.54561037994063
+    "mae_raw": 54.10174717368962,
+    "mae_tables": 45.42778944546227,
+    "mae_model": 41.94008383898097
   }
 }

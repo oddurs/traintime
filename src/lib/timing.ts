@@ -62,6 +62,8 @@ export interface EtaContext {
   departedAt?: number;
   hour: number;
   dow: number;
+  /** How far this particular trip has been running off its own predictions, in seconds. */
+  bias?: number;
 }
 
 const MIN_SAMPLES = 8;
@@ -173,9 +175,13 @@ export class Timing {
       };
       const x = this.model.features.map((f) => feats[f] ?? NaN);
       delta = gbmPredict(this.model, x);
+      // The tables' spread describes their own estimate, not the model's; use the model's own
+      // measured error so stated confidence matches observed coverage.
+      const modelSigma = this.model.sigmaByBucket?.[bucket];
+      if (modelSigma !== undefined) return { eta: Math.max(c.raw + delta + (c.bias ?? 0), c.now), sigma: Math.max(8, modelSigma) };
     }
     // Never predict an arrival in the past by adjustment alone.
-    const eta = Math.max(c.raw + delta, c.now);
+    const eta = Math.max(c.raw + delta + (c.bias ?? 0), c.now);
     return { eta, sigma: Math.max(8, sigma) };
   }
 
