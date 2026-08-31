@@ -4,12 +4,21 @@
 > one left a check behind: `npm run audit` (live invariants, exits non-zero), `scripts/audit-ui.mjs`
 > (interaction crawl on both viewports), an `invariants` block in `/health`, and 15 tests. The
 > deployed poller passes with **0 high, 0 medium over 726 trains**, and the production interaction
-> crawl reports **0 problems**.
+> crawl reports **0 problems**. **Sprint L is done too** — a replay audit over recorded history,
+> per-service checks, terminal turnarounds and degradation behaviour. 28 tests.
 >
 > The permanent audit earned its keep within minutes: deploying the leader-clearance rule
 > reintroduced backwards stop times — it pushed a train's first arrival later without moving the
-> rest of its run — and the production audit caught it before anyone looked at the map. Sprint L
-> (a full-day replay, terminal turnarounds, per-service checks, degradation) remains open.
+> rest of its run — and the production audit caught it before anyone looked at the map.
+>
+> The replay audit then earned its keep the same way, finding two things the live check could not:
+> one physical train published under two trip ids and drawn twice (`099000_2..S01R` beside
+> `099000_2..S`), and a staleness rule of mine that was keyed on the record changing rather than
+> the train progressing, which flagged 197 of 725 trains as ghosts.
+>
+> Along the way it surfaced the worst defect of the day, in my own retention code: compaction
+> deleted its source files *before* renaming the merged file into place, so a process killed in
+> that window lost both. It cost several hours of recordings. Merging is now atomic and idempotent.
 
 
 This plan is not a guess about what might be wrong. Every item below came out of an audit run

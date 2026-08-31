@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Not ours to lint: a Python virtualenv, the MapLibre worker copied in at build time, and
+    // recorded data. Linting them buried real findings under thousands of vendored warnings.
+    ".venv/**",
+    "public/maplibre/**",
+    "data/**",
+    ".cache/**",
   ]),
 ]);
 

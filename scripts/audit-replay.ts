@@ -52,7 +52,8 @@ async function main() {
   console.log(`replaying ${rows.length} ticks, ${nyHour(from)} to ${nyHour(to)} (${((to - from) / 3600).toFixed(1)} h), checking every ${EVERY}s\n`);
 
   const byHour = new Map<string, Map<string, { severity: Violation["severity"]; count: number; example: string }>>();
-  let checks = 0, lastCheck = 0, warmedAt = from + 180;
+  const warmedAt = from + 180;   // let history build before judging anything
+  let checks = 0, lastCheck = 0;
 
   for (const r of rows) {
     const bytes = r.raw instanceof Uint8Array ? r.raw : r.raw.bytes;
@@ -78,7 +79,8 @@ async function main() {
   for (const [hour, rules] of byHour) {
     let fail = 0, info = 0;
     for (const [rule, e] of rules) {
-      (isFailure({ severity: e.severity } as Violation) ? (fail += e.count) : (info += e.count));
+      if (isFailure({ severity: e.severity } as Violation)) fail += e.count;
+      else info += e.count;
       const t = totals.get(rule) ?? { severity: e.severity, count: 0, example: e.example };
       t.count += e.count;
       totals.set(rule, t);
