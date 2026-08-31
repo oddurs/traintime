@@ -190,6 +190,19 @@ export interface ResidualStat {
 
 export interface TimingTables {
   generatedAt: string;
+  /** Conditional run-time estimates: segment, hour of week, daypart, weather. */
+  runHier?: import("./hierarchy").Hierarchy;
+  /** Conditional dwell estimates, rooted at the platform rather than the route. */
+  dwellHier?: import("./hierarchy").Hierarchy;
+  /**
+   * Whether each hierarchy actually beat the flat per-cell median on held-out data. Conditioning
+   * only helps once there is enough history to support it; until then the simpler estimator is
+   * better and these stay false, so the model never gets more elaborate than the data warrants.
+   */
+  hierGate?: {
+    run: { active: boolean; k: number; flatMae: number; hierMae: number; testRows: number };
+    dwell: { active: boolean; k: number; flatMae: number; hierMae: number; testRows: number };
+  };
   window: { from: string; to: string };
   samples: { events: number; etaObs: number };
   /** "A24S>A27S" → observed run time, departure to arrival. */

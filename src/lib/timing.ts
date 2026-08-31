@@ -1,12 +1,56 @@
 import type { GbmModel, ResidualStat, Stat, TimingTables } from "./types";
 import { gbmCode, gbmPredict } from "./gbm";
 import { NetworkIndex, parentOf } from "./network";
+import { estimate, type Hierarchy } from "./hierarchy";
+import { calendarRow, type WeatherBand } from "./calendar";
 
 /** Horizon buckets (seconds until predicted arrival) used by the residual tables. */
 export const HORIZONS = [45, 120, 300, 900];
 export function horizonBucket(h: number): string {
   for (let i = 0; i < HORIZONS.length; i++) if (h < HORIZONS[i]) return `h${i}`;
   return `h${HORIZONS.length}`;
+}
+
+/**
+ * The conditions a prediction is made under. Everything here changes how long a train takes:
+ * the hour of the week carries both the rush hours and the weekday/weekend split, the daypart
+ * is its coarser parent, and weather lengthens dwells and slows approaches.
+ */
+export interface Conditions {
+  hourOfWeek: number;
+  daypart: string;
+  season: string;
+  weather?: WeatherBand;
+}
+
+export function conditionsAt(epochSec: number, weather?: WeatherBand): Conditions {
+  const c = calendarRow(epochSec);
+  return { hourOfWeek: c.hour_of_week, daypart: c.daypart, season: c.season, weather };
+}
+
+/** Backoff chains, coarsest first. The finest levels are the sparsest and shrink the hardest. */
+export const RUN_LEVELS = ["route.daypart", "seg", "seg.daypart", "seg.how", "seg.weather"];
+export const DWELL_LEVELS = ["daypart", "stop", "stop.daypart", "stop.how", "stop.weather"];
+
+export function runKeys(route: string, prev: string, next: string, c: Conditions): (string | undefined)[] {
+  const seg = `${prev}>${next}`;
+  return [
+    `${route}|${c.daypart}`,
+    seg,
+    `${seg}|${c.daypart}`,
+    `${seg}|h${c.hourOfWeek}`,
+    c.weather ? `${seg}|${c.weather}` : undefined,
+  ];
+}
+
+export function dwellKeys(stop: string, c: Conditions): (string | undefined)[] {
+  return [
+    c.daypart,
+    stop,
+    `${stop}|${c.daypart}`,
+    `${stop}|h${c.hourOfWeek}`,
+    c.weather ? `${stop}|${c.weather}` : undefined,
+  ];
 }
 
 export interface EtaContext {
@@ -31,6 +75,9 @@ const defaultSigma = (h: number) => 20 + 0.15 * Math.max(0, h);
  * learned tables → schedule → geometry. Optionally a boosted model on top of the tables.
  */
 export class Timing {
+  /** Current weather, set by whoever is running the model; absent simply skips that level. */
+  weather?: WeatherBand;
+
   constructor(
     private readonly net: NetworkIndex,
     public tables: TimingTables | null = null,
@@ -63,10 +110,16 @@ export class Timing {
   }
 
   /**
-   * Typical run time (departure → arrival) from prev to next in seconds:
-   * observed run → observed arrival-to-arrival minus dwell → schedule minus dwell → geometry.
+   * Typical run time (departure → arrival) from prev to next in seconds. The conditional
+   * hierarchy answers first when it has been learned; otherwise the flat tables, then the
+   * schedule, then geometry.
    */
-  runTime(prev: string, next: string, hour?: number): number {
+  runTime(prev: string, next: string, hour?: number, route?: string, cond?: Conditions): number {
+    const h = this.tables?.hierGate?.run.active ? (this.tables?.runHier as Hierarchy | undefined) : undefined;
+    if (h && cond && route) {
+      const e = estimate(h, runKeys(route, prev, next, cond));
+      if (e.n > 0) return e.value;
+    }
     const key = `${prev}>${next}`;
     const byHour = hour !== undefined ? this.stat(this.tables?.runTimeHour, `${key}@${hour}`) : undefined;
     const s = byHour ?? this.stat(this.tables?.runTime, key);
@@ -79,7 +132,12 @@ export class Timing {
     return Number.isFinite(m) ? 20 + m / 12 : 90;
   }
 
-  dwell(stop: string, hour?: number): number {
+  dwell(stop: string, hour?: number, cond?: Conditions): number {
+    const h = this.tables?.hierGate?.dwell.active ? (this.tables?.dwellHier as Hierarchy | undefined) : undefined;
+    if (h && cond) {
+      const e = estimate(h, dwellKeys(stop, cond));
+      if (e.n > 0) return e.value;
+    }
     const byHour = hour !== undefined ? this.stat(this.tables?.dwellHour, `${stop}@${hour}`) : undefined;
     return (byHour ?? this.stat(this.tables?.dwell, stop))?.p50 ?? this.dwellPrior;
   }

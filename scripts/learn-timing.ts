@@ -8,7 +8,9 @@ import { DuckDBInstance } from "@duckdb/node-api";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ResidualStat, Stat, TimingTables } from "../src/lib/types";
-import { horizonBucket } from "../src/lib/timing";
+import { horizonBucket, runKeys, dwellKeys, RUN_LEVELS, DWELL_LEVELS, type Conditions } from "../src/lib/timing";
+import { buildHierarchy, estimate, hierarchySize } from "../src/lib/hierarchy";
+import { band, calendarRow, type WeatherBand } from "../src/lib/calendar";
 import { nyHourDow } from "../src/lib/tracker";
 import { parquetGlob } from "../services/poller/recorder";
 
@@ -19,6 +21,11 @@ for (let i = 2; i < process.argv.length; i++) {
   if (a.startsWith("--")) args.set(a.slice(2), process.argv[i + 1]?.startsWith("--") || process.argv[i + 1] === undefined ? "true" : process.argv[++i]);
 }
 const toEpoch = (v?: string) => (v ? (Number.isFinite(Number(v)) ? Number(v) : Math.floor(new Date(v).getTime() / 1000)) : undefined);
+
+// Shrinkage settings, tunable so they can be chosen by measurement rather than taste.
+const HIER_K = Number(process.env.HIER_K ?? 12);
+const HIER_MIN_N = Number(process.env.HIER_MIN_N ?? 5);
+const HIER_MIN_LIFT = Number(process.env.HIER_MIN_LIFT ?? 1.5);
 
 const quantile = (xs: number[], p: number) => {
   const s = [...xs].sort((a, b) => a - b);
@@ -85,6 +92,87 @@ async function main() {
   const dwellMedians = Object.values(dwell).map((s) => s.p50);
   const dwellGlobal = dwellMedians.length >= 5 ? quantile(dwellMedians, 0.5) : 35;
 
+  // --- Conditional hierarchies -------------------------------------------------
+  // Weather is recorded hourly and joined here. It only started being recorded when the
+  // context recorder first ran, so early history simply has no weather level — the hierarchy
+  // skips levels it has nothing for.
+  const bandByHour = new Map<number, WeatherBand>();
+  try {
+    const wrows = (await conn.runAndReadAll(
+      `SELECT hour::DOUBLE AS hour, precip_mm, snow_cm, code FROM read_parquet('${parquetGlob("weather")}', union_by_name=true)`,
+    )).getRowObjectsJS() as { hour: number; precip_mm: number; snow_cm: number; code: number }[];
+    for (const w of wrows) bandByHour.set(w.hour, band(w));
+  } catch { /* no weather recorded yet */ }
+
+  const condOf = (ts: number): Conditions => {
+    const c = calendarRow(ts);
+    return {
+      hourOfWeek: c.hour_of_week, daypart: c.daypart, season: c.season,
+      weather: bandByHour.get(Math.floor(ts / 3600) * 3600),
+    };
+  };
+
+  /**
+   * Build the hierarchy, then earn the right to use it. A candidate is fitted on the older
+   * three quarters of the observations and scored against the newest quarter, alongside the
+   * plain per-cell median that the flat tables already provide. Several shrinkage constants are
+   * tried and the best is kept — but only if it beats the simple estimator outright. Extra model
+   * complexity has to pay for itself on data it has not seen.
+   */
+  function gatedHierarchy<T extends { ts: number }>(
+    levels: string[],
+    rows: T[],
+    value: (r: T) => number,
+    keysOf: (r: T) => (string | undefined)[],
+    /** Which level holds the plain per-cell estimate the hierarchy has to beat. */
+    flatLevel: number,
+  ) {
+    const sorted = [...rows].sort((a, b) => a.ts - b.ts);
+    const cut = Math.floor(sorted.length * 0.75);
+    const train = sorted.slice(0, cut), test = sorted.slice(cut);
+    const asSample = (r: T) => ({ value: value(r), keys: keysOf(r) });
+
+    // The incumbent: the median of each flat cell, falling back to the overall median.
+    const flatCells = new Map<string, number[]>();
+    for (const r of train) {
+      const key = keysOf(r)[flatLevel];
+      if (key === undefined) continue;
+      (flatCells.get(key) ?? flatCells.set(key, []).get(key)!).push(value(r));
+    }
+    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
+    const globalMed = med(train.map(value));
+    const flatOf = (r: T) => {
+      const key = keysOf(r)[flatLevel];
+      const cell = key === undefined ? undefined : flatCells.get(key);
+      return cell && cell.length >= 3 ? med(cell) : globalMed;
+    };
+    const mae = (f: (r: T) => number) => (test.length ? test.reduce((s, r) => s + Math.abs(value(r) - f(r)), 0) / test.length : Infinity);
+    const flatMae = mae(flatOf);
+
+    let best = { k: 0, hierMae: Infinity, hier: buildHierarchy(levels, rows.map(asSample), { k: HIER_K, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT }) };
+    for (const k of [4, 8, 15, 30]) {
+      const fitted = buildHierarchy(levels, train.map(asSample), { k, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT });
+      const m = mae((r) => estimate(fitted, keysOf(r)).value);
+      if (m < best.hierMae) best = { k, hierMae: m, hier: buildHierarchy(levels, rows.map(asSample), { k, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT }) };
+    }
+    const active = best.hierMae < flatMae;
+    return { hier: best.hier, gate: { active, k: best.k, flatMae, hierMae: best.hierMae, testRows: test.length } };
+  }
+
+  const runFit = gatedHierarchy(
+    RUN_LEVELS, runs.filter((p) => p.next_stop),
+    (p) => p.next_ts! - p.ts,
+    (p) => runKeys(p.route, p.stop_id, p.next_stop!, condOf(p.ts)),
+    1, // "seg"
+  );
+  const dwellFit = gatedHierarchy(
+    DWELL_LEVELS, dwells,
+    (p) => p.next_ts! - p.ts,
+    (p) => dwellKeys(p.stop_id, condOf(p.ts)),
+    1, // "stop"
+  );
+  const runHier = runFit.hier, dwellHier = dwellFit.hier;
+
   const prevByTrack: Record<string, Record<string, number>> = {};
   for (const p of runs) {
     if (!p.next_track) continue;
@@ -112,12 +200,21 @@ async function main() {
     generatedAt: new Date().toISOString(),
     window: { from: new Date(Number(window.a) * 1000).toISOString(), to: new Date(Number(window.b) * 1000).toISOString() },
     samples: { events: nEvents, etaObs: clean.length },
+    runHier, dwellHier, hierGate: { run: runFit.gate, dwell: dwellFit.gate },
     runTime, runTimeHour, a2a, dwellGlobal, dwell, dwellHour, approach, residual, prevByTrack,
   };
   mkdirSync(join(out, ".."), { recursive: true });
   writeFileSync(out, JSON.stringify(tables));
 
   console.log(`events ${nEvents} · runs ${runs.length} · dwells ${dwells.length} · approaches ${approaches.length} · eta obs ${clean.length}`);
+  const rs = hierarchySize(runHier), ds = hierarchySize(dwellHier);
+  console.log(`run hierarchy: ${rs.nodes} cells ${JSON.stringify(rs.byLevel)} (prior ${runHier.prior.v}s over ${runHier.prior.n})`);
+  console.log(`dwell hierarchy: ${ds.nodes} cells ${JSON.stringify(ds.byLevel)} (prior ${dwellHier.prior.v}s over ${dwellHier.prior.n})`);
+  const g = (n: string, x: { active: boolean; k: number; flatMae: number; hierMae: number; testRows: number }) =>
+    `${n}: ${x.active ? "ACTIVE" : "off"} (k=${x.k}, ${x.hierMae.toFixed(1)}s vs flat ${x.flatMae.toFixed(1)}s on ${x.testRows} held out)`;
+  console.log(g("run conditioning", runFit.gate));
+  console.log(g("dwell conditioning", dwellFit.gate));
+  console.log(`weather hours joined: ${bandByHour.size}`);
   console.log(`segments with run time ${Object.keys(runTime).length} · arrival-to-arrival ${Object.keys(a2a).length} · stops with dwell ${Object.keys(dwell).length} (global prior ${dwellGlobal} s) · residual groups ${Object.keys(residual).length}`);
   for (const b of ["h0", "h1", "h2", "h3", "h4"]) {
     const r = residual[`all|${b}`];

@@ -2,7 +2,7 @@ import type {
   Direction, FeedStatus, FeedTick, StateDelta, StateSnapshot, StopPrediction, TrainState, TrainUpdate, VehicleStatus,
 } from "./types";
 import { NetworkIndex, parentOf } from "./network";
-import { Timing } from "./timing";
+import { Timing, conditionsAt, type Conditions } from "./timing";
 
 export type EventKind = "arrive" | "depart" | "pass" | "incoming";
 
@@ -206,16 +206,17 @@ export class Tracker {
   /** Full state of every tracked train at `now`. */
   states(now: number): TrainState[] {
     const { hour, dow } = nyHourDow(now);
+    const cond = conditionsAt(now, this.timing.weather);
     const out: TrainState[] = [];
     for (const m of this.mem.values()) {
-      const st = this.stateOf(m, now, hour, dow);
+      const st = this.stateOf(m, now, hour, dow, cond);
       if (st) out.push(st);
     }
     this.assignLeaders(out);
     return out;
   }
 
-  private stateOf(m: Memory, now: number, hour: number, dow: number): TrainState | undefined {
+  private stateOf(m: Memory, now: number, hour: number, dow: number, cond: Conditions): TrainState | undefined {
     const u = m.u;
     const head = u.stops[0];
     if (!head) return undefined;
@@ -237,7 +238,7 @@ export class Tracker {
       const nextIdx = u.stops.findIndex((s) => parentOf(s.id) !== parentOf(at));
       const next = nextIdx >= 0 ? u.stops[nextIdx] : undefined;
       const heartbeat = m.beats > 0 || this.isHeartbeatFeed(m.feed);
-      const dwellOf = this.timing.dwell(at, hour);
+      const dwellOf = this.timing.dwell(at, hour, cond);
       let departAt = heartbeat ? arrivedAt + dwellOf : Infinity;
       if (heartbeat && !u.stops.some((s) => parentOf(s.id) === parentOf(at))) departAt = Math.min(departAt, now);
       if (now >= departAt && next && this.net.station(next.id)) {
@@ -245,7 +246,7 @@ export class Tracker {
         return {
           ...base, phase: "moving", prevStop: at, departedAt: departAt, departedEstimated: true,
           nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
-          runTime: this.timing.runTime(at, next.id, hour),
+          runTime: this.timing.runTime(at, next.id, hour, u.route, cond),
           stops: this.predictions(u, now, hour, dow, at, nextIdx),
         };
       }
@@ -282,14 +283,14 @@ export class Tracker {
     let departedAt = m.departedAt;
     let departedEstimated = m.departedEstimated;
     if (departedAt === undefined && prev && m.prevArrivedAt !== undefined) {
-      departedAt = Math.min(now, m.prevArrivedAt + this.timing.dwell(prev, hour));
+      departedAt = Math.min(now, m.prevArrivedAt + this.timing.dwell(prev, hour, cond));
       departedEstimated = true;
     }
     const { eta, sigma } = this.timing.adjustEta({ raw: next.arrival, now, route: u.route, prev, next: next.id, departedAt, hour, dow });
     return {
       ...base, phase: "moving", prevStop: prev, departedAt, departedEstimated, prevInferred: inferred,
       nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
-      runTime: prev ? this.timing.runTime(prev, next.id, hour) : undefined,
+      runTime: prev ? this.timing.runTime(prev, next.id, hour, u.route, cond) : undefined,
       stops: this.predictions(u, now, hour, dow, prev, nextIdx),
     };
   }
