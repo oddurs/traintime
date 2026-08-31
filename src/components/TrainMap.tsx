@@ -79,14 +79,6 @@ function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
   return { type: "FeatureCollection", features };
 }
 
-/** Perpendicular offset in pixels for a route's slot, widening as the map zooms in. */
-const SLOT_OFFSET: maplibregl.ExpressionSpecification = [
-  "interpolate", ["linear"], ["zoom"],
-  10, ["*", ["get", "slot"], 1.3],
-  13, ["*", ["get", "slot"], 3],
-  16, ["*", ["get", "slot"], 7],
-];
-
 function stationPoints(index: NetworkIndex): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
@@ -227,7 +219,6 @@ export default function TrainMap(props: Props) {
         paint: {
           "line-color": "#000", "line-opacity": 0.75,
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.3, 13, 3.9, 16, 6.6],
-          "line-offset": SLOT_OFFSET,
         },
       });
       map.addLayer({
@@ -236,7 +227,6 @@ export default function TrainMap(props: Props) {
         paint: {
           "line-color": ["get", "color"], "line-opacity": 0.95,
           "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.1, 13, 2.3, 16, 4.2],
-          "line-offset": SLOT_OFFSET,
         },
       });
       map.addLayer({
@@ -354,10 +344,6 @@ export default function TrainMap(props: Props) {
     const filter: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
     map.setFilter("routes-line", filter);
     map.setFilter("routes-casing", filter);
-    // Lanes only mean something when the neighbours are drawn; a single line sits on its track.
-    const offset = list.length === 1 ? 0 : SLOT_OFFSET;
-    map.setPaintProperty("routes-line", "line-offset", offset);
-    map.setPaintProperty("routes-casing", "line-offset", offset);
   }, [visibleRoutes, index]);
 
   // --- selection highlight and camera

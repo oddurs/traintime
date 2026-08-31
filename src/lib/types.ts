@@ -36,6 +36,10 @@ export interface Network {
   stationRoutes: Record<string, string[]>;
   /** Segment key -> route -> [lane offset about the centreline, services sharing the corridor]. */
   segmentSlots: Record<string, Record<string, [number, number]>>;
+  /** GTFS shape id -> its ordered directional stop ids, for exact predecessor lookup. */
+  shapeStops: Record<string, string[]>;
+  /** Segment key -> route -> [track offset within its colour group, services in that group]. */
+  trackSlots: Record<string, Record<string, [number, number]>>;
   /** Per route, the continuous strokes to draw: an ordered station sequence sharing one lane. */
   routeRuns: Record<string, { slot: number; shared: number; stops: string[] }[]>;
 }

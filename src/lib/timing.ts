@@ -125,7 +125,14 @@ export class Timing {
    * Which stop did a train come from, when we have no history? Learned track→predecessor
    * counts first, then a hop-length heuristic against the train's own upcoming stops.
    */
-  inferPrev(route: string, next: string, track: string | undefined, upcoming: string[]): string | undefined {
+  inferPrev(route: string, next: string, track: string | undefined, upcoming: string[], tripId?: string): string | undefined {
+    // The trip's own scheduled pattern beats any inference over the route graph.
+    if (tripId) {
+      const sched = this.net.scheduledPrev(tripId, next);
+      if (sched.kind === "stop") return sched.id;
+      // Its run starts here: there is nothing before it, and guessing would invent a journey.
+      if (sched.kind === "origin") return undefined;
+    }
     const cands = this.net.prevCandidates(route, next);
     if (cands.length === 0) return undefined;
     if (cands.length === 1) return cands[0];

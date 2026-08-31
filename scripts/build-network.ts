@@ -359,12 +359,23 @@ async function main() {
     }
   }
 
+  // The realtime trip id carries its shape ("129200_3..N01R" -> "3..N01R"), and a shape has an
+  // exact ordered stop list. That is a far better answer to "where did this train come from"
+  // than any inference over the route graph.
+  const shapeStops: Record<string, string[]> = {};
+  for (const [tripId, { shape }] of Object.entries(repTrip)) {
+    const stops = tripStops[tripId];
+    if (!stops || !shape) continue;
+    shapeStops[shape] = [...stops].sort((a, b) => a.seq - b.seq).map((x) => x.stop);
+  }
+
   const routeSegments_ = new Map<string, string[]>();
   for (const [route, keys] of Object.entries(routeSegmentList)) {
     for (const key of keys) (routeSegments_.get(key) ?? routeSegments_.set(key, []).get(key)!).push(route);
   }
 
   const segmentSlots: Record<string, Record<string, [number, number]>> = {};
+  const trackSlots: Record<string, Record<string, [number, number]>> = {};
   const order = (r: string) => routes[r]?.sortOrder ?? 999;
   for (const [key, line] of Object.entries(segments)) {
     const own = [...(routeSegments_.get(key) ?? [])];
@@ -398,11 +409,18 @@ async function main() {
     }
     const n = lanes.length;
     const slots: Record<string, [number, number]> = {};
+    const tracks: Record<string, [number, number]> = {};
     for (const r of own) {
       const i = lanes.indexOf(routes[r]?.color ?? r);
       slots[r] = [i < 0 ? 0 : i - (n - 1) / 2, n];
+      // Within a colour, each service still runs on its own track: the 4 and 5 use Lexington's
+      // express pair while the 6 uses the local. Trains ride these; the drawn line does not.
+      const sameColour = corridor.filter((x) => (routes[x]?.color ?? x) === (routes[r]?.color ?? r));
+      const j = sameColour.indexOf(r);
+      tracks[r] = [j < 0 ? 0 : j - (sameColour.length - 1) / 2, sameColour.length];
     }
     segmentSlots[key] = slots;
+    trackSlots[key] = tracks;
   }
   const shared = Object.values(segmentSlots).filter((s) => Object.values(s).some(([, n]) => n > 1)).length;
   console.log(`corridors: ${shared} of ${Object.keys(segmentSlots).length} segments share track`);
@@ -466,7 +484,9 @@ async function main() {
     ),
     routeSegments: Object.fromEntries(Object.entries(routeSegments).map(([r, s]) => [r, [...s]])),
     schedRun: Object.fromEntries(Object.entries(schedRunSum).map(([k, v]) => [k, Math.round(v.sum / v.n)])),
+    shapeStops,
     segmentSlots,
+    trackSlots,
     routeRuns,
     stationRoutes: Object.fromEntries(
       Object.entries(stationRoutes).map(([k, v]) => [

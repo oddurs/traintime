@@ -81,7 +81,11 @@ async function main() {
   let reversals = 0, jumps = 0, coldPlacements = 0, steps = 0, maxSpeed = 0, maxAccel = 0, arrivals = 0;
   const turnRates: number[] = [];
   let turnRateMax = 0;
-  let duplicateTrainIds = 0, maxConcurrent = 0;
+  let duplicateTrainIds = 0, maxConcurrent = 0, offPattern = 0, movingScored = 0;
+  const routeHasPair = (route: string, a: string, b: string) => {
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    return (net.net.routeSegments[route] ?? []).includes(key);
+  };
   const prevBearing = new Map<string, number>();
   const pending = new Map<string, { obsTs: number; predicted: number; adjusted: number; sigma: number }[]>();
   const samples = new Map<string, Sample[]>(); // per train, ring of per-second samples (t, s)
@@ -172,6 +176,14 @@ async function main() {
           }
           prevBearing.set(p.id, p.bearing);
         }
+        // A train should only ever be drawn between two stops its own route actually serves.
+        for (const st of states) {
+          if (st.phase !== "moving" || !st.prevStop) continue;
+          const a = parentOf(st.prevStop), b = parentOf(st.nextStop);
+          if (a === b) continue;
+          movingScored++;
+          if (!routeHasPair(st.route, a, b)) offPattern++;
+        }
         // The same physical train should never be drawn twice.
         const byTrain = new Map<string, number>();
         for (const st of states) {
@@ -223,6 +235,7 @@ async function main() {
       steps, reversals, jumps, coldPlacements, maxSpeedMps: maxSpeed, maxAccelMps2: maxAccel,
       turnRateP99: q(turnRates, 0.99), turnRateMax,
       duplicateTrainIds, maxConcurrent,
+      offPattern, movingScored, offPatternShare: movingScored ? offPattern / movingScored : 0,
       straightFallbackShare: net.stats.paths ? net.stats.straightFallback / net.stats.paths : 0,
       chainedShare: net.stats.paths ? net.stats.chained / net.stats.paths : 0,
     },
@@ -252,6 +265,7 @@ async function main() {
   console.log(`| max speed / accel | ${f1(maxSpeed)} m/s · ${f1(maxAccel)} m/s² |`);
   console.log(`| heading swing p99 / max | ${f1(report.motion.turnRateP99)}°/s · ${f1(report.motion.turnRateMax)}°/s |`);
   console.log(`| duplicate train ids | ${duplicateTrainIds} |`);
+  console.log(`| drawn off their own route | ${pct(report.motion.offPatternShare)} of moving trains |`);
   console.log(`| track unknown (straight-line) | ${pct(report.motion.straightFallbackShare)} of segments |`);
   console.log(`\n| horizon | n | MTA MAE | MTA bias | ours MAE | ours bias | 1σ coverage |\n|---|---|---|---|---|---|---|`);
   for (const b of buckets) {

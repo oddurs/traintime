@@ -10,6 +10,32 @@ export function distM(a: LonLat, b: LonLat): number {
   return Math.hypot(dx, dy);
 }
 
+/**
+ * Shift a polyline sideways by `metres`, positive to the right of the direction of travel.
+ * Doing this to the geometry — rather than asking the renderer for a pixel offset — means the
+ * lane is a property of the track itself, so a train and its line agree at every zoom and the
+ * result cannot depend on which way round a line happened to be drawn.
+ */
+export function offsetPolyline(pts: LonLat[], metres: number): LonLat[] {
+  if (metres === 0 || pts.length < 2) return pts;
+  const out: LonLat[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(pts.length - 1, i + 1)];
+    const lat = pts[i][1];
+    const cos = Math.cos((lat * Math.PI) / 180) || 1e-6;
+    // Local direction as an east/north vector, then rotated a quarter turn to the right.
+    const east = (b[0] - a[0]) * cos, north = b[1] - a[1];
+    const len = Math.hypot(east, north) || 1;
+    const rightEast = north / len, rightNorth = -east / len;
+    out.push([
+      pts[i][0] + (rightEast * metres) / (M_PER_DEG_LAT * cos),
+      pts[i][1] + (rightNorth * metres) / M_PER_DEG_LAT,
+    ]);
+  }
+  return out;
+}
+
 export interface Path {
   pts: LonLat[];
   /** Cumulative metres at each vertex. */

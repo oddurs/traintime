@@ -44,7 +44,7 @@ async function main() {
   if (!args.get("no-flush")) { try { await fetch("http://localhost:7118/flush"); } catch { /* fine */ } }
   const from = toEpoch(args.get("from"));
   const to = toEpoch(args.get("to"));
-  const out = args.get("out") ?? join(ROOT, "data", "timing.json");
+  const out = args.get("out") ?? join(process.env.TRAINTIME_DATA_DIR ?? join(ROOT, "data"), "timing.json");
   const db = await DuckDBInstance.create(":memory:");
   const conn = await db.connect();
   const range = [from ? `ts >= ${from}` : "", to ? `ts <= ${to}` : ""].filter(Boolean).join(" AND ") || "true";

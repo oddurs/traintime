@@ -276,7 +276,7 @@ export class Tracker {
     let prev = m.prevStop;
     const inferred = !prev;
     if (!prev) {
-      m.inferredPrev ??= this.timing.inferPrev(u.route, next.id, next.track, u.stops.slice(nextIdx).map((s) => s.id));
+      m.inferredPrev ??= this.timing.inferPrev(u.route, next.id, next.track, u.stops.slice(nextIdx).map((s) => s.id), u.id);
       prev = m.inferredPrev;
     }
     let departedAt = m.departedAt;
