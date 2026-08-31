@@ -99,9 +99,14 @@ await step("map click on empty space", async()=>{
   await send("Input.dispatchMouseEvent",{type:"mousePressed",x:1300,y:200,button:"left",clickCount:1});
   await send("Input.dispatchMouseEvent",{type:"mouseReleased",x:1300,y:200,button:"left",clickCount:1});
   await sleep(1200); const r=await evalJs(`JSON.stringify({board:!!document.querySelector(".board"),detail:!!document.querySelector(".detail")})`); return r.value??r.error;});
-await step("deep zoom render", async()=>{ await evalJs(`__tt?.map?.jumpTo({center:[-73.9880,40.7580],zoom:16.5})`); await sleep(6000);
+// The map handle is a development aid and is absent from production builds, so the layer-level
+// checks below only run where it exists.
+const hasHandle = (await evalJs(`typeof window.__tt !== "undefined" && !!window.__tt.map`)).value === true;
+await step("deep zoom render", async()=>{ if(!hasHandle) return "skipped (no debug handle in a production build)";
+  await evalJs(`__tt.map.jumpTo({center:[-73.9880,40.7580],zoom:16.5})`); await sleep(6000);
   const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length, labels:__tt.map.queryRenderedFeatures({layers:["train-labels"]}).length, lines:__tt.map.queryRenderedFeatures({layers:["routes-line"]}).length})`); return r.value??r.error;});
-await step("zoom out to whole system", async()=>{ await evalJs(`__tt?.map?.jumpTo({center:[-73.94,40.71],zoom:9.8})`); await sleep(5000);
+await step("zoom out to whole system", async()=>{ if(!hasHandle) return "skipped (no debug handle in a production build)";
+  await evalJs(`__tt.map.jumpTo({center:[-73.94,40.71],zoom:9.8})`); await sleep(5000);
   const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length})`); return r.value??r.error;});
 
 console.log("=== STEPS ===");

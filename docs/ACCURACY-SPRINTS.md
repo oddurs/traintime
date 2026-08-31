@@ -1,5 +1,17 @@
 # Accuracy sprints — from an actual audit
 
+> **Outcome (31 August 2026).** Sprints J and K are done. Every defect below is closed and each
+> one left a check behind: `npm run audit` (live invariants, exits non-zero), `scripts/audit-ui.mjs`
+> (interaction crawl on both viewports), an `invariants` block in `/health`, and 15 tests. The
+> deployed poller passes with **0 high, 0 medium over 726 trains**, and the production interaction
+> crawl reports **0 problems**.
+>
+> The permanent audit earned its keep within minutes: deploying the leader-clearance rule
+> reintroduced backwards stop times — it pushed a train's first arrival later without moving the
+> rest of its run — and the production audit caught it before anyone looked at the map. Sprint L
+> (a full-day replay, terminal turnarounds, per-service checks, degradation) remains open.
+
+
 This plan is not a guess about what might be wrong. Every item below came out of an audit run
 against the live app and the live feeds on 31 August 2026: an interaction crawl on desktop and
 mobile, a data sweep over all 751 tracked trains, and an independent cross-check that decoded the
