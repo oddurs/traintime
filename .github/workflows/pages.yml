@@ -29,6 +29,8 @@ jobs:
       - run: npm run build:pages
         env:
           NEXT_PUBLIC_BASE_PATH: /traintime
+          # The hosted poller gives the public site recorded history, replay and line health.
+          NEXT_PUBLIC_POLLER_URL: ${{ vars.POLLER_URL }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out

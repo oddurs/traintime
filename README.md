@@ -2,7 +2,7 @@
 
 **Every New York City subway train, moving on a map of the city — simulated from the MTA's realtime feeds, and measured against what the trains actually did.**
 
-Live at **https://oddurs.github.io/traintime/** (runs entirely in your browser).
+Live at **https://oddurs.github.io/traintime/** · [how accurate is it?](https://oddurs.github.io/traintime/accuracy/) · [API](https://oddurs.github.io/traintime/api-docs/)
 
 ![traintime](docs/screenshot.png)
 
@@ -10,6 +10,19 @@ The MTA publishes no train positions. It publishes predicted arrival times and a
 status, with undocumented quirks that differ by division. traintime turns that into continuous
 motion: a physical model of each train paced to a *corrected* arrival time, learned from a
 recording of the feeds and scored by replay against observed station events.
+
+## What it does
+
+- **Every train, moving.** Positions integrated with real acceleration and braking, paced to a
+  corrected arrival time, following the actual track geometry. A chevron shows each train's heading.
+- **Arrivals boards.** Search a station (or hit "near me") for the next trains in each direction,
+  with our ETA, its ±1σ, and how it differs from the MTA's own estimate. Tap a train to follow it.
+- **It says how it knows.** "Confirmed at 14 St 12 s ago" versus "departure modelled — this line
+  doesn't report departures". Uncertainty is drawn as a ribbon and stated in words.
+- **History.** With a poller running, scrub the recorded day, replay it at up to 60×, see per-line
+  headways, and export a clip.
+- **Anywhere.** Installable PWA, offline shell, [embeddable views](https://oddurs.github.io/traintime/embed/?station=A24),
+  and a documented API.
 
 ## Run it
 
@@ -95,6 +108,24 @@ src/components/    TrainMap, Panel
 public/data/       network.json + committed snapshots of timing.json and eta-model.json
 docs/              FEED-SEMANTICS.md (what the feeds actually mean), ROADMAP.md (plan + results)
 ```
+
+## Deploying
+
+The site is a static export; the poller is a long-running process that needs a disk.
+
+```
+# site — GitHub Pages, built by .github/workflows/pages.yml on every push to main
+NEXT_PUBLIC_BASE_PATH=/traintime npm run build:pages
+
+# poller — anywhere that runs a container with a volume (Railway, Fly, a VPS)
+docker build -t traintime-poller .
+docker run -p 7118:7118 -v traintime-data:/data -e TRAINTIME_DATA_DIR=/data traintime-poller
+```
+
+Point the site at the poller with the `POLLER_URL` repository variable (baked in at build time as
+`NEXT_PUBLIC_POLLER_URL`). Without one, the site tracks trains in the browser instead and simply
+has no history or replay. Serverless hosts cannot run the poller: it holds state and appends to
+disk continuously.
 
 ## Data and credits
 

@@ -251,10 +251,32 @@ button.roundel:hover { transform: scale(1.09); }
   .panel.sheet.peek .panel-scroll { max-height: 22vh; }
   .panel.sheet.peek .routes, .panel.sheet.peek .legend, .panel.sheet.peek .history, .panel.sheet.peek .alerts-section { display: none; }
   .panel.sheet .panel-foot { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
-  .maplibregl-ctrl-bottom-right { bottom: 42vh; }
+  /* Pinch-zoom is the native gesture here; the buttons would only collide with the sheet. */
+  .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group { display: none; }
+  .maplibregl-ctrl-bottom-right { bottom: 4px; }
   .arr-eta { font-size: 22px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- embed ---------- */
+.embed .maplibregl-ctrl-attrib { font-size: 9px; }
+.embed-card {
+  position: absolute; top: 10px; left: 10px; z-index: 5; max-width: 280px;
+  background: var(--panel); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px 12px;
+}
+.embed-card h2 { margin: 0 0 7px; font-size: 13px; font-weight: 700; }
+.embed-group + .embed-group { margin-top: 9px; }
+.embed-group h3 { margin: 0 0 4px; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.embed-row { display: flex; align-items: center; gap: 7px; padding: 3px 0; font-size: 12px; }
+.embed-dest { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.embed-eta { font-weight: 700; font-variant-numeric: tabular-nums; }
+.embed-brand {
+  position: absolute; right: 10px; top: 10px; z-index: 5; font: 700 10px var(--font); letter-spacing: 0.02em;
+  color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 7px; text-decoration: none; opacity: 0.85;
+}
+.embed-brand:hover { opacity: 1; }

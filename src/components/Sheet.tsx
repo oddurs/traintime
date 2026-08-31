@@ -21,13 +21,17 @@ const HEIGHTS: Record<SheetStop, string> = { peek: "auto", half: "52vh", full: "
 export default function Sheet({ mobile, raiseOn, header, children }: Props) {
   const [stop, setStop] = useState<SheetStop>("peek");
   const [drag, setDrag] = useState<{ y0: number; dy: number } | null>(null);
-  const [lastRaise, setLastRaise] = useState(raiseOn);
+  // Starts undefined so a sheet that mounts with a selection already made still rises to show it.
+  const [lastRaise, setLastRaise] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLElement>(null);
 
-  // A new selection pulls a collapsed sheet up so the answer is visible without a drag.
+  // A new selection pulls a collapsed sheet up so the answer is visible without a drag. This is
+  // not gated on `mobile`: the media query resolves in an effect, so on the first render it is
+  // still false and the transition would be consumed before it could be acted on. The stop is
+  // only read in the mobile branch below, so setting it early is harmless.
   if (raiseOn !== lastRaise) {
     setLastRaise(raiseOn);
-    if (mobile && raiseOn) setStop((s) => (s === "peek" ? "half" : s));
+    if (raiseOn) setStop((s) => (s === "peek" ? "half" : s));
   }
 
   if (!mobile) {
