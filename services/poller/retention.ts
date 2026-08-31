@@ -16,12 +16,20 @@ export interface RetentionPolicy {
   eventsDays: number;
   /** Files older than this are candidates for merging into a daily file. */
   compactAfterHours: number;
+  /**
+   * A hard ceiling on total storage. Age alone does not guarantee a volume never fills — a
+   * busier day, a longer outage backlog or a change of feed size can all push past the estimate
+   * — so the oldest raw ticks are dropped until the footprint is back under budget. Derived
+   * events are never touched by this: they are small, and they are what the models learn from.
+   */
+  budgetBytes: number;
 }
 
 export const DEFAULT_POLICY: RetentionPolicy = {
-  ticksDays: Number(process.env.TICKS_RETENTION_DAYS ?? 4),
+  ticksDays: Number(process.env.TICKS_RETENTION_DAYS ?? 3),
   eventsDays: Number(process.env.EVENTS_RETENTION_DAYS ?? 120),
   compactAfterHours: 2,
+  budgetBytes: Number(process.env.DISK_BUDGET_BYTES ?? 3_000_000_000),
 };
 
 const DAY_MS = 86_400_000;
@@ -105,6 +113,33 @@ export function prune(policy: RetentionPolicy = DEFAULT_POLICY): Record<string, 
     if (n) removed[table] = n;
   }
   return removed;
+}
+
+/**
+ * Drop the oldest raw ticks until total storage is back under budget. Ticks are the bulk and the
+ * least valuable once events have been derived from them, so they are the right thing to give up.
+ */
+export function enforceBudget(
+  policy: RetentionPolicy = DEFAULT_POLICY,
+  /** Overridable so this can be exercised against a scratch directory. */
+  opts: { ticksDir?: string; totalBytes?: number } = {},
+): { removed: number; freedBytes: number } {
+  const dir = opts.ticksDir ?? join(REC_DIR, "ticks");
+  let bytes = opts.totalBytes ?? diskUsage().bytes;
+  if (bytes <= policy.budgetBytes) return { removed: 0, freedBytes: 0 };
+  if (!existsSync(dir)) return { removed: 0, freedBytes: 0 };
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".parquet"))
+    .map((f) => ({ f, full: join(dir, f), when: stampTime(f) ?? statSync(join(dir, f)).mtimeMs, size: statSync(join(dir, f)).size }))
+    .sort((a, b) => a.when - b.when);
+  let removed = 0, freed = 0;
+  // Always leave the most recent file: replay of the last few minutes is worth more than the
+  // last few megabytes, and an empty ticks directory would break the replay endpoint.
+  for (const file of files.slice(0, -1)) {
+    if (bytes <= policy.budgetBytes) break;
+    try { unlinkSync(file.full); removed++; freed += file.size; bytes -= file.size; } catch {}
+  }
+  return { removed, freedBytes: freed };
 }
 
 /**

@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stampTime } from "../services/poller/retention";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { enforceBudget, stampTime } from "../services/poller/retention";
 import { band, calendarRow, daypart, isHoliday, season } from "../services/poller/context";
 
 test("retention: file stamps parse strictly", () => {
@@ -67,4 +70,18 @@ test("weather: codes collapse to bands that could change how trains run", () => 
   assert.equal(band({ precip_mm: 6, snow_cm: 0, code: 65 }), "heavy-rain");
   assert.equal(band({ precip_mm: 1, snow_cm: 2, code: 73 }), "snow");
   assert.equal(band({ precip_mm: 8, snow_cm: 0, code: 95 }), "extreme");
+});
+
+test("retention: the budget drops the oldest ticks and never the newest", () => {
+  const dir = mkdtempSync(join(tmpdir(), "tt-ticks-"));
+  const big = Buffer.alloc(200_000, 1);
+  for (const day of ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]) {
+    writeFileSync(join(dir, `daily-${day}.parquet`), big);
+  }
+  const policy = { ticksDays: 99, eventsDays: 99, compactAfterHours: 2, budgetBytes: 450_000 };
+  const res = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000 });
+  const left = readdirSync(dir).sort();
+  assert.ok(res.removed >= 2, `expected the oldest files to go, dropped ${res.removed}`);
+  assert.ok(left.includes("daily-2026-08-31.parquet"), "the newest tick file must survive");
+  assert.ok(!left.includes("daily-2026-08-28.parquet"), "the oldest must go first");
 });

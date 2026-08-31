@@ -18,7 +18,7 @@ import { Recorder, DATA_DIR } from "./recorder";
 import { PollerServer } from "./server";
 import { FeedMonitor } from "./health";
 import { ContextRecorder } from "./context";
-import { cleanTemp, compact, diskUsage, prune } from "./retention";
+import { cleanTemp, compact, diskUsage, enforceBudget, prune } from "./retention";
 import { learnOnce, msUntilNightly, type LearnOutcome } from "./learn";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -77,7 +77,7 @@ async function main() {
 
   const stats = { fetches: 0, errors: 0, fresh: 0, events: 0, etaObs: 0 };
   let lastLearn: LearnOutcome | null = null;
-  let lastMaintenance: { at: number; pruned: Record<string, number>; compacted: Record<string, number> } | null = null;
+  let lastMaintenance: { at: number; pruned: Record<string, number>; compacted: Record<string, number>; budget: { removed: number; freedBytes: number } } | null = null;
 
   const server = new PollerServer({
     tracker, net, timing, decoder,
@@ -154,9 +154,10 @@ async function main() {
       cleanTemp();
       const compacted = await compact(recorder.connection);
       const pruned = prune();
-      lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted };
-      if (Object.keys(pruned).length || Object.keys(compacted).length) {
-        console.log(`[maintenance] pruned ${JSON.stringify(pruned)} compacted ${JSON.stringify(compacted)} disk ${(diskUsage().bytes / 1e6).toFixed(0)} MB`);
+      const budget = enforceBudget();
+      lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted, budget };
+      if (Object.keys(pruned).length || Object.keys(compacted).length || budget.removed) {
+        console.log(`[maintenance] pruned ${JSON.stringify(pruned)} compacted ${JSON.stringify(compacted)} budget ${JSON.stringify(budget)} disk ${(diskUsage().bytes / 1e6).toFixed(0)} MB`);
       }
     } catch (e) {
       console.error("[maintenance] failed:", e instanceof Error ? e.message : e);
