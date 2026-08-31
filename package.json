@@ -20,7 +20,8 @@
     "learn": "tsx scripts/learn-timing.ts",
     "train-model": ".venv/bin/python scripts/train_eta_model.py",
     "evaluate": "tsx scripts/evaluate.ts",
-    "publish-accuracy": "tsx scripts/publish-accuracy.ts"
+    "publish-accuracy": "tsx scripts/publish-accuracy.ts",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",

@@ -11,7 +11,7 @@ import type { EtaObservation, StationEvent } from "../../src/lib/tracker";
  */
 export const DATA_DIR = process.env.TRAINTIME_DATA_DIR ?? join(import.meta.dirname, "..", "..", "data");
 export const REC_DIR = join(DATA_DIR, "rec");
-export const TABLES = ["ticks", "events", "eta_obs", "trips"] as const;
+export const TABLES = ["ticks", "events", "eta_obs", "trips", "weather", "calendar"] as const;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS ticks   (feed VARCHAR, ts BIGINT, fetched_at BIGINT, n_trains INTEGER, raw BLOB);
@@ -127,7 +127,10 @@ export class Recorder {
     for (const table of TABLES) {
       const n = Number((await this.conn.runAndReadAll(`SELECT count(*) AS n FROM ${table}`)).getRowObjects()[0].n);
       if (n === 0) continue;
-      const order = table === "ticks" || table === "events" ? "ts" : table === "eta_obs" ? "obs_ts" : "first_seen";
+      const order = table === "ticks" || table === "events" ? "ts"
+        : table === "eta_obs" ? "obs_ts"
+        : table === "weather" || table === "calendar" ? "hour"
+        : "first_seen";
       const file = join(REC_DIR, table, `${stamp}.parquet`);
       await this.conn.run(`COPY (SELECT * FROM ${table} ORDER BY ${order}) TO '${file}' (FORMAT PARQUET, COMPRESSION ZSTD)`);
       await this.conn.run(`DELETE FROM ${table}`);

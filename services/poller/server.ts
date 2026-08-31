@@ -29,6 +29,7 @@ export interface ServerDeps {
   decoder: Decoder;
   conn: () => DuckDBConnection;
   metrics: () => Record<string, unknown>;
+  health: () => Record<string, unknown>;
   flush: () => Promise<Record<string, number>>;
 }
 
@@ -82,8 +83,10 @@ export class PollerServer {
     const url = new URL(req.url ?? "/", "http://localhost");
     const now = Math.floor(Date.now() / 1000);
     switch (url.pathname) {
-      case "/health":
-        return json(res, { ok: true, trains: this.deps.tracker.size, clock: this.deps.tracker.clock, now });
+      case "/health": {
+        const h = this.deps.health();
+        return json(res, h, h.ok ? 200 : 503);
+      }
       case "/metrics":
         return json(res, this.deps.metrics());
       case "/state":

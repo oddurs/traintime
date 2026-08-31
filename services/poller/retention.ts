@@ -28,6 +28,21 @@ const DAY_MS = 86_400_000;
 const stampOf = (file: string) => file.replace(/\.parquet$/, "").replace(/^rebuilt-/, "").replace(/^daily-/, "");
 const isDaily = (file: string) => file.startsWith("daily-");
 
+/**
+ * When a file's contents are from, in epoch ms, or null if the name does not say.
+ *
+ * Parsed strictly rather than massaged into something Date.parse will accept: "2026-08-31" fed
+ * through a loose conversion becomes "2026:08:31", which Date.parse reads as the first of January
+ * at 08:31 — eight months stale — and the file is deleted the moment after compaction wrote it.
+ * Names are produced from toISOString(), so they are UTC.
+ */
+export function stampTime(file: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2})-(\d{2})-(\d{2}))?$/.exec(stampOf(file));
+  if (!m) return null;
+  const [, y, mo, d, h, mi, se] = m;
+  return Date.UTC(+y, +mo - 1, +d, +(h ?? 0), +(mi ?? 0), +(se ?? 0));
+}
+
 export function diskUsage(): { bytes: number; files: number; byTable: Record<string, number> } {
   let bytes = 0, files = 0;
   const byTable: Record<string, number> = {};
@@ -59,10 +74,15 @@ export function prune(policy: RetentionPolicy = DEFAULT_POLICY): Record<string, 
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".parquet")) continue;
       const full = join(dir, f);
-      // The file name is an ISO stamp, but mtime is the honest fallback for rebuilt files.
-      const stamped = Date.parse(stampOf(f).replace(/-(\d\d)-(\d\d)$/, ":$1:$2").replace(/T/, "T"));
-      const when = Number.isFinite(stamped) ? stamped : statSync(full).mtimeMs;
-      if (when < cutoff) { unlinkSync(full); n++; }
+      const named = stampTime(f);
+      const mtime = statSync(full).mtimeMs;
+      // A file is only old if BOTH its name and its mtime say so. Recently written files are
+      // never deleted, whatever their name claims — losing recordings is unrecoverable, and a
+      // parsing mistake must not be able to cause it.
+      if (mtime >= cutoff) continue;
+      if (named !== null && named >= cutoff) continue;
+      unlinkSync(full);
+      n++;
     }
     if (n) removed[table] = n;
   }
