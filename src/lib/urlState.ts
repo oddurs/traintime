@@ -8,6 +8,8 @@
  */
 export interface UrlState {
   station?: string;
+  /** Where the journey ends, when a board has been turned into a trip. */
+  to?: string;
   train?: string;
   routes?: string[];
   view?: { lat: number; lon: number; zoom: number };
@@ -21,6 +23,8 @@ export function parseHash(hash: string): UrlState {
   if (station) s.station = station;
   const train = params.get("t");
   if (train) s.train = train;
+  const to = params.get("to");
+  if (to) s.to = to;
   const routes = params.get("r");
   if (routes) s.routes = routes.split(",").filter(Boolean);
   const view = params.get("@");
@@ -40,6 +44,7 @@ export function toHash(s: UrlState): string {
   const p = new URLSearchParams();
   if (s.station) p.set("s", s.station);
   if (s.train) p.set("t", s.train);
+  if (s.to) p.set("to", s.to);
   if (s.routes) p.set("r", s.routes.join(","));
   if (s.view) p.set("@", `${s.view.lat.toFixed(4)},${s.view.lon.toFixed(4)},${s.view.zoom.toFixed(1)}`);
   if (s.replay) p.set("replay", `${s.replay.from},${s.replay.to},${s.replay.speed}`);

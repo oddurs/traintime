@@ -22,8 +22,14 @@ export interface HNode {
 }
 
 export interface Hierarchy {
-  /** Observations a cell needs before it mostly speaks for itself. */
+  /**
+   * Observations a cell needs before it mostly speaks for itself. A single number treats a
+   * segment-wide cell and a segment-by-hour-by-weather cell as equally trustworthy at the same
+   * count, which they are not: the finer the slice, the more likely a handful of observations
+   * is noise, so each level can set its own bar.
+   */
   k: number;
+  kByLevel?: number[];
   prior: HNode;
   /** Level names, coarsest first. */
   levels: string[];
@@ -47,7 +53,7 @@ export function estimate(h: Hierarchy, keys: (string | undefined)[]): Estimate {
     if (key === undefined) continue;
     const node = h.nodes[h.levels[i]]?.[key];
     if (!node) continue;
-    const w = node.n / (node.n + h.k);
+    const w = node.n / (node.n + (h.kByLevel?.[i] ?? h.k));
     v = w * node.v + (1 - w) * v;
     s = w * node.s + (1 - w) * s;
     n = node.n;
@@ -70,6 +76,8 @@ function node(values: number[]): HNode {
 
 export interface BuildOptions {
   k?: number;
+  /** Per-level evidence bar, coarsest first; falls back to `k`. */
+  kByLevel?: number[];
   /** A cell needs at least this many observations to be kept at all. */
   minN?: number;
   /**
@@ -93,6 +101,7 @@ export interface Sample {
  */
 export function buildHierarchy(levels: string[], samples: Sample[], opts: BuildOptions = {}): Hierarchy {
   const k = opts.k ?? 12;
+  const kByLevel = opts.kByLevel;
   const minN = opts.minN ?? 5;
   const minLift = opts.minLift ?? 1.5;
   const maxPerLevel = opts.maxPerLevel ?? 40_000;
@@ -110,7 +119,7 @@ export function buildHierarchy(levels: string[], samples: Sample[], opts: BuildO
     }
   }
 
-  const h: Hierarchy = { k, prior: node(all), levels, nodes: {} };
+  const h: Hierarchy = { k, kByLevel, prior: node(all), levels, nodes: {} };
   for (const level of levels) {
     const kept: Record<string, HNode> = {};
     const entries = [...buckets[level].entries()]

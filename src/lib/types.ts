@@ -36,6 +36,10 @@ export interface Network {
   stationRoutes: Record<string, string[]>;
   /** Segment key -> route -> [lane offset about the centreline, services sharing the corridor]. */
   segmentSlots: Record<string, Record<string, [number, number]>>;
+  /** Station id -> the complex it belongs to; a rider's "Times Sq" is five GTFS stations. */
+  complexOf: Record<string, string>;
+  /** Complex key -> its name, member stations and the routes they collectively serve. */
+  complexes: Record<string, { name: string; stations: string[]; routes: string[] }>;
   /** GTFS shape id -> its ordered directional stop ids, for exact predecessor lookup. */
   shapeStops: Record<string, string[]>;
   /** Segment key -> route -> [track offset within its colour group, services in that group]. */
@@ -126,6 +130,8 @@ export interface TrainState {
   expectedDeparture?: number;
   /** Train directly ahead on the same track (same segment, or dwelling at nextStop). */
   leaderId?: string;
+  /** True when this train's arrival is limited by the one in front rather than by the track. */
+  heldBehind?: boolean;
   /** Typical run time for the current segment, seconds (learned → scheduled → geometric). */
   runTime?: number;
   stops: StopPrediction[];
@@ -200,8 +206,8 @@ export interface TimingTables {
    * better and these stay false, so the model never gets more elaborate than the data warrants.
    */
   hierGate?: {
-    run: { active: boolean; k: number; flatMae: number; hierMae: number; testRows: number };
-    dwell: { active: boolean; k: number; flatMae: number; hierMae: number; testRows: number };
+    run: { active: boolean; k: number; shape?: string; flatMae: number; hierMae: number; testRows: number };
+    dwell: { active: boolean; k: number; shape?: string; flatMae: number; hierMae: number; testRows: number };
   };
   window: { from: string; to: string };
   samples: { events: number; etaObs: number };

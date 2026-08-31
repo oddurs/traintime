@@ -9,6 +9,7 @@
  *   prevOf        - per route: for each directional stop id, which stops precede it
  *   routeSegments - per route: which segment keys make up the line (for drawing)
  *   stationRoutes - per parent station: which routes serve it
+ *   complexes     - stations a rider thinks of as one place, from transfers.txt
  *   segmentSlots  - per segment, the lane each route occupies among the services sharing that
  *                   corridor, so parallel lines can be fanned out on the map
  *
@@ -199,6 +200,25 @@ async function main() {
     }
   }
   const parent = (id: string) => parentOf[id] ?? id.replace(/[NS]$/, "");
+
+  // Station complexes. A rider says "Times Sq", but GTFS has five stations there — one per
+  // trunk — linked only by transfers.txt. Union them so a board answers the question actually
+  // being asked.
+  const parentOfComplex = new Map<string, string>();
+  const find = (x: string): string => {
+    const p = parentOfComplex.get(x);
+    if (p === undefined || p === x) return x;
+    const root = find(p);
+    parentOfComplex.set(x, root);
+    return root;
+  };
+  const union = (a: string, b: string) => {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) parentOfComplex.set(ra, rb);
+  };
+  for (const r of rows(read("transfers.txt"))) {
+    if (r.from_stop_id && r.to_stop_id && r.from_stop_id !== r.to_stop_id) union(r.from_stop_id, r.to_stop_id);
+  }
 
   // shapes
   const shapePts: Record<string, { seq: number; p: LonLat }[]> = {};
@@ -422,6 +442,34 @@ async function main() {
     segmentSlots[key] = slots;
     trackSlots[key] = tracks;
   }
+  // Group the stations, and name each complex after whichever of its stations serves the most
+  // routes — that is the name on the street.
+  const groups = new Map<string, string[]>();
+  for (const id of Object.keys(stations)) {
+    const root = find(id);
+    (groups.get(root) ?? groups.set(root, []).get(root)!).push(id);
+  }
+  const complexOf: Record<string, string> = {};
+  const complexes: Record<string, { name: string; stations: string[]; routes: string[] }> = {};
+  for (const [root, ids] of groups) {
+    const best = [...ids].sort((a, b) => {
+      const ra = (stationRoutes[a]?.size ?? 0), rb = (stationRoutes[b]?.size ?? 0);
+      if (ra !== rb) return rb - ra;
+      return (stations[a]?.name.length ?? 99) - (stations[b]?.name.length ?? 99);
+    })[0];
+    const routeSet = new Set<string>();
+    for (const id of ids) for (const r of stationRoutes[id] ?? []) routeSet.add(r);
+    const key = best;
+    complexes[key] = {
+      name: stations[best]?.name ?? best,
+      stations: ids,
+      routes: [...routeSet].sort((a, b) => (routes[a]?.sortOrder ?? 999) - (routes[b]?.sortOrder ?? 999)),
+    };
+    for (const id of ids) complexOf[id] = key;
+  }
+  const multi = Object.values(complexes).filter((c) => c.stations.length > 1);
+  console.log(`complexes: ${Object.keys(complexes).length} (${multi.length} spanning more than one station, largest ${Math.max(...Object.values(complexes).map((c) => c.stations.length))})`);
+
   const shared = Object.values(segmentSlots).filter((s) => Object.values(s).some(([, n]) => n > 1)).length;
   console.log(`corridors: ${shared} of ${Object.keys(segmentSlots).length} segments share track`);
 
@@ -484,6 +532,8 @@ async function main() {
     ),
     routeSegments: Object.fromEntries(Object.entries(routeSegments).map(([r, s]) => [r, [...s]])),
     schedRun: Object.fromEntries(Object.entries(schedRunSum).map(([k, v]) => [k, Math.round(v.sum / v.n)])),
+    complexOf,
+    complexes,
     shapeStops,
     segmentSlots,
     trackSlots,

@@ -66,6 +66,13 @@ interface Memory {
 
 const EXPIRE_AFTER = 120;
 const ETA_OBS_STOPS = 3;
+/**
+ * The least time that can pass between one train leaving a platform and the next reaching it.
+ * Taken from the recorded events rather than guessed: the 5th percentile of observed
+ * departure-to-next-arrival at the same platform is 44 s, so 40 s is a floor that almost never
+ * contradicts reality while still catching predictions that are physically impossible.
+ */
+const CLEARANCE_S = 40;
 
 const nyTime = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false, weekday: "short" });
 const DOW: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -242,7 +249,8 @@ export class Tracker {
       const st = this.stateOf(m, now, hour, dow, cond);
       if (st) out.push(st);
     }
-    this.assignLeaders(out);
+    const byId = this.assignLeaders(out);
+    this.applyLeaderConstraint(out, byId, hour, cond);
     return out;
   }
 
@@ -338,8 +346,36 @@ export class Tracker {
     return out;
   }
 
+  /**
+   * A train cannot reach a platform before the train in front has left it. The feed predicts each
+   * trip independently, so nothing stops it promising two arrivals thirty seconds apart on one
+   * track; this is the constraint that the whole line's state lets us apply and a single trip's
+   * data never could. States are visited in arrival order so a queue resolves front to back.
+   */
+  private applyLeaderConstraint(states: TrainState[], byId: Map<string, TrainState>, hour: number, cond: Conditions) {
+    if (process.env.LEADER_CONSTRAINT === "0") return;
+    for (const s of [...states].sort((a, b) => a.eta - b.eta)) {
+      if (s.phase !== "moving" || !s.leaderId) continue;
+      const leader = byId.get(s.leaderId);
+      if (!leader || parentOf(leader.nextStop) !== parentOf(s.nextStop)) continue;
+      const clears = leader.phase === "dwelling"
+        ? (leader.expectedDeparture ?? leader.arrivedAt ?? s.eta)
+        : leader.eta + this.timing.dwell(leader.nextStop, hour, cond);
+      const earliest = clears + CLEARANCE_S;
+      if (earliest <= s.eta) continue;
+      // Pushing an arrival later is a real claim, so widen the spread with it rather than
+      // pretending the new number is as certain as the old one.
+      s.sigma = Math.max(s.sigma, Math.min(120, (earliest - s.eta) / 2));
+      s.eta = earliest;
+      s.heldBehind = true;
+      if (s.stops.length && parentOf(s.stops[0].id) === parentOf(s.nextStop)) {
+        s.stops[0] = { ...s.stops[0], eta: earliest, sigma: s.sigma };
+      }
+    }
+  }
+
   /** Who is directly ahead: same segment and departed earlier, or dwelling at my next stop. */
-  private assignLeaders(states: TrainState[]) {
+  private assignLeaders(states: TrainState[]): Map<string, TrainState> {
     const dwellingAt = new Map<string, TrainState[]>();
     const onSegment = new Map<string, TrainState[]>();
     for (const s of states) {
@@ -370,6 +406,7 @@ export class Tracker {
         if (m) m.dirty = true;
       }
     }
+    return new Map(states.map((s) => [s.id, s]));
   }
 
   snapshot(now: number, live = true): StateSnapshot {

@@ -1,95 +1,95 @@
 {
-  "generatedAt": "2026-08-31T04:56:18.192Z",
-  "report": "sigma-cal",
+  "generatedAt": "2026-08-31T21:06:28.024Z",
+  "report": "pm-final",
   "usesModel": true,
   "window": {
-    "from": 1788144224,
-    "to": 1788152011
+    "from": 1788202480,
+    "to": 1788209264
   },
-  "ticks": 5394,
-  "arrivals": 9651,
+  "ticks": 4579,
+  "arrivals": 20167,
   "dataLatencyS": {
-    "median": 8,
-    "p90": 20
+    "median": 9,
+    "p90": 18
   },
   "eta": [
     {
       "bucket": "h0",
       "label": "under 45 s",
-      "n": 3309,
-      "mtaMae": 30.461166515563615,
-      "mtaBias": -31,
-      "ourMae": 6.291192381862572,
-      "ourBias": -0.17429184913635254,
-      "coverage": 0.8996675732849804
+      "n": 6957,
+      "mtaMae": 29.84202961046428,
+      "mtaBias": -32,
+      "ourMae": 4.501745356865033,
+      "ourBias": -0.059421539306640625,
+      "coverage": 0.9282736811844186
     },
     {
       "bucket": "h1",
       "label": "45 s – 2 min",
-      "n": 35859,
-      "mtaMae": 129.11082294542513,
-      "mtaBias": -17,
-      "ourMae": 115.99710756423447,
-      "ourBias": -0.4345226287841797,
-      "coverage": 0.6695948018628517
+      "n": 59990,
+      "mtaMae": 35.931288548091345,
+      "mtaBias": -20,
+      "ourMae": 25.011350635171514,
+      "ourBias": -0.7906289100646973,
+      "coverage": 0.6755625937656276
     },
     {
       "bucket": "h2",
       "label": "2 – 5 min",
-      "n": 40240,
-      "mtaMae": 89.10395129224652,
-      "mtaBias": -19,
-      "ourMae": 71.91688998397846,
-      "ourBias": -0.37475156784057617,
-      "coverage": 0.6877733598409542
+      "n": 76614,
+      "mtaMae": 44.410851802542616,
+      "mtaBias": -30,
+      "ourMae": 29.914505164279763,
+      "ourBias": -4.086784362792969,
+      "coverage": 0.6773044091158273
     },
     {
       "bucket": "h3",
       "label": "5 – 15 min",
-      "n": 6670,
-      "mtaMae": 124.3296851574213,
-      "mtaBias": -47,
-      "ourMae": 78.42679072462994,
-      "ourBias": -1.3785717487335205,
-      "coverage": 0.7523238380809595
+      "n": 19892,
+      "mtaMae": 75.20224210737985,
+      "mtaBias": -51,
+      "ourMae": 48.52175961201421,
+      "ourBias": -10.222297191619873,
+      "coverage": 0.7073195254373618
     },
     {
       "bucket": "h4",
       "label": "over 15 min",
-      "n": 569,
-      "mtaMae": 93.78383128295255,
-      "mtaBias": -31,
-      "ourMae": 79.50647864609904,
-      "ourBias": 2.0693519115448,
-      "coverage": 0.5342706502636204
+      "n": 2125,
+      "mtaMae": 153.91576470588237,
+      "mtaBias": -48,
+      "ourMae": 130.21060245929044,
+      "ourBias": -3.5181970596313477,
+      "coverage": 0.6767058823529412
     }
   ],
   "position": {
-    "n": 9556,
-    "behindSegment": 279,
-    "shortMedianM": 190.63614210555204,
-    "shortP90M": 489.476558516116,
+    "n": 20025,
+    "behindSegment": 637,
+    "shortMedianM": 177.96676620840884,
+    "shortP90M": 474.0263716195391,
     "shortMeanM": null,
-    "earlyShare": 0.17632900795311846,
-    "earlyMedianS": 10,
-    "earlyP90S": 59
+    "earlyShare": 0.15390761548064918,
+    "earlyMedianS": 11,
+    "earlyP90S": 45
   },
   "motion": {
-    "steps": 2198715,
+    "steps": 5017052,
     "reversals": 0,
     "jumps": 0,
-    "coldPlacements": 833,
+    "coldPlacements": 1591,
     "maxSpeedMps": 27.000000000000114,
-    "maxAccelMps2": 9.241465485519957,
-    "turnRateP99": 6.708329514768593,
-    "turnRateMax": 175.35372812889943,
-    "duplicateTrainIds": 225,
-    "maxConcurrent": 347,
-    "offPattern": 41688,
-    "movingScored": 860260,
-    "offPatternShare": 0.048459767977123196,
-    "straightFallbackShare": 0.013739545997610514,
-    "chainedShare": 0.019115890083632018
+    "maxAccelMps2": 9.245518393449007,
+    "turnRateP99": 6.684342538918827,
+    "turnRateMax": 174.56420798677675,
+    "duplicateTrainIds": 223,
+    "maxConcurrent": 832,
+    "offPattern": 78603,
+    "movingScored": 1738782,
+    "offPatternShare": 0.045205781978419374,
+    "straightFallbackShare": 0.03764320785597381,
+    "chainedShare": 0.05182760501909438
   },
   "baseline": {
     "name": "baseline-naive",
@@ -99,21 +99,21 @@
   },
   "learned": {
     "window": {
-      "from": "2026-08-31T01:33:37.000Z",
-      "to": "2026-08-31T03:52:54.000Z"
+      "from": "2026-08-31T02:23:00.000Z",
+      "to": "2026-08-31T20:58:00.000Z"
     },
-    "events": 21472,
-    "etaObs": 102600,
-    "segments": 346,
-    "stops": 320
+    "events": 288705,
+    "etaObs": 1277479,
+    "segments": 419,
+    "stops": 351
   },
   "model": {
-    "generatedAt": "2026-08-31T04:53:39.762228+00:00",
-    "n_train": 67135,
-    "n_test": 22379,
+    "generatedAt": "2026-08-31T21:00:14.597956+00:00",
+    "n_train": 960309,
+    "n_test": 320103,
     "iters": 400,
-    "mae_raw": 54.10174717368962,
-    "mae_tables": 45.42778944546227,
-    "mae_model": 41.94008383898097
+    "mae_raw": 46.851835190548044,
+    "mae_tables": 34.22422938866552,
+    "mae_model": 32.84878137239121
   }
 }

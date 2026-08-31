@@ -15,6 +15,9 @@ export interface Arrival {
   /** How many stops before this one the train still has to make. */
   stopsAway: number;
   atPlatform: boolean;
+  /** When a destination is asked for: our predicted arrival there, and the ride length. */
+  destEta?: number;
+  rideSeconds?: number;
   state: TrainState;
 }
 
@@ -29,25 +32,54 @@ export interface ArrivalGroup {
  * Everything approaching one station, from the same train states the map draws — so the board
  * and the map can never disagree.
  */
-export function arrivalsAt(index: NetworkIndex, states: Iterable<TrainState>, station: string, limit = 6): ArrivalGroup[] {
-  const target = parentOf(station);
+export function arrivalsAt(
+  index: NetworkIndex,
+  states: Iterable<TrainState>,
+  station: string,
+  limit = 6,
+  /** Only trains that go on to serve this station, with the ride time worked out. */
+  destination?: string,
+): ArrivalGroup[] {
+  // Match the whole complex: someone standing at Times Sq wants every train at Times Sq, not
+  // only the ones on the platform GTFS happens to have keyed the station by.
+  const target = new Set(index.complexStations(station));
+  const to = destination ? new Set(index.complexStations(destination)) : undefined;
   const found: Arrival[] = [];
   for (const st of states) {
     if (st.phase === "unstarted") continue;
     const dest = st.destination ?? (st.stops.length ? st.stops[st.stops.length - 1].id : st.nextStop);
-    if (st.phase === "dwelling" && parentOf(st.nextStop) === target) {
+    if (st.phase === "dwelling" && target.has(parentOf(st.nextStop))) {
+      let destEta: number | undefined;
+      if (to) {
+        const d = st.stops.find((x) => to.has(parentOf(x.id)));
+        if (!d) continue;
+        destEta = d.eta;
+      }
+      const eta = st.arrivedAt ?? st.eta;
       found.push({
-        id: st.id, route: st.route, direction: st.direction, eta: st.arrivedAt ?? st.eta, etaRaw: st.etaRaw,
-        sigma: 0, destination: dest, stopsAway: 0, atPlatform: true, state: st,
+        id: st.id, route: st.route, direction: st.direction, eta, etaRaw: st.etaRaw,
+        sigma: 0, destination: dest, stopsAway: 0, atPlatform: true,
+        destEta, rideSeconds: destEta === undefined ? undefined : destEta - eta,
+        state: st,
       });
       continue;
     }
-    const idx = st.stops.findIndex((s) => parentOf(s.id) === target);
+    const idx = st.stops.findIndex((s) => target.has(parentOf(s.id)));
     if (idx === -1) continue;
     const s = st.stops[idx];
+    // A trip only counts if this train reaches the destination after the boarding stop; our own
+    // per-stop predictions already carry the arrival time there, so no second model is needed.
+    let destEta: number | undefined;
+    if (to) {
+      const dIdx = st.stops.findIndex((x, i) => i > idx && to.has(parentOf(x.id)));
+      if (dIdx === -1) continue;
+      destEta = st.stops[dIdx].eta;
+    }
     found.push({
       id: st.id, route: st.route, direction: st.direction, eta: s.eta, etaRaw: s.etaRaw, sigma: s.sigma,
-      destination: dest, stopsAway: idx, atPlatform: false, state: st,
+      destination: dest, stopsAway: idx, atPlatform: false,
+      destEta, rideSeconds: destEta === undefined ? undefined : destEta - s.eta,
+      state: st,
     });
   }
   found.sort((a, b) => a.eta - b.eta);
@@ -64,33 +96,43 @@ export function arrivalsAt(index: NetworkIndex, states: Iterable<TrainState>, st
   return groups;
 }
 
-/** Stations whose name matches a query, ranked by how early and how completely it matches. */
+/**
+ * Stations whose name matches, ranked by how early and completely it matches, and collapsed to
+ * one result per complex — five "Times Sq" rows would be five ways of saying the same thing.
+ */
 export function searchStations(index: NetworkIndex, query: string, limit = 8) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  const scored: { id: string; name: string; routes: string[]; score: number }[] = [];
+  const best = new Map<string, { id: string; name: string; routes: string[]; score: number }>();
   for (const s of Object.values(index.net.stations)) {
     const name = s.name.toLowerCase();
     const at = name.indexOf(q);
     if (at === -1) continue;
     const wordStart = at === 0 || /[^a-z0-9]/.test(name[at - 1]);
-    scored.push({
-      id: s.id, name: s.name, routes: index.net.stationRoutes[s.id] ?? [],
+    const key = index.complexKey(s.id);
+    const entry = {
+      id: key,
+      name: index.complexName(s.id),
+      routes: index.complexRoutes(s.id),
       score: (wordStart ? 0 : 50) + at + name.length / 100,
-    });
+    };
+    const cur = best.get(key);
+    if (!cur || entry.score < cur.score) best.set(key, entry);
   }
-  scored.sort((a, b) => a.score - b.score);
-  return scored.slice(0, limit);
+  return [...best.values()].sort((a, b) => a.score - b.score).slice(0, limit);
 }
 
-/** Stations nearest a point, closest first. */
+/** Complexes nearest a point, closest first — the nearest place to catch a train. */
 export function nearestStations(index: NetworkIndex, lat: number, lon: number, limit = 5) {
   const cos = Math.cos((lat * Math.PI) / 180);
-  return Object.values(index.net.stations)
-    .map((s) => ({
-      id: s.id, name: s.name, routes: index.net.stationRoutes[s.id] ?? [],
-      meters: Math.hypot((s.lon - lon) * 111_320 * cos, (s.lat - lat) * 111_320),
-    }))
-    .sort((a, b) => a.meters - b.meters)
-    .slice(0, limit);
+  const best = new Map<string, { id: string; name: string; routes: string[]; meters: number }>();
+  for (const s of Object.values(index.net.stations)) {
+    const meters = Math.hypot((s.lon - lon) * 111_320 * cos, (s.lat - lat) * 111_320);
+    const key = index.complexKey(s.id);
+    const cur = best.get(key);
+    if (!cur || meters < cur.meters) {
+      best.set(key, { id: key, name: index.complexName(s.id), routes: index.complexRoutes(s.id), meters });
+    }
+  }
+  return [...best.values()].sort((a, b) => a.meters - b.meters).slice(0, limit);
 }

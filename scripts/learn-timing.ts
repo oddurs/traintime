@@ -149,14 +149,27 @@ async function main() {
     const mae = (f: (r: T) => number) => (test.length ? test.reduce((s, r) => s + Math.abs(value(r) - f(r)), 0) / test.length : Infinity);
     const flatMae = mae(flatOf);
 
-    let best = { k: 0, hierMae: Infinity, hier: buildHierarchy(levels, rows.map(asSample), { k: HIER_K, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT }) };
-    for (const k of [4, 8, 15, 30]) {
-      const fitted = buildHierarchy(levels, train.map(asSample), { k, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT });
+    // Candidate shapes: a flat evidence bar, and ones that rise with how finely a cell slices
+    // the data, so a handful of observations in a narrow cell cannot outvote a well-measured
+    // parent. Whichever scores best on the held-out window is the one considered.
+    const shapes: { label: string; k: number; kByLevel?: number[] }[] = [
+      { label: "flat-4", k: 4 },
+      { label: "flat-15", k: 15 },
+      { label: "rising", k: 8, kByLevel: [6, 6, 20, 60, 60] },
+      { label: "steep", k: 8, kByLevel: [8, 8, 40, 150, 150] },
+    ];
+    let best: { label: string; k: number; hierMae: number; hier: ReturnType<typeof buildHierarchy> } = {
+      label: "none", k: 0, hierMae: Infinity,
+      hier: buildHierarchy(levels, rows.map(asSample), { k: HIER_K, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT }),
+    };
+    for (const shape of shapes) {
+      const opts = { k: shape.k, kByLevel: shape.kByLevel, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT };
+      const fitted = buildHierarchy(levels, train.map(asSample), opts);
       const m = mae((r) => estimate(fitted, keysOf(r)).value);
-      if (m < best.hierMae) best = { k, hierMae: m, hier: buildHierarchy(levels, rows.map(asSample), { k, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT }) };
+      if (m < best.hierMae) best = { label: shape.label, k: shape.k, hierMae: m, hier: buildHierarchy(levels, rows.map(asSample), opts) };
     }
     const active = best.hierMae < flatMae;
-    return { hier: best.hier, gate: { active, k: best.k, flatMae, hierMae: best.hierMae, testRows: test.length } };
+    return { hier: best.hier, gate: { active, k: best.k, shape: best.label, flatMae, hierMae: best.hierMae, testRows: test.length } };
   }
 
   const runFit = gatedHierarchy(
@@ -210,8 +223,8 @@ async function main() {
   const rs = hierarchySize(runHier), ds = hierarchySize(dwellHier);
   console.log(`run hierarchy: ${rs.nodes} cells ${JSON.stringify(rs.byLevel)} (prior ${runHier.prior.v}s over ${runHier.prior.n})`);
   console.log(`dwell hierarchy: ${ds.nodes} cells ${JSON.stringify(ds.byLevel)} (prior ${dwellHier.prior.v}s over ${dwellHier.prior.n})`);
-  const g = (n: string, x: { active: boolean; k: number; flatMae: number; hierMae: number; testRows: number }) =>
-    `${n}: ${x.active ? "ACTIVE" : "off"} (k=${x.k}, ${x.hierMae.toFixed(1)}s vs flat ${x.flatMae.toFixed(1)}s on ${x.testRows} held out)`;
+  const g = (n: string, x: { active: boolean; k: number; shape?: string; flatMae: number; hierMae: number; testRows: number }) =>
+    `${n}: ${x.active ? "ACTIVE" : "off"} (${x.shape}, ${x.hierMae.toFixed(1)}s vs flat ${x.flatMae.toFixed(1)}s on ${x.testRows} held out)`;
   console.log(g("run conditioning", runFit.gate));
   console.log(g("dwell conditioning", dwellFit.gate));
   console.log(`weather hours joined: ${bandByHour.size}`);

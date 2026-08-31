@@ -65,6 +65,28 @@ export class NetworkIndex {
     return u < v ? laid : [...laid].reverse();
   }
 
+  /** The complex a station belongs to — what a rider means when they name a station. */
+  complexKey(id: string): string {
+    const p = parentOf(id);
+    return this.net.complexOf?.[p] ?? p;
+  }
+
+  /** Every GTFS station a rider would call by this name. */
+  complexStations(id: string): string[] {
+    const key = this.complexKey(id);
+    return this.net.complexes?.[key]?.stations ?? [parentOf(id)];
+  }
+
+  complexName(id: string): string {
+    const key = this.complexKey(id);
+    return this.net.complexes?.[key]?.name ?? this.stationName(id);
+  }
+
+  complexRoutes(id: string): string[] {
+    const key = this.complexKey(id);
+    return this.net.complexes?.[key]?.routes ?? this.net.stationRoutes[parentOf(id)] ?? [];
+  }
+
   station(id: string): Station | undefined {
     return this.net.stations[parentOf(id)];
   }

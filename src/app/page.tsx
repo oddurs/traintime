@@ -31,6 +31,7 @@ function App({ index }: { index: NetworkIndex | null }) {
   const [view, setView] = useState<View | undefined>(undefined);
   const [hydrated, setHydrated] = useState(false);
   const [nearby, setNearby] = useState(false);
+  const [destination, setDestination] = useState<string | undefined>(undefined);
   const positionsRef = useRef(new Map<string, TrainPosition>());
 
   // Restore the state a shared link carries, once, before we start writing the hash back.
@@ -42,6 +43,7 @@ function App({ index }: { index: NetworkIndex | null }) {
     if (h.station) setSelection({ kind: "station", id: h.station });
     else if (h.train) { setSelection({ kind: "train", id: h.train }); setFollow(true); }
     if (h.view) setView(h.view);
+    if (h.to) setDestination(h.to);
     setHydrated(true);
     /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
@@ -72,11 +74,12 @@ function App({ index }: { index: NetworkIndex | null }) {
     writeHash({
       station: selection.kind === "station" ? selection.id : undefined,
       train: selection.kind === "train" ? selection.id : undefined,
+      to: destination,
       routes: visible ? [...visible] : undefined,
       view,
       replay: mode.kind === "replay" ? mode : undefined,
     });
-  }, [hydrated, selection, visible, view, mode]);
+  }, [hydrated, selection, visible, view, mode, destination]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -205,6 +208,7 @@ function App({ index }: { index: NetworkIndex | null }) {
           mode={mode} onMode={setMode} mobile={mobile}
           nearby={nearby} onNearby={() => setNearby((n) => !n)}
           locating={geo.status === "asking"} distance={selectedDistance}
+          destination={destination} onDestination={(id) => setDestination(id ?? undefined)}
           places={places} onToggleSave={togglePlace} isSaved={isSaved}
         />
       )}

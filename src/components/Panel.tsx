@@ -47,6 +47,8 @@ interface Props {
   onNearby: () => void;
   locating: boolean;
   distance?: number;
+  destination?: string;
+  onDestination: (id: string | null) => void;
   places: import("@/lib/places").SavedPlace[];
   onToggleSave: (id: string, name: string) => void;
   isSaved: (id: string) => boolean;
@@ -61,7 +63,7 @@ const GROUPS: string[][] = [
 export default function Panel(props: Props) {
   const { index, trains, byId, positionsRef, feeds, status, now, wallNow, alerts, selection, onSelect,
     follow, onFollow, visible, onToggle, onAll, showRibbons, onRibbons, mode, onMode, mobile,
-    nearby, onNearby, locating, distance, places, onToggleSave, isSaved } = props;
+    nearby, onNearby, locating, distance, destination, onDestination, places, onToggleSave, isSaved } = props;
   const [legendDismissed, setLegendDismissed] = useStoredFlag("tt.legend.dismissed", false);
   const [showHistory, setShowHistory] = useState(false);
   const client = useMemo(() => new TrainTimeClient(POLLER_URL), []);
@@ -117,6 +119,8 @@ export default function Panel(props: Props) {
           distance={distance}
           saved={isSaved(selection.id)}
           onToggleSave={() => onToggleSave(selection.id, index.stationName(selection.id))}
+          destination={destination}
+          onDestination={onDestination}
           stale={status.live && !status.connected && status.clockTs ? wallNow - status.clockTs : undefined}
           onSelect={onSelect} onClose={() => onSelect({ kind: "none" })}
         />

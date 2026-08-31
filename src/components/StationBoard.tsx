@@ -5,10 +5,11 @@ import type { Selection, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
 import { arrivalsAt } from "@/lib/arrivals";
-import { directionLabel, fmtMin } from "@/lib/format";
+import { directionLabel, fmtClock, fmtMin } from "@/lib/format";
 import { walkSeconds } from "@/lib/places";
 import RouteBullet from "./RouteBullet";
 import AlertList from "./AlertList";
+import DestinationPicker from "./DestinationPicker";
 
 interface Props {
   index: NetworkIndex;
@@ -21,6 +22,8 @@ interface Props {
   stale?: number;
   saved?: boolean;
   onToggleSave?: () => void;
+  destination?: string;
+  onDestination?: (id: string | null) => void;
   onSelect: (s: Selection) => void;
   onClose: () => void;
 }
@@ -39,29 +42,29 @@ function spoken(index: NetworkIndex, route: string, dest: string, secs: number, 
  * The arrivals board for one station, computed from the same train states the map draws —
  * so what it says and what you see can never disagree.
  */
-export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, onSelect, onClose }: Props) {
-  const groups = useMemo(() => arrivalsAt(index, trains, station), [index, trains, station]);
+export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, destination, onDestination, onSelect, onClose }: Props) {
+  const groups = useMemo(() => arrivalsAt(index, trains, station, 6, destination), [index, trains, station, destination]);
   // With a location we can say which trains are actually catchable on foot, which is the
   // difference between a timetable and advice.
   const walk = distance === undefined ? undefined : walkSeconds(distance);
-  const st = index.station(station);
-  const routes = useMemo(() => index.net.stationRoutes[station] ?? [], [index, station]);
+  const name = index.complexName(station);
+  const routes = useMemo(() => index.complexRoutes(station), [index, station]);
   const stationAlerts = useMemo(() => {
     if (!alerts) return [];
     const seen = new Set<string>();
-    const out = [...(alerts.byStation.get(station) ?? [])];
+    const out = index.complexStations(station).flatMap((id) => alerts.byStation.get(id) ?? []);
     for (const a of out) seen.add(a.id);
     for (const r of routes) for (const a of alerts.byRoute.get(r) ?? []) {
       if (!seen.has(a.id) && a.category === "delay") { seen.add(a.id); out.push(a); }
     }
     return out;
-  }, [alerts, station, routes]);
+  }, [alerts, station, routes, index]);
 
   return (
-    <section className="board" aria-label={`Arrivals at ${st?.name ?? station}`}>
+    <section className="board" aria-label={`Arrivals at ${name}`}>
       <header className="board-head">
         <div>
-          <h2>{st?.name ?? station}</h2>
+          <h2>{name}</h2>
           {distance !== undefined && (
             <div className="board-distance">
               {distance < 1000 ? `${Math.round(distance)} m away` : `${(distance / 1000).toFixed(1)} km away`}
@@ -89,9 +92,15 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         </div>
       </header>
 
+      {onDestination && <DestinationPicker index={index} destination={destination} onChange={onDestination} />}
+
       {stationAlerts.length > 0 && <AlertList index={index} alerts={stationAlerts} limit={2} />}
 
-      {groups.length === 0 && <p className="muted">No trains approaching right now.</p>}
+      {groups.length === 0 && (
+        <p className="muted">
+          {destination ? `No trains from here to ${index.stationName(destination)} right now.` : "No trains approaching right now."}
+        </p>
+      )}
 
       {groups.map((g) => (
         <div className="board-group" key={g.direction}>
@@ -113,7 +122,9 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
                     <span className="arr-dest">
                       <b>{index.stationName(a.destination)}</b>
                       <em>
-                        {a.atPlatform
+                        {a.rideSeconds !== undefined
+                          ? `arrives ${fmtClock(a.destEta!)} · ${Math.round(a.rideSeconds / 60)} min ride`
+                          : a.atPlatform
                           ? "at the platform"
                           : catchable === false
                             ? "too soon to reach on foot"
