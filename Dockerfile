@@ -6,6 +6,15 @@ FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Python, for the nightly model retrain. It runs as a separate process for a minute a day and is
+# the only part of the engine that could not previously improve itself.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir numpy pandas scikit-learn duckdb
+ENV PYTHON=/opt/venv/bin/python
+
 COPY package.json package-lock.json ./
 # The poller needs devDependencies (tsx) to run TypeScript directly.
 RUN npm ci --include=dev && npm cache clean --force

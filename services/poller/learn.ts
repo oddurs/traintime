@@ -6,7 +6,7 @@
  * against that held-out quarter alongside the incumbent, and only adopted if it wins.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
 import type { TimingTables } from "../../src/lib/types";
@@ -18,6 +18,14 @@ import { parquetGlob } from "./recorder";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 
+/** What the nightly model retrain did, if anything. */
+export interface ModelOutcome {
+  ran: boolean;
+  adopted?: boolean;
+  tookS?: number;
+  reason: string;
+}
+
 export interface LearnOutcome {
   at: number;
   ok: boolean;
@@ -27,6 +35,7 @@ export interface LearnOutcome {
   candidateMae?: number;
   testRows?: number;
   events?: number;
+  model?: ModelOutcome;
 }
 
 function run(args: string[]): Promise<{ code: number; out: string }> {
@@ -103,10 +112,11 @@ export async function learnOnce(net: NetworkIndex): Promise<LearnOutcome> {
       return { at, ok: false, adopted: false, reason: `final build failed: ${full.out.trim().slice(-200)}`, incumbentMae, candidateMae };
     }
     const adoptedTables = JSON.parse(readFileSync(live, "utf8")) as TimingTables;
+    const model = await retrainModel(live);
     return {
       at, ok: true, adopted: true,
       reason: `adopted: ${candidateMae.toFixed(1)}s vs ${incumbentMae.toFixed(1)}s on ${rows.length} held-out observations`,
-      incumbentMae, candidateMae, testRows: rows.length, events: adoptedTables.samples.events,
+      incumbentMae, candidateMae, testRows: rows.length, events: adoptedTables.samples.events, model,
     };
   } catch (e) {
     return { at, ok: false, adopted: false, reason: e instanceof Error ? e.message : String(e) };
@@ -114,6 +124,48 @@ export async function learnOnce(net: NetworkIndex): Promise<LearnOutcome> {
     conn.closeSync();
     db.closeSync();
   }
+}
+
+/**
+ * Retrain the residual model, and keep it only if it wins.
+ *
+ * The tables have rebuilt themselves nightly for a while; the model did not — it was trained by
+ * hand and shipped as a file, so the largest single contributor after the tables was the one part
+ * that never learned anything new. It runs as a separate process on purpose: it needs about a
+ * gigabyte for a minute, and a trainer that takes the recorder down with it would cost far more
+ * than it could add.
+ *
+ * It has to clear two bars before anything is written: beat the tables it was built against by
+ * more than 2%, and beat the model already in service on the same held-out window. Without the
+ * second, a nightly retrain drifts downhill one small step at a time and nobody sees it happen.
+ */
+async function retrainModel(tablesPath: string): Promise<ModelOutcome> {
+  if (process.env.MODEL_TRAINING === "off") return { ran: false, reason: "turned off" };
+  const python = process.env.PYTHON ?? "python3";
+  const live = join(DATA_DIR, "eta-model.json");
+  const candidate = join(DATA_DIR, "eta-model.candidate.json");
+  void tablesPath;
+  const started = Date.now();
+  const out = await new Promise<{ code: number; out: string }>((resolve) => {
+    const p = spawn(python, [join(ROOT, "scripts/train_eta_model.py"), "--out", candidate, "--incumbent", live], {
+      cwd: ROOT, env: process.env,
+    });
+    let text = "";
+    p.stdout.on("data", (d: Buffer) => { text += d.toString(); });
+    p.stderr.on("data", (d: Buffer) => { text += d.toString(); });
+    p.on("error", (e) => resolve({ code: -1, out: String(e) }));
+    p.on("close", (code) => resolve({ code: code ?? -1, out: text }));
+  });
+  const took = Math.round((Date.now() - started) / 1000);
+  const tail = out.out.trim().split("\n").slice(-1)[0]?.slice(0, 160) ?? "";
+
+  if (out.code === 3 || out.code === 4) return { ran: true, adopted: false, tookS: took, reason: tail };
+  if (out.code !== 0 || !existsSync(candidate)) {
+    return { ran: true, adopted: false, tookS: took, reason: `training failed: ${tail}` };
+  }
+  // Atomic: the poller watches this file and reloads it, so it must never be half-written.
+  renameSync(candidate, live);
+  return { ran: true, adopted: true, tookS: took, reason: tail };
 }
 
 /** Milliseconds until the next 03:20 in New York, when the system is quietest. */

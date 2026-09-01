@@ -279,6 +279,15 @@ export interface GbmModel {
    * sat at 67%. Confidence has to be honest in every part of the day, not on average.
    */
   sigmaByBucketDaypart?: Record<string, number>;
+  /**
+   * Feature vectors and the answers the trainer's own walk of these trees produced for them.
+   *
+   * The TypeScript evaluator has to reproduce them exactly, or every prediction served is quietly
+   * skewed and nothing else in the system would notice. Carried inside the model rather than in a
+   * fixture beside it, because the model retrains itself nightly and a separate file goes stale
+   * the first time it does.
+   */
+  parity?: { x: (number | null)[]; y: number }[];
 }
 
 export interface GbmTree {

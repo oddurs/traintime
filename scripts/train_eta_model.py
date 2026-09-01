@@ -5,7 +5,7 @@ Exports the trees to data/eta-model.json for the Node runtime (src/lib/gbm.ts).
 
   .venv/bin/python scripts/train_eta_model.py [--min-rows 2000] [--force]
 """
-import argparse, json, sys, time
+import argparse, gc, json, os, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,7 +16,9 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 ROOT = Path(__file__).resolve().parent.parent
-REC = ROOT / "data" / "rec"
+# Recordings live on the mounted volume when deployed, and in the checkout locally.
+DATA = Path(os.environ.get("TRAINTIME_DATA_DIR", str(ROOT / "data")))
+REC = DATA / "rec"
 NY = ZoneInfo("America/New_York")
 HORIZONS = [45, 120, 300, 900]
 FEATURES = ["horizon", "hour", "dow", "route", "segment", "direction", "table_median", "table_sigma", "run_p50", "elapsed", "elapsed_frac", "not_started"]
@@ -29,10 +31,27 @@ def bucket(h):
     return f"h{len(HORIZONS)}"
 
 
+def walk_forest(model_json, X):
+    """Evaluate an exported model the way src/lib/gbm.ts does — the same walk, in Python."""
+    out = np.full(len(X), float(model_json["baseline"]))
+    for t in model_json["trees"]:
+        leaf, feat, thr, left, right, miss, val = (
+            t["leaf"], t["feature"], t["threshold"], t["left"], t["right"], t["missingLeft"], t["value"])
+        for r in range(len(X)):
+            n = 0
+            while not leaf[n]:
+                v = X[r, feat[n]]
+                n = (left[n] if miss[n] else right[n]) if np.isnan(v) else (left[n] if v <= thr[n] else right[n])
+            out[r] += val[n]
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--min-rows", type=int, default=2000)
+    ap.add_argument("--duckdb-memory", default="512MB", help="how much DuckDB may buffer before spilling")
     ap.add_argument("--force", action="store_true", help="export even if it does not beat the tables")
+    ap.add_argument("--incumbent", default=None, help="an existing model that a candidate has to beat")
     ap.add_argument("--out", default=str(ROOT / "data" / "eta-model.json"))
     a = ap.parse_args()
 
@@ -43,81 +62,150 @@ def main():
         pass
 
     con = duckdb.connect()
-    df = con.execute(f"""
-        SELECT eo.obs_ts, eo.predicted, eo.prev_stop, eo.route, eo.stop_id, eo.departed_at, ev.ts AS actual
+    # Bounded on purpose: this runs beside a process recording the feeds, and a trainer that takes
+    # the container down with it has cost more than it could ever add. DuckDB spills to disk past
+    # the limit rather than growing.
+    con.execute(f"SET memory_limit='{a.duckdb_memory}'")
+    con.execute("SET threads=2")
+    # The join, with every string already turned into an integer code.
+    #
+    # Handing pandas the raw strings cost 1.74 GB for a million rows — object arrays of Python
+    # strings, several columns of them, copied again by the train/test split. The model never sees
+    # a string anyway: it sees the codes. Producing them in DuckDB, which dictionary-encodes as it
+    # goes, means the training set arrives as a compact numeric frame and the peak fits in a
+    # container that is also recording the feeds.
+    con.execute(f"""
+        CREATE VIEW joined AS
+        SELECT eo.obs_ts, eo.predicted, eo.prev_stop, eo.route, eo.stop_id, eo.departed_at,
+               ev.ts AS actual,
+               CASE WHEN eo.prev_stop IS NOT NULL THEN eo.prev_stop || '>' || eo.stop_id END AS segment,
+               right(eo.stop_id, 1) AS direction
         FROM read_parquet('{REC}/eta_obs/*.parquet', union_by_name=true) eo
         JOIN read_parquet('{REC}/events/*.parquet', union_by_name=true) ev
           ON ev.trip_id = eo.trip_id AND ev.stop_id = eo.stop_id AND ev.kind = 'arrive' AND NOT ev.estimated
         WHERE ev.ts >= eo.obs_ts - 5 AND eo.predicted - eo.obs_ts >= -30 AND abs(ev.ts - eo.predicted) < 900
-    """).df()
-    if len(df) < a.min_rows:
-        print(f"only {len(df)} joined observations; need {a.min_rows}. Record longer, then retry.")
+    """)
+    n_rows = con.execute("SELECT count(*) FROM joined").fetchone()[0]
+    if n_rows < a.min_rows:
+        print(f"only {n_rows} joined observations; need {a.min_rows}. Record longer, then retry.")
         sys.exit(2)
 
-    timing = json.loads((ROOT / "data" / "timing.json").read_text()) if (ROOT / "data" / "timing.json").exists() else {}
-    run_tab = timing.get("runTime", {})
+    def codes_for(col):
+        """A stable code per distinct value, and the map back, so the model JSON can carry it."""
+        rows = con.execute(f"SELECT DISTINCT {col} AS v FROM joined WHERE {col} IS NOT NULL ORDER BY 1").fetchall()
+        return {r[0]: i for i, r in enumerate(rows)}
 
-    df["residual"] = df["actual"] - df["predicted"]
-    df["horizon"] = df["predicted"] - df["obs_ts"]
-    ts = pd.to_datetime(df["obs_ts"], unit="s", utc=True).dt.tz_convert(NY)
-    df["hour"] = ts.dt.hour
-    df["dow"] = ts.dt.dayofweek
-    df["segment"] = np.where(df["prev_stop"].notna(), df["prev_stop"].fillna("") + ">" + df["stop_id"], None)
-    df["direction"] = df["stop_id"].str[-1]
-    df["bucket"] = df["horizon"].map(bucket)
-    df["run_p50"] = df["segment"].map(lambda s: run_tab.get(s, {}).get("p50", np.nan) if s else np.nan)
-    df["elapsed"] = np.where(df["departed_at"].notna(), df["obs_ts"] - df["departed_at"], np.nan)
+    cats = {c: codes_for(c) for c in ("route", "segment", "direction")}
+    stop_codes = codes_for("stop_id")
+    for name, mapping in (("route", cats["route"]), ("segment", cats["segment"]),
+                          ("direction", cats["direction"]), ("stop_id", stop_codes)):
+        con.execute(f"CREATE TABLE code_{name} (v VARCHAR, code INTEGER)")
+        con.executemany(f"INSERT INTO code_{name} VALUES (?, ?)", list(mapping.items()))
+
+    # On a deployed poller the learned tables live on the mounted volume, not in the checkout.
+    timing_path = DATA / "timing.json"
+    timing = json.loads(timing_path.read_text()) if timing_path.exists() else {}
+    run_tab = {k: v.get("p50") for k, v in timing.get("runTime", {}).items() if v.get("p50") is not None}
+    con.execute("CREATE TABLE run_p50 (segment VARCHAR, p50 DOUBLE)")
+    if run_tab:
+        con.executemany("INSERT INTO run_p50 VALUES (?, ?)", list(run_tab.items()))
+
+    bucket_sql = "CASE " + " ".join(
+        f"WHEN j.predicted - j.obs_ts < {h} THEN {i}" for i, h in enumerate(HORIZONS)
+    ) + f" ELSE {len(HORIZONS)} END"
+
+    df = con.execute(f"""
+        SELECT j.obs_ts::BIGINT AS obs_ts,
+               (j.actual - j.predicted)::DOUBLE AS residual,
+               (j.predicted - j.obs_ts)::DOUBLE AS horizon,
+               {bucket_sql} AS bucket,
+               cr.code::DOUBLE AS route, cs.code::DOUBLE AS segment, cd.code::DOUBLE AS direction,
+               ct.code::INTEGER AS stop_code,
+               r.p50::DOUBLE AS run_p50,
+               CASE WHEN j.departed_at IS NOT NULL THEN (j.obs_ts - j.departed_at)::DOUBLE END AS elapsed,
+               CASE WHEN j.prev_stop IS NULL THEN 1.0 ELSE 0.0 END AS not_started
+        FROM joined j
+        LEFT JOIN code_route cr ON cr.v = j.route
+        LEFT JOIN code_segment cs ON cs.v = j.segment
+        LEFT JOIN code_direction cd ON cd.v = j.direction
+        LEFT JOIN code_stop_id ct ON ct.v = j.stop_id
+        LEFT JOIN run_p50 r ON r.segment = j.segment
+        ORDER BY j.obs_ts
+    """).df()
+    ny = pd.to_datetime(df["obs_ts"], unit="s", utc=True).dt.tz_convert(NY)
+    df["hour"] = ny.dt.hour.astype("float32")
+    df["dow"] = ny.dt.dayofweek.astype("float32")
     df["elapsed_frac"] = df["elapsed"] / df["run_p50"]
-    # A train that has not left its terminal is placed by schedule alone, and the schedule pads
-    # terminal departures heavily; its errors are several times larger and of a different shape.
-    df["not_started"] = df["prev_stop"].isna().astype(float)
+
+    # Half the width, for free: every feature here is a small number and none of them needs
+    # fifteen significant figures. On a million rows that is a few hundred megabytes.
+    for c in df.columns:
+        if df[c].dtype == "float64":
+            df[c] = df[c].astype("float32")
 
     # Time-based split: the last quarter of observations is the holdout.
-    df = df.sort_values("obs_ts").reset_index(drop=True)
     cut = int(len(df) * 0.75)
-    train, test = df.iloc[:cut].copy(), df.iloc[cut:].copy()
+    train = df.iloc[:cut]
 
-    # Table features from the TRAINING rows only (no leakage), same backoff as src/lib/timing.ts.
-    def med_sig(g):
-        med = g.median()
-        return pd.Series({"median": med, "sigma": (g - med).abs().quantile(0.68), "n": len(g)})
-    seg_tab = train.dropna(subset=["segment"]).groupby(["segment", "bucket"])["residual"].apply(med_sig).unstack()
-    orig_tab = train[train["segment"].isna()].groupby(["stop_id", "bucket"])["residual"].apply(med_sig).unstack()
-    route_tab = train.groupby(["route", "bucket"])["residual"].apply(med_sig).unstack()
-    all_tab = train.groupby("bucket")["residual"].apply(med_sig).unstack()
+    # Table features from the TRAINING rows only (no leakage), same backoff as src/lib/timing.ts:
+    # a running train backs off along its segment, one still at its terminal along that terminal,
+    # then both along the route, then everything.
+    #
+    # Computed by grouping and joining rather than by walking a million rows one at a time, which
+    # is where most of the old runtime went.
     MIN = 8
 
-    def lookup(row):
-        # Same chain as src/lib/timing.ts: a running train backs off along its segment, one
-        # still at its terminal along that terminal.
-        first = (seg_tab, (row.segment, row.bucket)) if row.segment is not None else (orig_tab, (row.stop_id, row.bucket))
-        for tab, key in (first, (route_tab, (row.route, row.bucket)), (all_tab, row.bucket)):
-            try:
-                r = tab.loc[key]
-            except KeyError:
-                continue
-            if r["n"] >= MIN:
-                return r["median"], r["sigma"]
-        return np.nan, np.nan
+    def table(keys):
+        g = train.groupby(keys, dropna=True)["residual"]
+        out = g.agg(["median", "size"]).rename(columns={"size": "n"})
+        dev = (train["residual"] - train.join(out["median"], on=keys)["median"]).abs()
+        out["sigma"] = dev.groupby([train[k] for k in keys]).quantile(0.68)
+        return out[out["n"] >= MIN][["median", "sigma"]]
 
-    for part in (train, test):
-        ms = part.apply(lookup, axis=1, result_type="expand")
-        part["table_median"], part["table_sigma"] = ms[0].values, ms[1].values
+    seg_tab = table(["segment", "bucket"])
+    orig_tab = table(["stop_code", "bucket"])
+    route_tab = table(["route", "bucket"])
+    all_tab = table(["bucket"])
 
-    cats = {}
-    for c in ("route", "segment", "direction"):
-        codes = {v: i for i, v in enumerate(sorted(train[c].dropna().unique()))}
-        cats[c] = codes
-        for part in (train, test):
-            part[c] = part[c].map(codes).astype(float)
+    # Applied to the whole frame in one pass, from tables built on the training rows only. Doing
+    # it per part meant copying a million-row frame twice for no gain.
+    running = df["segment"].notna()
+    med = pd.Series(np.nan, index=df.index, dtype="float32")
+    sig = pd.Series(np.nan, index=df.index, dtype="float32")
+    everything = pd.Series(True, index=df.index)
+    for mask, tab, keys in (
+        (running, seg_tab, ["segment", "bucket"]),
+        (~running, orig_tab, ["stop_code", "bucket"]),
+        (everything, route_tab, ["route", "bucket"]),
+        (everything, all_tab, ["bucket"]),
+    ):
+        todo = mask & med.isna()
+        if not todo.any():
+            continue
+        joined = df.loc[todo, keys].join(tab, on=keys)
+        med.loc[todo] = joined["median"].to_numpy(dtype="float32")
+        sig.loc[todo] = joined["sigma"].to_numpy(dtype="float32")
+    df["table_median"], df["table_sigma"] = med, sig
+    del med, sig, running, everything
+
+    train, test = df.iloc[:cut], df.iloc[cut:]
 
     # Features with a single value (e.g. one weekday of data) cannot be binned; leave them out.
     features = [f for f in FEATURES if train[f].nunique(dropna=True) >= 2]
     dropped = sorted(set(FEATURES) - set(features))
     if dropped:
         print(f"dropping constant features: {dropped}")
-    X_tr, y_tr = train[features].astype(float).values, train["residual"].values
-    X_te, y_te = test[features].astype(float).values, test["residual"].values
+    X_tr = train[features].to_numpy(dtype="float32")
+    y_tr = train["residual"].to_numpy(dtype="float64")
+    X_te = test[features].to_numpy(dtype="float32")
+    y_te = test["residual"].to_numpy(dtype="float64")
+    obs_te = test["obs_ts"].to_numpy()
+    table_med_te = test["table_median"].to_numpy(dtype="float64")
+    bucket_te = test["bucket"].to_numpy()
+    # The frame has done its job; the fit only needs the matrices.
+    del df, train, test, seg_tab, orig_tab, route_tab, all_tab
+    con.close()
+    gc.collect()
     model = HistGradientBoostingRegressor(loss="absolute_error", max_iter=400, learning_rate=0.05, max_leaf_nodes=31,
                                           min_samples_leaf=40, l2_regularization=1.0, early_stopping=True,
                                           validation_fraction=0.15, random_state=7)
@@ -127,8 +215,8 @@ def main():
 
     def mae(x):
         return float(np.mean(np.abs(x)))
-    base_tab = np.nan_to_num(test["table_median"].values, nan=0.0)
-    metrics = {"n_train": int(len(train)), "n_test": int(len(test)), "iters": int(model.n_iter_),
+    base_tab = np.nan_to_num(table_med_te, nan=0.0)
+    metrics = {"n_train": int(len(X_tr)), "n_test": int(len(X_te)), "iters": int(model.n_iter_),
                "mae_raw": mae(y_te), "mae_tables": mae(y_te - base_tab), "mae_model": mae(y_te - pred)}
 
     # Sigma has to describe the error of the prediction actually served. The tables' spread
@@ -140,8 +228,8 @@ def main():
     # Scored window by window, overnight covered only 57% of arrivals inside 1 sigma against a
     # 68% target while the peaks sat at 67%: one global spread is too narrow at night and too
     # wide at rush hour, and a rider is told "give or take 40 s" when the honest answer is 70.
-    ny = pd.to_datetime(test["obs_ts"], unit="s", utc=True).dt.tz_convert("America/New_York")
-    hod, wknd = ny.dt.hour.values, ny.dt.dayofweek.values >= 5
+    ny = pd.to_datetime(obs_te, unit="s", utc=True).tz_convert("America/New_York")
+    hod, wknd = ny.hour.values, ny.dayofweek.values >= 5
     def daypart(h, w):
         if h < 5: return "owl"
         if w: return "weekend-am" if h < 12 else ("weekend-pm" if h < 20 else "evening")
@@ -150,32 +238,58 @@ def main():
         if h < 20: return "pm-peak"
         return "evening"
     dp = np.array([daypart(h, w) for h, w in zip(hod, wknd)])
+    hname = lambda b: f"h{int(b)}"
     sigma_by_bucket = {}
-    for b in sorted(test["bucket"].unique()):
-        m = test["bucket"].values == b
+    for b in sorted(set(bucket_te.tolist())):
+        m = bucket_te == b
         if m.sum() >= 50:
-            sigma_by_bucket[b] = float(np.quantile(np.abs(resid[m] - np.median(resid[m])), 0.68))
+            sigma_by_bucket[hname(b)] = float(np.quantile(np.abs(resid[m] - np.median(resid[m])), 0.68))
     sigma_by_daypart = {}
-    for b in sorted(test["bucket"].unique()):
+    for b in sorted(set(bucket_te.tolist())):
         for d in sorted(set(dp)):
-            m = (test["bucket"].values == b) & (dp == d)
+            m = (bucket_te == b) & (dp == d)
             # Enough to measure a spread with, or the number is noise wearing a confidence label.
             if m.sum() >= 200:
-                sigma_by_daypart[f"{b}|{d}"] = float(np.quantile(np.abs(resid[m] - np.median(resid[m])), 0.68))
+                sigma_by_daypart[f"{hname(b)}|{d}"] = float(np.quantile(np.abs(resid[m] - np.median(resid[m])), 0.68))
     print("model sigma by horizon:", {k: round(v, 1) for k, v in sigma_by_bucket.items()})
     print(f"sigma by horizon and daypart: {len(sigma_by_daypart)} cells")
-    for b in sorted(test["bucket"].unique()):
-        cells = {k.split("|")[1]: round(v) for k, v in sigma_by_daypart.items() if k.startswith(b + "|")}
+    for b in sorted(set(bucket_te.tolist())):
+        cells = {k.split("|")[1]: round(v) for k, v in sigma_by_daypart.items() if k.startswith(hname(b) + "|")}
         if cells: print(f"  {b}: {cells}")
-    print(f"trained {model.n_iter_} iters in {time.time()-t0:.1f}s on {len(train)} rows; holdout {len(test)} rows")
+    print(f"trained {model.n_iter_} iters in {time.time()-t0:.1f}s on {len(X_tr)} rows; holdout {len(X_te)} rows")
     print(f"holdout MAE  raw {metrics['mae_raw']:.1f}s  tables {metrics['mae_tables']:.1f}s  model {metrics['mae_model']:.1f}s")
-    for b in sorted(test["bucket"].unique()):
-        m = test["bucket"].values == b
+    for b in sorted(set(bucket_te.tolist())):
+        m = bucket_te == b
         print(f"  {b}: n={m.sum():5d}  raw {mae(y_te[m]):.1f}  tables {mae(y_te[m]-base_tab[m]):.1f}  model {mae(y_te[m]-pred[m]):.1f}")
 
     if not a.force and metrics["mae_model"] > metrics["mae_tables"] * 0.98:
         print("model does not beat the tables by >2% on holdout; not exporting (use --force to override).")
         sys.exit(3)
+
+    # And it has to beat the model already in service, on this holdout, not just the tables.
+    #
+    # Everything else here adopts only on evidence; a model that retrains itself nightly without
+    # that check would drift downhill one small step at a time and nobody would see it happen.
+    if a.incumbent and Path(a.incumbent).exists():
+        old = json.loads(Path(a.incumbent).read_text())
+        feats_old = old.get("features", [])
+        # Feature vectors are positional, so an incumbent trained on a different set is compared
+        # by rebuilding its inputs from the same frame rather than reusing this one's matrix.
+        try:
+            idx = [features.index(f) if f in features else None for f in feats_old]
+            X_old = np.column_stack([
+                X_te[:, i] if i is not None else np.full(len(X_te), np.nan, dtype="float32") for i in idx
+            ]) if feats_old else None
+        except Exception:
+            X_old = None
+        if X_old is not None:
+            old_pred = walk_forest(old, X_old)
+            mae_old = mae(y_te - old_pred)
+            metrics["mae_incumbent"] = mae_old
+            print(f"incumbent model on this holdout: {mae_old:.1f}s against the candidate's {metrics['mae_model']:.1f}s")
+            if metrics["mae_model"] > mae_old:
+                print("candidate does not beat the model already in service; not exporting.")
+                sys.exit(4)
 
     # Export trees. Verify our walker reproduces sklearn's predictions before trusting it.
     trees = []
@@ -206,9 +320,30 @@ def main():
     check = np.array([walk(x) for x in X_te[:200]])
     assert np.allclose(check, pred[:200], atol=1e-6), "exported trees disagree with sklearn"
 
+    # A parity sample, carried inside the model itself.
+    #
+    # The TypeScript evaluator has to reproduce these exactly or every prediction we serve is
+    # quietly skewed, and nothing else in the system would notice. Keeping the sample in a
+    # separate fixture file meant it went stale the moment the model retrained — which, now that
+    # it retrains itself nightly, is every night. Written here, it can never disagree.
+    rng = np.random.default_rng(7)
+    n_feat = len(features)
+    sample = []
+    for _ in range(40):
+        row = rng.uniform(-600, 600, n_feat).astype("float64")
+        # Missing values and extremes are where an independent walk drifts.
+        row[rng.random(n_feat) < 0.18] = np.nan
+        extreme = rng.random(n_feat) < 0.08
+        row[extreme] = rng.choice([-1e12, 1e12, 0.0], size=int(extreme.sum()))
+        sample.append(row)
+    parity_x = np.vstack(sample)
+    parity_y = walk_forest({"baseline": baseline, "trees": trees}, parity_x.astype("float32"))
+    parity = [{"x": [None if np.isnan(v) else float(v) for v in row], "y": float(y)}
+              for row, y in zip(parity_x, parity_y)]
+
     out = Path(a.out)
     out.write_text(json.dumps(allow_nan=False, obj={"generatedAt": datetime.now(timezone.utc).isoformat(), "features": features, "categories": cats,
-                               "baseline": baseline, "trees": trees, "metrics": metrics,
+                               "baseline": baseline, "trees": trees, "metrics": metrics, "parity": parity,
                                "sigmaByBucket": sigma_by_bucket,
                                "sigmaByBucketDaypart": sigma_by_daypart}))
     print(f"wrote {out} ({out.stat().st_size // 1024} KB, {len(trees)} trees)")
