@@ -14,6 +14,7 @@ export default function Legend({ onDismiss }: Props) {
         <span className="legend-row"><i className="swatch glow" /> glow — where it might be, ±1σ</span>
         <span className="legend-row"><i className="swatch hold" /> amber ring — holding for a signal or the train in front</span>
         <span className="legend-row"><i className="swatch ghost" /> faded — assigned but not yet in service</span>
+        <span className="legend-row"><i className="swatch stalefade" /> dimmed — the feed has stopped revising it</span>
       </div>
       <button className="legend-x" onClick={onDismiss} aria-label="Dismiss legend">Got it</button>
     </div>

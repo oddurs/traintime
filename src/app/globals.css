@@ -289,7 +289,7 @@ button.roundel:hover { transform: scale(1.08); }
 .swatch.glow { background: radial-gradient(circle, var(--glow), transparent 70%); }
 .swatch.hold { background: var(--mta-orange); box-shadow: 0 0 0 2px var(--amber); }
 .swatch.ghost { background: var(--mta-grey); opacity: 0.5; box-shadow: 0 0 0 2px var(--edge-strong); }
-.swatch.faded { background: var(--mta-red); opacity: 0.45; }
+.swatch.stalefade { background: var(--mta-red); opacity: 0.45; }
 .legend-x { align-self: flex-start; }
 
 /* ---------- alerts ---------- */
