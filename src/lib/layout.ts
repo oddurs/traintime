@@ -8,10 +8,17 @@
  *    never swaps sides for no reason, because a rider learns positions.
  *  - **Separated and conjoined.** A service joining or leaving a corridor sweeps into its band
  *    across the station rather than stepping sideways, and the strokes either side meet.
+ *  - **The ends join.** Where two strokes of one service meet they are drawn in the same place —
+ *    on screen, not just in the data. Sharing a coordinate is not enough: `line-offset` moves a
+ *    whole feature sideways in pixels, so two strokes can meet exactly in the geometry and still
+ *    be drawn a finger's width apart, which is what a line looks like when it stops dead in the
+ *    middle of the map instead of carrying on.
  *  - **Intertwined.** Where bands cross, one passes over: bands further right always draw above
  *    bands further left, so a pair never weaves one way here and the other way there.
  *  - **Proportioned.** Two lines sit the same distance apart on screen at every zoom, because the
- *    fan is what the eye needs *minus* what the true track spacing already provides.
+ *    fan is what the eye needs *minus* what the true track spacing already provides. Measured
+ *    between two services, never one curve at a time — that is how the geometry and the screen
+ *    offset came to be ordered differently while each looked right on its own.
  *  - **One line when far away.** Services sharing a trunk colour collapse onto each other below
  *    zoom 13.4 — the 4, 5 and 6 are one green Lexington line on a city-wide view.
  *  - **Trains on their own track.** A train is placed by these same numbers, so it cannot sit
@@ -23,7 +30,7 @@
  * those decisions into coordinates.
  */
 import type { LonLat, Network } from "./types";
-import { offsetPolylineRamped } from "./geo";
+import { distM, offsetPolylineRamped } from "./geo";
 
 const parentOf = (id: string) => id.replace(/[NS]$/, "");
 
@@ -55,26 +62,62 @@ const SEPARATE_ABOVE = 14.2;
 
 const smoothstep = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
+/**
+ * How far a stroke's band may drift from the value it is drawn with, in bands.
+ *
+ * A band is eleven pixels through the zooms that matter, so an eighth of one is about 1.4 px —
+ * under the width of the line itself, and invisible against a round join. Coarser and a splay
+ * reads as a staircase; finer and the feature count climbs for nothing.
+ */
+const BAND_STEP = 1 / 8;
+
+/** One drawn piece of one service: geometry, and the band the renderer should offset it by. */
+export interface Stroke {
+  route: string;
+  colour: string;
+  /** Which run it came from, so a caller can tell a cut within a stroke from a join between two. */
+  run: string;
+  /** Whether this piece carries the start or the end of its run — where a real join can happen. */
+  first: boolean;
+  last: boolean;
+  slot: number;
+  shared: number;
+  z: number;
+  cb: number;
+  mb: number;
+  pts: LonLat[];
+}
+
 /** Metres per pixel at New York's latitude. */
 export const metresPerPixel = (zoom: number) => (156_543.03 * Math.cos((40.73 * Math.PI) / 180)) / 2 ** zoom;
 
 /**
  * The fan, derived rather than tabulated.
  *
- * The geometry already carries the true 4.6 m between track centres, worth a growing number of
- * pixels as you zoom in. The fan adds only the difference between that and what the eye needs, so
- * the total stays on target instead of two contributions being tuned against each other by hand
- * and drifting apart in the middle of the range.
+ * A service's drawn position is one number, read two ways and crossfaded:
  *
- * Past about zoom 18 the true spacing alone exceeds the target and the fan falls to nothing: the
- * lines then stand exactly where the track does, which is the right answer that close in.
+ *     offset(px) = colourIndex * colour(z)  +  metricBand * metric(z)  +  metricBand * geo(z)
+ *
+ * The last term is not ours — it is the 4.6 m the geometry already carries, worth a growing
+ * number of pixels as you zoom in. `metric(z)` supplies only the difference between that and what
+ * the eye needs, so the total stays on target rather than two contributions being tuned against
+ * each other and drifting apart in the middle of the range.
+ *
+ * The point of deriving both from the same band is that they cannot disagree. They used to: the
+ * geometry was offset by the metric band and the fan by a colour/service split, two orderings
+ * summed, and five lines sharing Queens Boulevard bunched and crossed and changed spacing as you
+ * zoomed. Adding a colour term to a metric one is not a blend, it is a collision.
  */
-export function fanAt(zoom: number): { colour: number; service: number } {
+export function fanAt(zoom: number): { colour: number; metric: number } {
   const geo = TRACK_M / metresPerPixel(zoom);
   const reveal = smoothstep((zoom - MERGE_BELOW) / (SEPARATE_ABOVE - MERGE_BELOW));
   return {
-    colour: Math.max(0, TARGET_PX - geo),
-    service: Math.max(0, TARGET_PX * reveal - geo),
+    // Zoomed out, the whole offset is the printed map's: one line per trunk colour.
+    colour: (1 - reveal) * TARGET_PX,
+    // Zoomed in, it is the track's own: evenly spaced bands, TARGET_PX apart, minus whatever the
+    // real 4.6 m already provides. Past about zoom 18 the metres alone exceed the target and this
+    // falls to nothing, so the lines stand exactly where the track does.
+    metric: Math.max(reveal * TARGET_PX, geo) - geo,
   };
 }
 
@@ -96,7 +139,7 @@ export function bandOffsetExpression(scale = 1): unknown[] {
     "interpolate", ["linear"], ["zoom"],
     ...FAN_STOPS.flatMap((z) => {
       const f = fanAt(z);
-      return [z, ["+", ["*", ["get", "cb"], f.colour * scale], ["*", ["get", "sb"], f.service * scale]]];
+      return [z, ["+", ["*", ["get", "cb"], f.colour * scale], ["*", ["get", "mb"], f.metric * scale]]];
     }),
   ];
 }
@@ -104,6 +147,8 @@ export function bandOffsetExpression(scale = 1): unknown[] {
 /** One engine per network. Everything it lays out is cached for the life of it. */
 export class LineEngine {
   private cache = new Map<string, LonLat[]>();
+  private bands = new Map<string, { colour: number[]; metric: number[] }>();
+  private strokeCache: Stroke[] | null = null;
 
   constructor(private readonly net: Network) {}
 
@@ -114,13 +159,13 @@ export class LineEngine {
    * relative to the direction it is *travelling*. Those are the same side only when the two
    * agree, so the sign is resolved here once and both read the identical number.
    */
-  lateralBand(route: string, prevDir: string, nextDir: string): { cb: number; sb: number } | undefined {
+  lateralBand(route: string, prevDir: string, nextDir: string): { cb: number; mb: number } | undefined {
     const a = parentOf(prevDir), b = parentOf(nextDir);
     const key = a < b ? `${a}-${b}` : `${b}-${a}`;
     const parts = this.net.bandParts?.[key]?.[route];
     if (!parts) return undefined;
     const side = (this.net.segDir?.[key] ?? 1) * (a < b ? 1 : -1);
-    return { cb: parts[0] * side, sb: parts[1] * side };
+    return { cb: parts[0] * side, mb: parts[1] * side };
   }
 
   /**
@@ -144,6 +189,143 @@ export class LineEngine {
       this.cache.set(`${route}|${key}`, out);
     }
     return out;
+  }
+
+  /**
+   * The band each point of a stretch sits on, both readings, in the corridor's frame.
+   *
+   * The geometry eases from one band into the next across a station rather than stepping, and
+   * this is that same easing read out as numbers. It exists because the screen offset has to
+   * follow the same profile: `line-offset` is one constant per feature, so a service that changes
+   * band has its geometry swept smoothly across the junction and its pixels jumped — up to 24 px
+   * at zoom 15, which is two lines' width, and is what made strokes look cut off rather than
+   * joined. Splitting a stretch into short pieces along this profile puts the two back in step.
+   *
+   * Deliberately the same arithmetic as `offsetPolylineRamped`, because agreeing with it is the
+   * entire point; if the two ever drift the lines come apart again.
+   */
+  private bandsAlong(route: string, key: string): { colour: number[]; metric: number[] } | undefined {
+    const pts = this.net.segments[key];
+    if (!pts || pts.length < 2) return undefined;
+    const cached = this.bands.get(`${route}|${key}`);
+    if (cached) return cached;
+
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + distM(pts[i - 1], pts[i]));
+    const total = cum[cum.length - 1] || 1;
+    const ramp = Math.min(RAMP_M, total / 2);
+    const ease = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+    const profile = (mid: number, atStart: number, atEnd: number) =>
+      cum.map((d) => {
+        if (d < ramp) return atStart + (mid - atStart) * ease(d / ramp);
+        if (d > total - ramp) return mid + (atEnd - mid) * ease((d - (total - ramp)) / ramp);
+        return mid;
+      });
+
+    const metricMid = this.net.segmentSlots[key]?.[route]?.[0] ?? 0;
+    const [ms, me] = this.net.laneEnds?.[key]?.[route] ?? [metricMid, metricMid];
+    const colourMid = this.net.bandParts?.[key]?.[route]?.[0] ?? 0;
+    const [cs, ce] = this.net.colourEnds?.[key]?.[route] ?? [colourMid, colourMid];
+    const out = { metric: profile(metricMid, ms, me), colour: profile(colourMid, cs, ce) };
+    this.bands.set(`${route}|${key}`, out);
+    return out;
+  }
+
+  /**
+   * One stretch as drawn, with the band each point sits on — everything a renderer needs to lay
+   * a service down and keep its screen offset in step with its geometry.
+   */
+  lineSegmentBands(route: string, u: string, v: string): { pts: LonLat[]; colour: number[]; metric: number[] } | undefined {
+    const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+    const laid = this.laid(route, key);
+    const bands = this.bandsAlong(route, key);
+    if (!laid || !bands) return undefined;
+    if (u < v) return { pts: laid, colour: bands.colour, metric: bands.metric };
+    return { pts: [...laid].reverse(), colour: [...bands.colour].reverse(), metric: [...bands.metric].reverse() };
+  }
+
+  /**
+   * Every stroke the map draws, ready to offset.
+   *
+   * This lives here rather than in the renderer because the renderer is not the only thing that
+   * needs to know: `npm run audit:layout` checks that the strokes meet where they should, and it
+   * has to be checking the same strokes that get drawn. Two implementations of "how the network
+   * is cut into features" is how the geometry and the screen offset came to disagree in the first
+   * place.
+   *
+   * A run is cut wherever its band has moved more than `BAND_STEP` since the piece began, because
+   * `line-offset` is one constant per feature. That is what makes a change of band read as a
+   * splay rather than a break: the geometry already sweeps across the junction, and cutting here
+   * lets the screen offset sweep with it. Drawn one feature per run, the curve swept and the
+   * pixels jumped, and the strokes either side of a junction missed each other by up to 24 px.
+   */
+  strokes(): Stroke[] {
+    if (this.strokeCache) return this.strokeCache;
+    const out: Stroke[] = [];
+    for (const [route, runs] of Object.entries(this.net.routeRuns ?? {})) {
+      const colour = this.net.routes[route]?.color;
+      if (!colour) continue;
+      for (let r = 0; r < runs.length; r++) {
+        const run = runs[r];
+        const side = run.side ?? 1;
+        const pts: LonLat[] = [], cb: number[] = [], mb: number[] = [];
+        for (let i = 0; i + 1 < run.stops.length; i++) {
+          const piece = this.lineSegmentBands(route, run.stops[i], run.stops[i + 1]);
+          if (!piece) continue;
+          for (let k = 0; k < piece.pts.length; k++) {
+            const p = piece.pts[k], last = pts[pts.length - 1];
+            if (last && last[0] === p[0] && last[1] === p[1]) continue;
+            pts.push(p);
+            cb.push(piece.colour[k] * side);
+            mb.push(piece.metric[k] * side);
+          }
+        }
+        if (pts.length < 2) continue;
+
+        /*
+         * Give the ramp enough points to be smooth.
+         *
+         * A stretch's vertices are spaced by whatever survived simplification — tens of metres —
+         * and the ramp is at most 130 m, and shorter on a short stretch. So the band can move
+         * three quarters of a track between two neighbouring points, and no amount of cutting
+         * between existing points can draw that as anything but a step. Splitting the edge is
+         * the only thing that can, and it costs a handful of points in the few places it happens.
+         */
+        for (let i = pts.length - 1; i > 0; i--) {
+          const steps = Math.ceil(Math.max(Math.abs(cb[i] - cb[i - 1]), Math.abs(mb[i] - mb[i - 1])) / (BAND_STEP / 2));
+          if (steps < 2) continue;
+          const ins: LonLat[] = [], insC: number[] = [], insM: number[] = [];
+          for (let k = 1; k < steps; k++) {
+            const t = k / steps;
+            ins.push([pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t]);
+            insC.push(cb[i - 1] + (cb[i] - cb[i - 1]) * t);
+            insM.push(mb[i - 1] + (mb[i] - mb[i - 1]) * t);
+          }
+          pts.splice(i, 0, ...ins);
+          cb.splice(i, 0, ...insC);
+          mb.splice(i, 0, ...insM);
+        }
+
+        // A piece is drawn at the mean of the bands it spans, so its error is half the step.
+        const emit = (from: number, to: number) => out.push({
+          route, colour, run: `${route}#${r}`,
+          first: from === 0, last: to === pts.length - 1,
+          slot: run.slot, shared: run.shared, z: run.z ?? 2,
+          cb: (cb[from] + cb[to]) / 2, mb: (mb[from] + mb[to]) / 2,
+          pts: pts.slice(from, to + 1),
+        });
+        let from = 0;
+        for (let i = 1; i < pts.length; i++) {
+          if (Math.abs(cb[i] - cb[from]) < BAND_STEP && Math.abs(mb[i] - mb[from]) < BAND_STEP) continue;
+          // Pieces overlap by a point, so there is no gap between them to see.
+          emit(from, i);
+          from = i;
+        }
+        // Only if anything is left: a cut on the last point has already drawn it.
+        if (from < pts.length - 1) emit(from, pts.length - 1);
+      }
+    }
+    return (this.strokeCache = out);
   }
 
   /**

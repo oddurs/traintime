@@ -38,13 +38,13 @@ const fanScale = { current: 1 };
  * A train standing at a platform has no segment to take a band from, so it keeps the one it was
  * riding — without that it would hop to the middle of the corridor every time it stopped.
  */
-function fanned(p: TrainPosition, index: NetworkIndex, fan: { colour: number; service: number }, last: Map<string, [number, number]>): LonLat {
+function fanned(p: TrainPosition, index: NetworkIndex, fan: { colour: number; metric: number }, last: Map<string, [number, number]>): LonLat {
   const prev = p.state.prevStop, next = p.state.nextStop;
   const live = prev && next ? index.lateralBand(p.route, prev, next) : undefined;
-  if (live) last.set(p.id, [live.cb, live.sb]);
-  const band = live ? [live.cb, live.sb] : last.get(p.id);
+  if (live) last.set(p.id, [live.cb, live.mb]);
+  const band = live ? [live.cb, live.mb] : last.get(p.id);
   if (!band) return [p.lon, p.lat];
-  const metres = band[0] * fan.colour + band[1] * fan.service;
+  const metres = band[0] * fan.colour + band[1] * fan.metric;
   if (metres === 0) return [p.lon, p.lat];
   // Right of the direction of travel, which is the side the line was offset to.
   const rad = ((p.bearing + 90) * Math.PI) / 180;
@@ -82,30 +82,16 @@ interface Props {
 
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
+/** Every service, as strokes the renderer can offset. The cutting is the engine's business. */
 function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
-  const features: GeoJSON.Feature[] = [];
-  for (const [route, runs] of Object.entries(index.net.routeRuns)) {
-    const r = index.net.routes[route];
-    if (!r) continue;
-    for (const run of runs) {
-      const coordinates: LonLat[] = [];
-      for (let i = 0; i + 1 < run.stops.length; i++) {
-        const piece = index.lineSegment(route, run.stops[i], run.stops[i + 1]);
-        if (!piece) continue;
-        for (const p of piece) {
-          const last = coordinates[coordinates.length - 1];
-          if (!last || last[0] !== p[0] || last[1] !== p[1]) coordinates.push(p);
-        }
-      }
-      if (coordinates.length < 2) continue;
-      features.push({
-        type: "Feature",
-        properties: { route, color: r.color, slot: run.slot, shared: run.shared, z: run.z ?? 2, cb: (run.cband ?? 0) * (run.side ?? 1), sb: (run.sband ?? 0) * (run.side ?? 1) },
-        geometry: { type: "LineString", coordinates },
-      });
-    }
-  }
-  return { type: "FeatureCollection", features };
+  return {
+    type: "FeatureCollection",
+    features: index.strokes().map((s) => ({
+      type: "Feature",
+      properties: { route: s.route, color: s.colour, slot: s.slot, shared: s.shared, z: s.z, cb: s.cb, mb: s.mb },
+      geometry: { type: "LineString", coordinates: s.pts },
+    })),
+  };
 }
 
 /**
@@ -271,7 +257,7 @@ export default function TrainMap(props: Props) {
       const zoom = map.getZoom();
       const m = metresPerPixel(zoom) * fanScale.current;
       const px = fanAt(zoom);
-      const fan = { colour: px.colour * m, service: px.service * m };
+      const fan = { colour: px.colour * m, metric: px.metric * m };
       const lastBand = lastBandRef.current;
       /*
        * Trains standing still at the same place, counted rather than stacked.

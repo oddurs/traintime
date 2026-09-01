@@ -6,7 +6,7 @@ import { LineEngine } from "./layout";
 export const parentOf = (id: string) => id.replace(/[NS]$/, "");
 
 // Drawing lives in ./layout. Re-exported so a caller has one import for the map.
-export { TRACK_M, RAMP_M, fanAt, bandOffsetExpression, metresPerPixel, LineEngine } from "./layout";
+export { TRACK_M, RAMP_M, fanAt, bandOffsetExpression, metresPerPixel, LineEngine, type Stroke } from "./layout";
 
 /** Indexed, query-friendly view of network.json shared by server and client. */
 export class NetworkIndex {
@@ -59,6 +59,10 @@ export class NetworkIndex {
 
   /** Where this service is drawn between two stops. */
   lineSegment(route: string, u: string, v: string) { return this.lines.lineSegment(route, u, v); }
+  /** The same, with the band each point sits on, so a renderer can keep its offset in step. */
+  lineSegmentBands(route: string, u: string, v: string) { return this.lines.lineSegmentBands(route, u, v); }
+  /** Every stroke the map draws, cut so its screen offset can follow its geometry. */
+  strokes() { return this.lines.strokes(); }
   /** Where a train of this service stands at this platform, on its own band. */
   platformPoint(route: string, stopId: string) { return this.lines.platformPoint(route, stopId); }
   /** The signed band a train is riding, in the frame the drawn line is offset in. */

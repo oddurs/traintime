@@ -120,21 +120,103 @@ notes.push(`${seams} seams inside strokes · worst ${worstSeam.toFixed(2)} m`);
 // sub-pixel at any zoom short of standing on the platform.
 if (worstSeam > 1) fail("ordered", `a stroke steps ${worstSeam.toFixed(1)} m at a seam — a stretch is drawn on the wrong side`);
 
+// ---- the ends join --------------------------------------------------------
+/**
+ * Where two strokes of one service meet, do they meet *on screen*?
+ *
+ * The geometry meeting is not enough. `line-offset` moves a whole feature sideways in pixels, so
+ * two strokes can share a coordinate exactly and still be drawn a finger's width apart — which is
+ * what a line looks like when it stops dead in the middle of the map instead of joining the next
+ * one. Measured at zoom 15, because that is where the pixel term does most of the work.
+ */
+{
+  const Z = 15;
+  const f = fanAt(Z), mpp = metresPerPixel(Z);
+  const strokes = idx.strokes();
+  /** Where a stroke's end is drawn, in metres, offset to the right of the way it is drawn. */
+  const endAt = (s: (typeof strokes)[number], atStart: boolean) => {
+    const [a, b] = atStart ? [s.pts[0], s.pts[1]] : [s.pts[s.pts.length - 1], s.pts[s.pts.length - 2]];
+    const cos = Math.cos((a[1] * Math.PI) / 180);
+    // The direction the stroke is *drawn* in: at its start that is the first edge, and at its
+    // end the last one, which is the reverse of the pair read backwards from the end.
+    let e = (b[0] - a[0]) * cos, n = b[1] - a[1];
+    if (!atStart) { e = -e; n = -n; }
+    const len = Math.hypot(e, n) || 1;
+    const px = (s.cb * f.colour + s.mb * f.metric) * mpp;
+    return { at: a, run: s.run, route: s.route, off: [(n / len) * px, (-e / len) * px] as [number, number] };
+  };
+  /*
+   * Only where a run begins and ends. A piece boundary inside a run is a deliberate cut through a
+   * splay and is measured by the clause below; and two runs of one service that merely pass close
+   * — the E on the express track beside the E on the local — are not a join at all, however near
+   * their geometry comes at a station.
+   */
+  const ends = strokes.flatMap((s) => [...(s.first ? [endAt(s, true)] : []), ...(s.last ? [endAt(s, false)] : [])]);
+  // Bucketed, or this is a quarter of a million distance tests.
+  const cell = new Map<string, number[]>();
+  const key = (p: LonLat) => `${Math.round(p[0] * 20000)}:${Math.round(p[1] * 20000)}`;
+  ends.forEach((e, i) => (cell.get(key(e.at)) ?? cell.set(key(e.at), []).get(key(e.at))!).push(i));
+  let meetings = 0, apartPx = 0, offenders = 0;
+  let worstWhere = "";
+  for (const list of cell.values()) {
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const a = ends[list[i]], b = ends[list[j]];
+      // Only strokes of one service, from different runs: two pieces of one run are a deliberate
+      // cut through a splay, and the clause below measures those.
+      if (a.route !== b.route || a.run === b.run || distM(a.at, b.at) > 1) continue;
+      meetings++;
+      const d = Math.hypot(a.off[0] - b.off[0], a.off[1] - b.off[1]) / mpp;
+      if (d > 2) offenders++;
+      if (d > apartPx) { apartPx = d; worstWhere = `${a.route} near ${a.at[1].toFixed(4)},${a.at[0].toFixed(4)}`; }
+    }
+  }
+  notes.push(`${strokes.length} strokes · ${meetings} joins · worst ${apartPx.toFixed(1)} px apart`);
+  if (offenders) fail("the ends join", `${offenders} joins are more than 2 px apart on screen, worst ${apartPx.toFixed(1)} px (${worstWhere})`);
+}
+
+// ---- a splay is smooth ----------------------------------------------------
+{
+  const byRun = new Map<string, { cb: number; mb: number }[]>();
+  for (const s of idx.strokes()) (byRun.get(s.run) ?? byRun.set(s.run, []).get(s.run)!).push({ cb: s.cb, mb: s.mb });
+  let worst = 0;
+  for (const pieces of byRun.values()) {
+    for (let i = 1; i < pieces.length; i++) {
+      worst = Math.max(worst, Math.abs(pieces[i].cb - pieces[i - 1].cb), Math.abs(pieces[i].mb - pieces[i - 1].mb));
+    }
+  }
+  // A quarter of a band is under three pixels: a splay, not a staircase.
+  if (worst > 0.25) fail("separated and conjoined", `a stroke steps ${worst.toFixed(2)} bands between two of its own pieces`);
+}
+
 // ---- proportioned, and one line when far away -----------------------------
+/**
+ * How far apart two services are drawn, on screen, in pixels.
+ *
+ * Everything below asks this rather than asking the two curves separately. Checking the curves
+ * one at a time is what let the map be visibly wrong while the audit passed: the geometry was
+ * offset by one ordering and the fan by another, and each looked right on its own.
+ */
+const apart = (z: number, dcb: number, dmb: number) => {
+  const f = fanAt(z);
+  return dcb * f.colour + dmb * (f.metric + TRACK_M / metresPerPixel(z));
+};
 for (let z = 14.5; z <= 18; z += 0.25) {
-  const geo = TRACK_M / metresPerPixel(z), f = fanAt(z);
-  if (Math.abs(geo + f.colour - 11) > 0.1) fail("proportioned", `colours ${(geo + f.colour).toFixed(1)} px apart at zoom ${z}`);
-  if (Math.abs(geo + f.service - 11) > 0.1) fail("proportioned", `same colour ${(geo + f.service).toFixed(1)} px apart at zoom ${z}`);
+  if (Math.abs(apart(z, 0, 1) - 11) > 0.1) fail("proportioned", `same colour ${apart(z, 0, 1).toFixed(1)} px apart at zoom ${z}`);
+  if (Math.abs(apart(z, 1, 1) - 11) > 0.1) fail("proportioned", `next colour ${apart(z, 1, 1).toFixed(1)} px apart at zoom ${z}`);
+  if (Math.abs(apart(z, 0, 3) - 33) > 0.3) fail("proportioned", `three bands ${apart(z, 0, 3).toFixed(1)} px apart at zoom ${z}`);
 }
-if (fanAt(12).service !== 0) fail("one line far away", "services sharing a colour do not merge at city zoom");
-if (fanAt(12).colour < 9) fail("one line far away", "different colours are not far enough apart at city zoom");
-let prev = fanAt(9), jump = 0;
-for (let z = 9; z <= 21; z += 0.05) {
-  const v = fanAt(z);
-  jump = Math.max(jump, Math.abs(v.colour - prev.colour), Math.abs(v.service - prev.service));
-  prev = v;
+if (apart(12, 0, 1) > 0.5) fail("one line far away", "services sharing a colour do not merge at city zoom");
+if (apart(12, 1, 1) < 9) fail("one line far away", "different colours are not far enough apart at city zoom");
+// The bend in the curve, not its slope: two lines genuinely draw further apart past street level
+// as the real 4.6 m becomes worth more pixels. A step spikes the second difference; growth does not.
+let bend = 0;
+for (let z = 9.1; z <= 21; z += 0.05) {
+  for (const [dcb, dmb] of [[0, 1], [1, 1], [1, 2], [2, 3], [2, 4]] as [number, number][]) {
+    const b = apart(z, dcb, dmb) - 2 * apart(z - 0.05, dcb, dmb) + apart(z - 0.1, dcb, dmb);
+    bend = Math.max(bend, Math.abs(b) / Math.max(Math.abs(dcb), Math.abs(dmb)));
+  }
 }
-if (jump > 1.2) fail("proportioned", `the fan moves ${jump.toFixed(2)} px within a twentieth of a zoom level`);
+if (bend > 1.5) fail("proportioned", `the curve bends ${bend.toFixed(2)} px per band within a twentieth of a zoom level`);
 
 // ---- trains on their own track -------------------------------------------
 const NOW = 1_788_000_000;

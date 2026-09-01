@@ -47,9 +47,14 @@ export interface Network {
    * neighbouring segment's. A service changing band splays across the station instead of stepping.
    */
   laneEnds: Record<string, Record<string, [number, number]>>;
+  /** The same for the colour reading, which the map crossfades to as you zoom out. */
+  colourEnds: Record<string, Record<string, [number, number]>>;
   /**
-   * Segment key -> route -> [which trunk colour, which service within that colour]. Colours stay
-   * apart at every zoom; services sharing one merge into a single trunk line as you zoom out.
+   * Segment key -> route -> [colour index, metric band].
+   *
+   * Two readings of one position: where the printed map would put the line (one per trunk
+   * colour) and where the track actually is (evenly spaced, one track apart). The renderer
+   * crossfades between them with zoom rather than adding them together.
    */
   bandParts: Record<string, Record<string, [number, number]>>;
   /**

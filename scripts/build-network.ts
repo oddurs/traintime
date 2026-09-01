@@ -409,6 +409,8 @@ async function main() {
 
   /** Routes running alongside each segment, itself included. */
   const corridors = new Map<string, string[]>();
+  /** Pairs of stretches found to run beside one another, for the orientation solver. */
+  const besides: [string, string][] = [];
   for (const key of segKeys) {
     const own = [...(routeSegments_.get(key) ?? [])];
     if (!own.length) continue;
@@ -422,7 +424,12 @@ async function main() {
       const pts = segments[k2];
       let covered = 0;
       for (const p of mine) if (nearPolyline(p, pts) < CORRIDOR_M) covered++;
-      if (covered / mine.length >= SHARE_MIN) for (const r of others) alongside.add(r);
+      if (covered / mine.length >= SHARE_MIN) {
+        for (const r of others) alongside.add(r);
+        // Kept for the orientation solver below: these two run beside each other, so whatever
+        // else is true of them they must be ordered across the corridor the same way round.
+        if (key < k2) besides.push([key, k2]);
+      }
     }
     corridors.set(key, [...alongside].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1)));
   }
@@ -523,23 +530,130 @@ async function main() {
    * search and it cannot promise perfection — a cycle of odd parity has no consistent answer at
    * all — but it moves the remaining disagreements to where they cost least.
    */
-  type Link = { other: string; same: boolean };
+  /**
+   * The constraints, and how much each one costs to break.
+   *
+   * Orientation is one global sign per stretch, and every pair of stretches that have any
+   * business being on the same side of the track is a constraint on those signs. There are three
+   * kinds, and they are not equally important:
+   *
+   *  - A service running from one stretch into the next. This is the one a rider sees: break it
+   *    and a line crosses to the other side of its own corridor in the middle of a run. The
+   *    parity is exact and no angle comes into it — travel arrives at the station along one
+   *    stretch and leaves along the other.
+   *  - Two stretches that continue into one another geometrically, whether or not a service
+   *    happens to run through. This is what keeps a corridor coherent past a station no route
+   *    runs through.
+   *  - Two stretches running alongside each other without meeting — an express chain beside a
+   *    local one. Mirror one of those against the other and the two halves of a four-track
+   *    corridor are ordered in opposite directions.
+   *
+   * Only the second kind used to be collected, and only for turns under 60 degrees, so a service
+   * turning harder than that — the E through Queens Plaza, the N through Lexington Av/63 St, the
+   * G through Hoyt-Schermerhorn — passed into a component that had been seeded on its own. Its
+   * band came out mirrored, which drew as a line crossing everything beside it and then crossing
+   * back. Along Queens Boulevard that was eight crossings between the F and the diamond F alone.
+   */
+  const W_ROUTE = 4, W_THROUGH = 2, W_BESIDE = 1;
+  type Link = { other: string; same: boolean; w: number };
   const links = new Map<string, Link[]>();
+  const linked = new Set<string>();
+  const addLink = (a: string, b: string, same: boolean, w: number) => {
+    // One constraint per pair per kind. A pair carried by forty shapes is not forty times as
+    // important as one carried by a single shape; it is the same fact, observed repeatedly.
+    const id = `${a < b ? a : b}|${a < b ? b : a}|${w}`;
+    if (linked.has(id)) return;
+    linked.add(id);
+    (links.get(a) ?? links.set(a, []).get(a)!).push({ other: b, same, w });
+    (links.get(b) ?? links.set(b, []).get(b)!).push({ other: a, same, w });
+  };
+  /** Whether a stretch's stored order finishes at this station rather than starting from it. */
+  const endsAt = (k: string, st: string) => k.split("-")[1] === st;
+
+  /*
+   * Read off the ordered stop lists rather than from "which stretches touch this station".
+   *
+   * Asking the station is only unambiguous where a service has exactly two stretches there, and
+   * on this network that is the minority: a route running both express and local patterns has
+   * three, four, five. The E has five stretches at Kew Gardens, the N four at 57 St-7 Av. Every
+   * one of those junctions was being skipped, which is precisely where the orientation broke —
+   * Queens Plaza, Court Sq, Lexington Av/63 St. A shape's stop list says which stretch actually
+   * follows which, so there is nothing to infer.
+   */
+  for (const stops of Object.values(shapeStops)) {
+    let prev: string | null = null;
+    let prevKey: string | null = null;
+    for (const sid of stops) {
+      const here = parent(sid);
+      if (prev && prev !== here) {
+        const key = prev < here ? `${prev}-${here}` : `${here}-${prev}`;
+        if (segments[key]) {
+          if (prevKey && (prevKey.split("-").includes(prev))) {
+            addLink(prevKey, key, endsAt(prevKey, prev) !== endsAt(key, prev), W_ROUTE);
+          }
+          prevKey = key;
+        } else prevKey = null;
+      }
+      prev = here;
+    }
+  }
   for (const k of segKeys) {
     if (!segments[k]) continue;
-    const out: Link[] = [];
     for (const st of k.split("-")) {
       const here = awayFrom(k, st);
       for (const k2 of stationSegs.get(st) ?? []) {
-        if (k2 === k || !segments[k2]) continue;
+        if (k2 <= k || !segments[k2]) continue;
         const there = awayFrom(k2, st);
         // Both vectors point away from the station, so a straight-through pair points opposite.
         if (here[0] * there[0] + here[1] * there[1] > -0.5) continue;
-        // Canonical order already chains if exactly one of them ends at this station.
-        out.push({ other: k2, same: (k.split("-")[1] === st) !== (k2.split("-")[1] === st) });
+        addLink(k, k2, endsAt(k, st) !== endsAt(k2, st), W_THROUGH);
       }
     }
-    links.set(k, out);
+  }
+  const dirOf = (k: string) => {
+    const pts = segments[k];
+    const a = pts[0], b = pts[pts.length - 1];
+    const cos = Math.cos((a[1] * Math.PI) / 180);
+    const e = (b[0] - a[0]) * cos, n = b[1] - a[1];
+    const len = Math.hypot(e, n) || 1;
+    return [e / len, n / len] as [number, number];
+  };
+  for (const [a, b] of besides) {
+    if (!segments[a] || !segments[b]) continue;
+    const da = dirOf(a), db = dirOf(b);
+    addLink(a, b, da[0] * db[0] + da[1] * db[1] > 0, W_BESIDE);
+  }
+
+  /**
+   * Solve for the signs.
+   *
+   * Spreading outwards from an arbitrary seed satisfies almost every constraint, but the network
+   * has cycles: go round one and you can come back disagreeing with where you started. Which
+   * constraint ends up carrying that disagreement is then decided by whichever stretch the walk
+   * happened to reach first, and it was landing on the ones a rider sees.
+   *
+   * So the signs are laid down along a maximum-weight spanning forest instead. Every constraint
+   * in the forest is satisfied exactly — a tree has no cycles to frustrate — and because the
+   * heaviest edges are taken first, what is left outside it is the cheapest set of constraints
+   * available. A local search then flips whatever still disagrees with more of its neighbours
+   * than it agrees with, weighted, until nothing improves.
+   *
+   * What survives is a genuine frustration: a cycle whose parities cannot all hold at once, which
+   * no assignment of signs would satisfy. Those are reported rather than hidden.
+   */
+  const edges: { a: string; b: string; same: boolean; w: number }[] = [];
+  for (const [k, ls] of links) for (const l of ls) if (k < l.other) edges.push({ a: k, b: l.other, same: l.same, w: l.w });
+  edges.sort((x, y) => y.w - x.w);
+
+  const treeOf = new Map<string, string>();
+  const root = (k: string): string => (treeOf.get(k) === k ? k : (treeOf.set(k, root(treeOf.get(k)!)), treeOf.get(k)!));
+  for (const k of segKeys) if (segments[k]) treeOf.set(k, k);
+  const tree = new Map<string, { other: string; same: boolean }[]>();
+  for (const e of edges) {
+    if (!treeOf.has(e.a) || !treeOf.has(e.b) || root(e.a) === root(e.b)) continue;
+    treeOf.set(root(e.a), root(e.b));
+    (tree.get(e.a) ?? tree.set(e.a, []).get(e.a)!).push({ other: e.b, same: e.same });
+    (tree.get(e.b) ?? tree.set(e.b, []).get(e.b)!).push({ other: e.a, same: e.same });
   }
 
   const segDir: Record<string, number> = {};
@@ -549,7 +663,7 @@ async function main() {
     const queue = [seed];
     while (queue.length) {
       const k = queue.shift()!;
-      for (const { other, same } of links.get(k) ?? []) {
+      for (const { other, same } of tree.get(k) ?? []) {
         if (segDir[other] !== undefined) continue;
         segDir[other] = same ? segDir[k] : -segDir[k];
         queue.push(other);
@@ -557,38 +671,50 @@ async function main() {
     }
   }
 
-  const disagreements = () => {
-    let n = 0;
-    for (const [k, ls] of links) for (const { other, same } of ls) {
-      if (k < other && (segDir[k] === segDir[other]) !== same) n++;
+  /** What the current assignment costs, and how much of that a rider would actually see. */
+  const conflictCost = () => {
+    let cost = 0, routeBreaks = 0;
+    for (const e of edges) {
+      if ((segDir[e.a] === segDir[e.b]) === e.same) continue;
+      cost += e.w;
+      if (e.w >= W_ROUTE) routeBreaks++;
     }
-    return n;
+    return { cost, routeBreaks };
   };
-  const before = disagreements();
-  for (let sweep = 0; sweep < 12; sweep++) {
+  const before = conflictCost();
+  for (let sweep = 0; sweep < 40; sweep++) {
     let flipped = 0;
     for (const [k, ls] of links) {
       let agree = 0, disagree = 0;
-      for (const { other, same } of ls) {
+      for (const { other, same, w } of ls) {
         if (segDir[other] === undefined) continue;
-        ((segDir[k] === segDir[other]) === same ? () => agree++ : () => disagree++)();
+        if ((segDir[k] === segDir[other]) === same) agree += w; else disagree += w;
       }
       if (disagree > agree) { segDir[k] = -segDir[k]; flipped++; }
     }
     if (!flipped) break;
   }
-  const orientConflicts = disagreements();
-  if (before !== orientConflicts) console.log(`  orientation: settled ${before} disagreements down to ${orientConflicts}`);
+  const after = conflictCost();
+  const orientConflicts = after.routeBreaks;
+  console.log(`  orientation: ${links.size} stretches, ${edges.length} constraints, cost ${before.cost} -> ${after.cost}, ${after.routeBreaks} irreducible`);
 
   const segmentSlots: Record<string, Record<string, [number, number]>> = {};
   /**
-   * The same position, split into the part that separates trunk colours and the part that
-   * separates services sharing one.
+   * Two readings of the same position, and the map crossfades between them.
    *
-   * They are drawn on different schedules. Two colours are two lines on any map and stay apart at
-   * every zoom; the 4, 5 and 6 are one green Lexington line until you are close enough to care
-   * which is which, and only then do they part. Keeping the two apart is what lets the map read
-   * as a system diagram zoomed out and as track zoomed in.
+   *  - The **metric** band is where the track actually is: services evenly spaced across the
+   *    corridor, one track apart, in a fixed order.
+   *  - The **colour** index is where the printed map puts it: one line per trunk colour,
+   *    whatever the colour is carrying, so the 4, 5 and 6 are a single green Lexington line.
+   *
+   * Zoomed out you see the second; zoomed in, the first; in between, a blend. Both are stored so
+   * the renderer can interpolate between them rather than trying to add them together.
+   *
+   * They used to be a split rather than a pair — a colour part and a service-within-colour part
+   * — and the drawn geometry was offset by the metric band while the screen fan was offset by
+   * that split. Two different orderings, summed. Along Queens Boulevard the E sat one track from
+   * the F in the data and a whole colour width from it on screen, so the five lines bunched,
+   * crossed and changed spacing as you zoomed. There is one ordering now, and one blend.
    */
   const bandParts: Record<string, Record<string, [number, number]>> = {};
   for (const [key, corridor] of corridors) {
@@ -603,16 +729,32 @@ async function main() {
     const slots: Record<string, [number, number]> = {};
     const parts: Record<string, [number, number]> = {};
     for (const r of routeSegments_.get(key) ?? []) {
-      slots[r] = [band.indexOf(r) - (n - 1) / 2, n];
-      const group = band.filter((x) => colourOf(x) === colourOf(r));
-      parts[r] = [
-        colours.indexOf(colourOf(r)) - (colours.length - 1) / 2,
-        group.indexOf(r) - (group.length - 1) / 2,
-      ];
+      const metric = band.indexOf(r) - (n - 1) / 2;
+      slots[r] = [metric, n];
+      parts[r] = [colours.indexOf(colourOf(r)) - (colours.length - 1) / 2, metric];
     }
     segmentSlots[key] = slots;
     bandParts[key] = parts;
   }
+
+  const routeAdj: { a: string; b: string; route: string }[] = [];
+  for (const [shape, stops] of Object.entries(shapeStops)) {
+    const route = shape.split(/[._]/)[0];
+    if (!routes[route]) continue;
+    let prev = "", prevKey = "";
+    for (const sid of stops) {
+      const here: string = parent(sid);
+      if (prev && prev !== here) {
+        const key = prev < here ? `${prev}-${here}` : `${here}-${prev}`;
+        if (segments[key] && segmentSlots[key]?.[route]) {
+          if (prevKey && segmentSlots[prevKey]?.[route]) routeAdj.push({ a: prevKey, b: key, route });
+          prevKey = key;
+        } else prevKey = "";
+      }
+      prev = here;
+    }
+  }
+
 
   /**
    * Where a service changes band it must not step sideways. `laneEnds` records the offset each
@@ -622,11 +764,19 @@ async function main() {
    * through the transition.
    */
   const laneEnds: Record<string, Record<string, [number, number]>> = {};
+  /**
+   * The same, for the colour reading.
+   *
+   * The map crossfades between where the track is and where the printed map puts the line, so a
+   * step in either is a step on screen — the colour one showing up when you are zoomed out far
+   * enough for a trunk to be a single line. Both readings ease into their neighbours' the same
+   * way, from the same blend.
+   */
+  const colourEnds: Record<string, Record<string, [number, number]>> = {};
   for (const [route, stationMap] of byStation) {
     for (const key of routeSegmentList[route] ?? []) {
       if (!segments[key]) continue;
       const [u, v] = key.split("-");
-      const mine = segmentSlots[key]?.[route]?.[0] ?? 0;
       // A stretch eases to the mean of the bands this service uses on the stretches that carry
       // straight on from it. Each one computes the same mean, so a change of band closes exactly.
       //
@@ -634,24 +784,32 @@ async function main() {
       // junction converge on one band before fanning out again, which drew a visible pinch at
       // Canal St and everywhere else services part company. A branch is already heading away;
       // it does not need dragging sideways first.
-      const blend = (station: string) => {
+      const blend = (band: (k: string) => number | undefined) => (station: string) => {
+        const mine = band(key) ?? 0;
         // Where a service has exactly two stretches at a station it is passing through, however
-        // sharply. The geometric "carries straight on" test wants a turn of less than 60 degrees,
-        // which is right for deciding what a *corridor* does but wrong for one service's own
+        // sharply. The geometric "carries straight on" test wants a turn of under 60 degrees,
+        // which is right for deciding what a *corridor* does and wrong for one service's own
         // continuity: the N through Union Sq, the E through Queens Plaza and the 4 through
         // Brooklyn Bridge all curve harder than that, and each was left with a step of up to
         // 6.9 m in the middle of an otherwise continuous line.
+        //
+        // Deriving the group from the shapes instead was tried and is worse: closing "what
+        // follows what" into equivalence classes merges a service's express and local paths
+        // through the same station into one group, and both then pinch toward a shared mean.
         const mineHere = (stationMap.get(station) ?? []).filter((k) => segmentSlots[k]?.[route]);
-        const group = mineHere.length === 2
-          ? mineHere
-          : (throughClass.get(station)?.get(key) ?? [key]).filter((k) => segmentSlots[k]?.[route]);
+        const group = (mineHere.length === 2 ? mineHere : throughClass.get(station)?.get(key) ?? [key])
+          .filter((k) => segmentSlots[k]?.[route]);
         if (group.length < 2) return mine;
-        // Left in the corridor's frame, like the band itself. The drawing multiplies both by the
-        // stretch's orientation; converting here as well applied it twice, which is invisible
-        // wherever neighbouring stretches share an orientation and a 6.9 m step where they do not.
-        return group.reduce((sum, k) => sum + segmentSlots[k]![route]![0] * (segDir[k] ?? 1), 0) / group.length;
+        // A slot is already in the corridor's frame: the drawing offsets by `slot * segDir`
+        // relative to the stored point order, which is `slot` relative to the corridor's own
+        // direction. Converting again here applies the orientation twice — invisible wherever
+        // neighbouring stretches share an orientation, and a 6.9 m step where they do not.
+        return group.reduce((sum, k) => sum + (band(k) ?? 0), 0) / group.length;
       };
-      (laneEnds[key] ??= {})[route] = [blend(u), blend(v)];
+      const metric = blend((k) => segmentSlots[k]?.[route]?.[0]);
+      const colour = blend((k) => bandParts[k]?.[route]?.[0]);
+      (laneEnds[key] ??= {})[route] = [metric(u), metric(v)];
+      (colourEnds[key] ??= {})[route] = [colour(u), colour(v)];
     }
   }
 
@@ -719,7 +877,7 @@ async function main() {
         const [a, b] = k.split("-");
         const [slot, shared] = segmentSlots[k]?.[route] ?? [0, 1];
         const [cband, sband] = bandParts[k]?.[route] ?? [0, 0];
-        return { k, a, b, slot, shared, cband, sband, lane: `${slot}|${cband}|${sband}` };
+        return { k, a, b, slot, shared, cband, sband, lane: `${slot}|${cband}` };
       });
     const adj = new Map<string, typeof edges>();
     for (const e of edges) {
@@ -783,6 +941,7 @@ async function main() {
     segmentSlots,
     bandParts,
     laneEnds,
+    colourEnds,
     segDir,
     routeRuns,
     stationRoutes: Object.fromEntries(
@@ -804,7 +963,7 @@ async function main() {
    * path — the countdown a rider opened the app for waited behind the geometry of a map they had
    * not looked at yet. The map fetches the full file when it mounts, which is after the board.
    */
-  const GEOMETRY_ONLY = ["segments", "segmentSlots", "bandParts", "laneEnds", "segDir", "routeRuns"] as const;
+  const GEOMETRY_ONLY = ["segments", "segmentSlots", "bandParts", "laneEnds", "colourEnds", "segDir", "routeRuns"] as const;
   const lite = Object.fromEntries(Object.entries(out).filter(([k]) => !(GEOMETRY_ONLY as readonly string[]).includes(k)));
   const liteOut = join(ROOT, "public", "data", "network-lite.json");
   writeFileSync(liteOut, JSON.stringify(lite));

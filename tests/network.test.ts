@@ -48,46 +48,70 @@ test("a train rides exactly on its own line", () => {
   assert.ok(worst < 0.01, `a train drifted ${worst.toFixed(2)} m off its own line`);
 });
 
-test("two lines are the same distance apart at every zoom that matters", () => {
-  // The contract, and the thing that was wrong: the fan is whatever the eye needs *minus* what
-  // the true track spacing already provides, so the total on screen is constant. Tuned as two
-  // independent curves they drifted, and same-colour services spent three zoom levels between
-  // two and seven pixels apart — far enough to look wrong, not far enough to read as two lines.
+/**
+ * Where two services sit relative to one another, on screen, in pixels — the whole model.
+ *
+ * `dcb` is their difference in colour index and `dmb` their difference in metric band. The tests
+ * below ask about this rather than about the two curves separately, because the curves are an
+ * implementation detail and the distance between two lines is the thing anyone can see.
+ */
+const apart = (z: number, dcb: number, dmb: number) => {
+  const f = fanAt(z);
+  return dcb * f.colour + dmb * (f.metric + TRACK_M / metresPerPixel(z));
+};
+
+test("adjacent lines are eleven pixels apart at every zoom that matters", () => {
+  // The contract. The fan supplies whatever the eye needs *minus* what the true 4.6 m already
+  // provides, so the total on screen is constant.
+  //
+  // This used to be asserted of the two curves one at a time, which is not the same thing, and is
+  // why it passed while the map was visibly wrong: the geometry was offset by the metric band and
+  // the fan by a colour/service split, so the sum of two individually-correct curves put the five
+  // services sharing Queens Boulevard at uneven, zoom-dependent spacing. Asking about the
+  // distance between two services leaves the two halves nothing to disagree about.
   for (let z = 14.5; z <= 18; z += 0.25) {
-    const geo = TRACK_M / metresPerPixel(z), f = fanAt(z);
-    assert.ok(Math.abs(geo + f.colour - 11) < 0.1, `colours ${(geo + f.colour).toFixed(1)} px apart at zoom ${z}`);
-    assert.ok(Math.abs(geo + f.service - 11) < 0.1, `same colour ${(geo + f.service).toFixed(1)} px apart at zoom ${z}`);
+    assert.ok(Math.abs(apart(z, 0, 1) - 11) < 0.1, `same colour ${apart(z, 0, 1).toFixed(1)} px apart at zoom ${z}`);
+    assert.ok(Math.abs(apart(z, 1, 1) - 11) < 0.1, `next colour ${apart(z, 1, 1).toFixed(1)} px apart at zoom ${z}`);
+    assert.ok(Math.abs(apart(z, 0, 2) - 22) < 0.2, `two bands apart ${apart(z, 0, 2).toFixed(1)} px at zoom ${z}`);
   }
 });
 
-test("the fan is continuous, so nothing jumps as you zoom", () => {
+test("nothing snaps as you zoom", () => {
   // The original defect: the fan was baked into geometry and could only change in steps, so the
   // map visibly snapped every time the zoom crossed one.
-  let prev = fanAt(9), worst = 0;
-  for (let z = 9; z <= 21; z += 0.05) {
-    const v = fanAt(z);
-    worst = Math.max(worst, Math.abs(v.colour - prev.colour), Math.abs(v.service - prev.service));
-    prev = v;
+  //
+  // What is measured is the bend in the curve, not its slope. Two lines genuinely do draw further
+  // apart as you zoom past street level — that is the real 4.6 m becoming worth more pixels, and
+  // by zoom 21 it is 10 px per twentieth of a level — so a bound on the slope would either fail
+  // on correct behaviour or be too loose to catch anything. A step shows up as a spike in the
+  // second difference whatever the slope around it does; smooth growth does not.
+  let worst = 0;
+  for (let z = 9.1; z <= 21; z += 0.05) {
+    for (const [dcb, dmb] of [[0, 1], [1, 1], [1, 2], [2, 3], [2, 4]] as [number, number][]) {
+      const bend = apart(z, dcb, dmb) - 2 * apart(z - 0.05, dcb, dmb) + apart(z - 0.1, dcb, dmb);
+      worst = Math.max(worst, Math.abs(bend) / Math.max(Math.abs(dcb), Math.abs(dmb)));
+    }
   }
-  assert.ok(worst < 1.2, `the fan moved ${worst.toFixed(2)} px within a twentieth of a zoom level`);
+  // The deliberate reveal between zoom 13.4 and 14.2 bends by 0.50; a step would be several px,
+  // and a band landing in the wrong place would be eleven.
+  assert.ok(worst < 1.5, `the curve bent ${worst.toFixed(2)} px per band within a twentieth of a zoom level`);
 });
 
 test("past street level the lines stand on the real track spacing", () => {
   // Close enough in, 4.6 m is worth more than the target on its own and the fan gets out of the
   // way: what you see is where the track is.
-  assert.equal(fanAt(19).colour, 0);
-  assert.equal(fanAt(19).service, 0);
+  assert.equal(fanAt(19).colour, 0, "the colour reading has finished merging into the metric one");
+  assert.equal(fanAt(19).metric, 0, "and the metric reading is the geometry's own");
+  const geo = TRACK_M / metresPerPixel(19);
+  assert.ok(Math.abs(apart(19, 1, 1) - geo) < 1e-9, "two adjacent services sit one real track apart");
 });
 
 test("services sharing a trunk colour merge as the map zooms out", () => {
   // The 4, 5 and 6 are one green Lexington line on any map of this system until you are close
   // enough to care which is which. Colours are lines in their own right and never merge.
-  assert.equal(fanAt(12).service, 0, "same-colour services sit on one another at city zoom");
-  assert.ok(fanAt(12).colour > 9, "different colours stay apart there");
-  assert.ok(fanAt(16).service > 7, "and part once you are close enough to tell them apart");
-  const far = fanAt(19.5);
-  assert.equal(far.colour, 0, "zoomed right in, the true track spacing does the whole job");
-  assert.equal(far.service, 0);
+  assert.ok(apart(12, 0, 1) < 0.5, "same-colour services sit on one another at city zoom");
+  assert.ok(apart(12, 1, 1) > 9, "different colours stay apart there");
+  assert.ok(apart(16, 0, 1) > 7, "and part once you are close enough to tell them apart");
 });
 
 test("lines and trains are placed by the same fan", () => {
@@ -100,12 +124,12 @@ test("lines and trains are placed by the same fan", () => {
   assert.deepEqual(expr[2], ["zoom"], "the zoom interpolation has to be outermost");
   for (let i = 3; i + 1 < expr.length; i += 2) {
     const zoom = expr[i] as number;
-    const [, colourTerm, serviceTerm] = expr[i + 1] as unknown[];
+    const [, colourTerm, metricTerm] = expr[i + 1] as unknown[];
     assert.deepEqual((colourTerm as unknown[])[1], ["get", "cb"]);
-    assert.deepEqual((serviceTerm as unknown[])[1], ["get", "sb"]);
+    assert.deepEqual((metricTerm as unknown[])[1], ["get", "mb"]);
     const at = fanAt(zoom);
     assert.ok(Math.abs(((colourTerm as unknown[])[2] as number) - at.colour) < 1e-9, `colour disagrees at zoom ${zoom}`);
-    assert.ok(Math.abs(((serviceTerm as unknown[])[2] as number) - at.service) < 1e-9, `service disagrees at zoom ${zoom}`);
+    assert.ok(Math.abs(((metricTerm as unknown[])[2] as number) - at.metric) < 1e-9, `metric disagrees at zoom ${zoom}`);
   }
 });
 
