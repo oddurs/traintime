@@ -1,0 +1,27 @@
+# The traintime site: the static export, served with compression.
+#
+# Separate from the poller on purpose. The poller records the feeds continuously and its
+# recordings are the product; restarting it to ship a stylesheet would cost a gap in the history
+# and a warm-up every time.
+FROM node:22-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci && npm cache clean --force
+COPY . .
+# Served from the root of its own domain, so no base path. The poller is a separate service, so
+# the site is told where to find it at build time.
+ARG POLLER_URL=""
+ENV NEXT_PUBLIC_BASE_PATH=""
+ENV NEXT_PUBLIC_POLLER_URL=$POLLER_URL
+RUN npm run build:site
+
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --include=dev --ignore-scripts && npm cache clean --force
+COPY tsconfig.json ./
+COPY services/site ./services/site
+COPY --from=build /app/out ./out
+EXPOSE 8080
+CMD ["npx", "tsx", "services/site/index.ts"]

@@ -27,7 +27,9 @@
     "audit:design": "tsx scripts/audit-design.ts",
     "evaluate:day": "tsx scripts/evaluate-windows.ts",
     "audit:a11y": "node scripts/audit-a11y.mjs",
-    "audit:weight": "node scripts/audit-weight.mjs --serve"
+    "audit:weight": "node scripts/audit-weight.mjs --serve",
+    "build:site": "NEXT_PUBLIC_BASE_PATH= bash scripts/build-pages.sh",
+    "site": "tsx services/site/index.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
