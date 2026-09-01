@@ -19,6 +19,7 @@ import { PollerServer } from "./server";
 import { FeedMonitor } from "./health";
 import { ContextRecorder } from "./context";
 import { cleanTemp, compact, diskUsage, enforceBudget, prune } from "./retention";
+import { rollup, rollupStatus } from "./rollup";
 import { learnOnce, msUntilNightly, type LearnOutcome } from "./learn";
 import { checkInvariants, isFailure } from "../../src/lib/invariants";
 
@@ -78,7 +79,7 @@ async function main() {
 
   const stats = { fetches: 0, errors: 0, fresh: 0, events: 0, etaObs: 0 };
   let lastLearn: LearnOutcome | null = null;
-  let lastMaintenance: { at: number; pruned: Record<string, number>; compacted: Record<string, number>; budget: { removed: number; freedBytes: number } } | null = null;
+  let lastMaintenance: { at: number; pruned: Record<string, number>; compacted: Record<string, number>; budget: { removed: number; freedBytes: number }; rolled?: { days: string[]; cells: number } } | null = null;
 
   // The health closure is built before the server exists, so it reaches it through a holder.
   const live: { server?: PollerServer } = {};
@@ -95,7 +96,7 @@ async function main() {
         uptimeS: now - startedAt,
         now, clock: tracker.clock, trains: tracker.size,
         feeds: { ...feeds, detail: monitor.snapshot(now) },
-        recorder: { ...recorder.counts, disk },
+        recorder: { ...recorder.counts, disk, summarised: rollupStatus() },
         context: context.status(),
         timing: { learned: timing.isLearned, model: !!timing.model, generatedAt: timing.tables?.generatedAt ?? null, events: timing.tables?.samples.events ?? 0 },
         // What browsers say went wrong. Without this the only half of the system we could see
@@ -171,9 +172,14 @@ async function main() {
       await recorder.flush();
       cleanTemp();
       const compacted = await compact(recorder.connection);
+      // Summarise days old enough that the model no longer trains on them, before pruning can
+      // reach them. The statistics outlive the rows, so a year of history stays learnable on a
+      // volume that could never hold a year of observations.
+      const rolled = await rollup(recorder.connection);
       const pruned = prune();
       const budget = enforceBudget();
-      lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted, budget };
+      lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted, budget, rolled };
+      if (rolled.days.length) console.log(`[maintenance] summarised ${rolled.days.join(", ")} into ${rolled.cells} cells`);
       if (Object.keys(pruned).length || Object.keys(compacted).length || budget.removed) {
         console.log(`[maintenance] pruned ${JSON.stringify(pruned)} compacted ${JSON.stringify(compacted)} budget ${JSON.stringify(budget)} disk ${(diskUsage().bytes / 1e6).toFixed(0)} MB`);
       }

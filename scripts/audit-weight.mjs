@@ -99,9 +99,15 @@ for (let i = 0; i < 400; i++) {
   if (ok) { readable = Date.now() - started; break; }
   await sleep(100);
 }
+// When does the map itself appear? It is deliberately held back so the board wins the link, and
+// how long that costs is worth knowing rather than assuming.
+let mapAt = 0;
+for (let i = 0; i < 400; i++) {
+  if (await js(`!!document.querySelector('canvas.maplibregl-canvas')`)) { mapAt = Date.now() - started; break; }
+  await sleep(100);
+}
 await sleep(2500);
 const total = [...bytes.values()].reduce((a, b) => a + b, 0);
-const mapUp = await js(`!!(window.__tt && window.__tt.map)`);
 ws.close(); chrome.kill("SIGKILL"); stop();
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
@@ -109,7 +115,7 @@ console.log(`weight — ${profile}, 4x CPU throttle, cold cache, iPhone-sized vi
 console.log(`  first contentful paint      ${firstPaint ? firstPaint + " ms" : "not seen"}`);
 console.log(`  something readable on screen ${readable ? readable + " ms" : "not within 40 s"}`);
 console.log(`  transferred                 ${kb(total)} over ${bytes.size} requests`);
-console.log(`  map engine running          ${mapUp ? "yes" : "no"}`);
+console.log(`  map canvas on screen        ${mapAt ? mapAt + " ms" : "not within 40 s"}`);
 console.log("\n  what arrived before the page was readable:");
 for (const f of finished.filter((f) => f.at <= readable + 50).sort((a, b) => b.kb - a.kb).slice(0, 8))
   console.log(`    ${String(Math.round(f.kb)).padStart(5)} KB  at ${String(Math.round(f.at)).padStart(6)} ms  ${f.url.split("/").pop().slice(0, 46)}`);

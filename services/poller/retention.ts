@@ -12,8 +12,14 @@ import { REC_DIR, TABLES } from "./recorder";
 export interface RetentionPolicy {
   /** Days of raw protobuf ticks to keep. */
   ticksDays: number;
-  /** Days of derived events and observations to keep. */
+  /** Days of derived events to keep. */
   eventsDays: number;
+  /**
+   * Days of raw ETA observations to keep. Shorter than events on purpose: they are five times the
+   * volume, the residual tables read them through summaries once they age out, and only the
+   * offline model wants them as rows.
+   */
+  obsDays: number;
   /** Files older than this are candidates for merging into a daily file. */
   compactAfterHours: number;
   /**
@@ -27,7 +33,8 @@ export interface RetentionPolicy {
 
 export const DEFAULT_POLICY: RetentionPolicy = {
   ticksDays: Number(process.env.TICKS_RETENTION_DAYS ?? 3),
-  eventsDays: Number(process.env.EVENTS_RETENTION_DAYS ?? 120),
+  eventsDays: Number(process.env.EVENTS_RETENTION_DAYS ?? 400),
+  obsDays: Number(process.env.OBS_RETENTION_DAYS ?? 30),
   compactAfterHours: 2,
   budgetBytes: Number(process.env.DISK_BUDGET_BYTES ?? 3_000_000_000),
 };
@@ -113,7 +120,10 @@ export function prune(policy: RetentionPolicy = DEFAULT_POLICY): Record<string, 
   for (const table of TABLES) {
     const dir = join(REC_DIR, table);
     if (!existsSync(dir)) continue;
-    const days = table === "ticks" ? policy.ticksDays : policy.eventsDays;
+    // Observations are only kept as long as the model trains on them; beyond that the rollups
+    // carry what the tables need, in a fraction of the space. Events stay: they are small, and
+    // run times, dwells and approaches are derived from their ordering rather than from counts.
+    const days = table === "ticks" ? policy.ticksDays : table === "eta_obs" ? policy.obsDays : policy.eventsDays;
     const cutoff = now - days * DAY_MS;
     let n = 0;
     for (const f of readdirSync(dir)) {

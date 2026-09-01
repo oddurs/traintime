@@ -57,9 +57,23 @@ X until arrival at Y. While it is stopped the timestamp keeps advancing, and the
   Tested the only way that settles it: a better departure estimate must make the run times it
   implies more *consistent*, since the true run time over a given stretch of track barely varies.
   Across 23,393 completed runs over 850 stretches, the spread of implied run time falls from
-  **30 s to 17 s**, and the frozen beat is tighter on 488 of the 609 stretches where both could be
-  scored. It is now the departure the tracker uses and records, which is also what finally gives
-  the lettered lines observed dwell.
+  **30 s to 17 s**. It is now the departure the tracker uses and records, which is also what
+  finally gives the lettered lines observed dwell.
+
+  **The freeze is the signal, not the moment.** That spread test cannot see a constant error —
+  subtracting the same number from every departure shifts every implied run time equally and
+  leaves the spread untouched — and the beat does run on past the departure, as the first version
+  of this document said. Three independent measurements put it at about **25 s**: lettered-line
+  dwell is 24 s longer than numbered-line dwell *at the same station* across the 20 complexes
+  where both stop, 27 s longer overall, and lettered-line run times sit 32 s shorter relative to
+  the schedule. Uncorrected it took the global dwell prior from 50 s to 62 s and dragged every
+  marker back — 170 m from the platform to 248 m — while the ETAs improved, which is how a
+  correction that is right in one place and wrong in another hides.
+
+  The correction applies only to feeds that *never* report a moving train. Two are hybrids: the L
+  advances its timestamp 4,210 times while stopped and 2,955 times while moving, and the Staten
+  Island Railway 895 against 202. Their departures are directly observed and are not late;
+  correcting them drove the L's dwell to the floor.
 - The MTA's ETA for the next stop drifts later while it is blind, which is where most of its
   −18 to −25 s arrival bias at 1–5 minute horizons comes from. That bias is stable and learnable.
 - `IN_TRANSIT_TO` does appear on these feeds, but its timestamp is a *predicted* arrival (it can

@@ -231,9 +231,28 @@ test("a train turning around at a terminal is one train, not two", () => {
  * tests pin both halves, because getting either wrong moves trains that are standing at a
  * platform or strands trains that left a minute ago.
  */
-function letteredTrain(stop: string, vts: number, stops: TrainUpdate["stops"]): TrainUpdate {
+/**
+ * A pure heartbeat feed has to look like one before the tracker will treat it as one: the lag
+ * correction is only applied to feeds that beat and never report a moving train, because the L
+ * and the Staten Island Railway do both and their departures are not late.
+ */
+function warmHeartbeat(tracker: ReturnType<typeof fresh>, from: number): number {
+  // Well before the scenario it precedes: a tick older than one already ingested is ignored, so
+  // warming up *past* the start time silently discards everything the test then does.
+  let t = from;
+  for (let i = 0; i < 30; i++) {
+    t += 16;
+    tracker.ingest(at(t, [letteredTrain("A99S", t - 8, [
+      { id: "A99S", arrival: from, departure: from },
+      { id: "A98S", arrival: from + 600, departure: from + 600 },
+    ], "WARM")]));
+  }
+  return t;
+}
+
+function letteredTrain(stop: string, vts: number, stops: TrainUpdate["stops"], id = "A_TEST"): TrainUpdate {
   return {
-    id: "A_TEST", route: "A", direction: "S", assigned: true,
+    id, route: "A", direction: "S", assigned: true,
     vehicle: { stopId: stop, status: "STOPPED_AT", timestamp: vts },
     stops,
   };
@@ -259,6 +278,7 @@ test("a running heartbeat never pins a lettered train to the platform", () => {
 test("a heartbeat that froze early departs the train early", () => {
   const now = 1_788_000_000;
   const tracker = fresh();
+  warmHeartbeat(tracker, now - 1200);
   const plan = [
     { id: "A15S", arrival: now, departure: now },
     { id: "A16S", arrival: now + 600, departure: now + 600 },
@@ -270,7 +290,8 @@ test("a heartbeat that froze early departs the train early", () => {
   for (let i = 0; i < 5; i++) { t += 16; tracker.ingest(at(t, [letteredTrain("A15S", frozen, plan)])); }
   const s = tracker.snapshot(t).trains.find((x) => x.id === "A_TEST")!;
   assert.equal(s.phase, "moving");
-  assert.equal(s.departedAt, frozen, "the beat may always move a departure earlier");
+  // The beat may only ever move a departure earlier than the modelled dwell would, never later.
+  assert.ok(s.departedAt! <= now + 90, "the beat should not delay a departure");
 });
 
 test("the final approach places a train near the platform, and never behind itself", () => {
@@ -298,6 +319,7 @@ test("the final approach places a train near the platform, and never behind itse
 test("a lettered train's frozen heartbeat is recorded as a real departure event", () => {
   const now = 1_788_000_000;
   const tracker = fresh();
+  warmHeartbeat(tracker, now - 1200);
   const plan = (a: string, b: string) => [
     { id: a, arrival: now, departure: now },
     { id: b, arrival: now + 200, departure: now + 200 },
@@ -309,7 +331,12 @@ test("a lettered train's frozen heartbeat is recorded as a real departure event"
   t += 60;
   const ev = tracker.ingest(at(t, [letteredTrain("A16S", t, plan("A16S", "A17S"))]));
   const dep = ev.events.find((e) => e.kind === "depart" && e.stopId === "A15S");
-  assert.ok(dep, "the frozen beat is the departure, and the only one this feed will ever give");
-  assert.equal(dep!.ts, frozen);
+  assert.ok(dep, "the frozen beat is the departure signal, and the only one this feed will ever give");
+  // The freeze is the signal, not the moment: on a feed that only ever beats, it runs on about
+  // 25 s past the departure — measured three ways, including a 24 s gap between the divisions'
+  // dwell at the same station. What is recorded is the freeze less that lag.
+  assert.ok(dep!.ts < frozen, `the departure should precede the freeze, got ${dep!.ts - frozen} s`);
+  assert.ok(frozen - dep!.ts >= 20, `expected roughly the measured lag, got ${frozen - dep!.ts} s`);
+  assert.ok(dep!.ts > now, "and never before it arrived");
   assert.equal(dep!.estimated, false, "it is a real feed timestamp, so the learner may use it");
 });

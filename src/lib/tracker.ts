@@ -83,6 +83,24 @@ const CLEARANCE_S = 40;
 const HEARTBEAT_SILENCE_S = 45;
 
 /**
+ * How long the heartbeat keeps beating after the train has actually pulled out.
+ *
+ * The freeze is the best departure signal these feeds contain, but it is not the departure: the
+ * beat runs on for a while first. Three independent measurements agree on roughly this much —
+ * B-division dwell is 24 s longer than A-division dwell *at the same station* across 20 complexes
+ * where both stop, 27 s longer overall, and B-division run times sit 32 s shorter than A-division
+ * ones relative to the schedule.
+ *
+ * Left uncorrected it put the global dwell prior up from 50 s to 62 s and dragged every marker
+ * back: the median distance from a train to the platform it was arriving at went from 170 m to
+ * 248 m. The spread test that first justified the freeze cannot see this — subtracting a constant
+ * from every departure shifts every implied run time equally and leaves the spread unchanged.
+ */
+const HEARTBEAT_LAG_S = 25;
+/** A train is at the platform for some time however the arithmetic comes out. */
+const MIN_DWELL_S = 10;
+
+/**
  * When to stop believing in a train. The test is whether it is making progress, not whether its
  * record is changing: a train with a stable prediction and no vehicle updates looks frozen while
  * running perfectly well, and keying on that flagged a quarter of the system as ghosts. What
@@ -133,6 +151,23 @@ export class Tracker {
     return !!f && f.beats > f.transit;
   }
 
+  /**
+   * A feed that *only* beats, and never reports a moving train.
+   *
+   * The majority test above is not enough to decide whether a departure is late, because two
+   * feeds are hybrids: the L advances its timestamp 4,210 times while stopped and 2,955 times
+   * while moving, and the Staten Island Railway 895 against 202. A feed that reports movement is
+   * telling us when a train left, and that report is not late — correcting it as though it were
+   * drove the L's dwell from 31 s to the 10 s floor, which is how this was noticed.
+   *
+   * The lettered-line feeds have literally zero moving updates between them, so the distinction
+   * is not a fine judgement.
+   */
+  isPureHeartbeatFeed(feed: string): boolean {
+    const f = this.feedStats.get(feed);
+    return !!f && f.beats > 20 && f.transit < f.beats * 0.05;
+  }
+
   /** Ingest one feed tick. Returns the events and ETA revisions it produced. */
   ingest(tick: FeedTick): { events: StationEvent[]; etaObs: EtaObservation[]; fresh: boolean } {
     const events: StationEvent[] = [];
@@ -176,8 +211,9 @@ export class Tracker {
             // arrivals, and every one of the missing ones from a feed that behaves this way.
             const beat = m.vehicleTs;
             if (this.beating(m) && beat !== undefined && m.arrivedAt !== undefined && beat > m.arrivedAt) {
-              events.push({ ...base, ts: beat, stopId: m.stopId, kind: "depart", track: this.trackOf(m.u, m.stopId), estimated: false });
-              m.departedAt = beat;
+              const left = Math.max(m.arrivedAt + MIN_DWELL_S, beat - this.departureLag(m));
+              events.push({ ...base, ts: left, stopId: m.stopId, kind: "depart", track: this.trackOf(m.u, m.stopId), estimated: false });
+              m.departedAt = left;
               m.departedEstimated = false;
             } else {
               m.departedAt = undefined;
@@ -267,6 +303,18 @@ export class Tracker {
    */
   private beating(m: Memory): boolean {
     return m.beats > 0 && (this.isHeartbeatFeed(m.feed) || m.beats >= 2);
+  }
+
+  /**
+   * How late this feed's departure signal is, in seconds.
+   *
+   * Only the feeds that actually behave as heartbeats run on past the departure. The L publishes
+   * the odd advancing timestamp too, but its departures are directly observable and are not late;
+   * applying the correction there drove its dwell to the floor — 31 s down to 10 — which is how
+   * this was caught.
+   */
+  private departureLag(m: Memory): number {
+    return this.isPureHeartbeatFeed(m.feed) ? HEARTBEAT_LAG_S : 0;
   }
 
   /** The approach observation, but only while it refers to the stop the train is heading for. */
@@ -369,7 +417,7 @@ export class Tracker {
       // and the accuracy is worth everything: it is what finally gives the lettered lines
       // observed dwells and run times to learn the modelled dwell from.
       if (this.beating(m) && m.vehicleTs !== undefined && now - m.vehicleTs > HEARTBEAT_SILENCE_S) {
-        departAt = Math.min(departAt, Math.max(m.vehicleTs, arrivedAt));
+        departAt = Math.min(departAt, Math.max(arrivedAt + MIN_DWELL_S, m.vehicleTs - this.departureLag(m)));
       }
       if (heartbeat && !u.stops.some((s) => parentOf(s.id) === parentOf(at))) departAt = Math.min(departAt, now);
       if (now >= departAt && next && this.net.station(next.id)) {

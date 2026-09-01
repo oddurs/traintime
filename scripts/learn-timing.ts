@@ -5,14 +5,15 @@
  *   npx tsx scripts/learn-timing.ts [--from ISO] [--to ISO] [--out data/timing.json] [--no-flush]
  */
 import { DuckDBInstance } from "@duckdb/node-api";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ResidualStat, Stat, TimingTables } from "../src/lib/types";
 import { horizonBucket, runKeys, dwellKeys, RUN_LEVELS, DWELL_LEVELS, type Conditions } from "../src/lib/timing";
+import { add as addToHistogram, stat as statFromHistogram, type Histogram } from "../src/lib/histogram";
 import { buildHierarchy, estimate, hierarchySize } from "../src/lib/hierarchy";
 import { band, calendarRow, type WeatherBand } from "../src/lib/calendar";
 import { nyHourDow } from "../src/lib/tracker";
-import { parquetGlob } from "../services/poller/recorder";
+import { parquetGlob, REC_DIR } from "../services/poller/recorder";
 
 const ROOT = join(import.meta.dirname, "..");
 const args = new Map<string, string>();
@@ -32,10 +33,6 @@ const quantile = (xs: number[], p: number) => {
   return s[Math.min(s.length - 1, Math.floor(p * s.length))];
 };
 const stat = (xs: number[]): Stat => ({ p50: quantile(xs, 0.5), p16: quantile(xs, 0.16), p84: quantile(xs, 0.84), n: xs.length });
-const residualStat = (xs: number[]): ResidualStat => {
-  const median = quantile(xs, 0.5);
-  return { median, p68: quantile(xs.map((x) => Math.abs(x - median)), 0.68), n: xs.length };
-};
 function group<T>(rows: T[], key: (r: T) => string | undefined, val: (r: T) => number): Record<string, number[]> {
   const out: Record<string, number[]> = {};
   for (const r of rows) {
@@ -202,24 +199,55 @@ async function main() {
   const clean = obs.filter((o) => Math.abs(o.actual - o.predicted) < 900);
   const resid = (o: (typeof clean)[number]) => o.actual - o.predicted;
   const bucket = (o: (typeof clean)[number]) => horizonBucket(o.predicted - o.obs_ts);
+
+  /*
+   * Residuals are counted into histograms rather than collected as rows, so that observations
+   * summarised months ago count exactly as much as this morning's.
+   *
+   * Every level the lookup backs off through gets its own histogram: a coarse cell cannot be
+   * recovered from the fine ones once the rows are gone, so `route:` and `all|` are accumulated
+   * alongside `seg:` and `orig:` rather than derived.
+   */
+  const hists = new Map<string, Histogram>();
+  const into = (key: string | undefined, seconds: number) => {
+    if (!key) return;
+    const h = hists.get(key) ?? hists.set(key, new Map()).get(key)!;
+    addToHistogram(h, seconds);
+  };
+  for (const o of clean) {
+    const b = bucket(o), r = resid(o);
+    into(o.prev_stop ? `seg:${o.prev_stop}>${o.stop_id}|${b}` : undefined, r);
+    into(o.prev_stop ? undefined : `orig:${o.stop_id}|${b}`, r);
+    into(`route:${o.route}|${b}`, r);
+    into(`all|${b}`, r);
+  }
+
+  // Everything already summarised. These are the months the raw rows no longer exist for.
+  let rolledObs = 0;
+  const rollupDir = join(REC_DIR, "rollups");
+  const rollupGlob = join(rollupDir, "*.parquet");
+  if (existsSync(rollupDir) && readdirSync(rollupDir).some((f) => f.endsWith(".parquet"))) {
+    const rows = (await conn.runAndReadAll(
+      `SELECT cell, bucket, sum(n) AS n FROM read_parquet('${rollupGlob}', union_by_name=true)
+       WHERE kind = 'resid' GROUP BY 1, 2`,
+    )).getRowObjectsJS() as { cell: string; bucket: number; n: number }[];
+    for (const r of rows) {
+      const h = hists.get(r.cell) ?? hists.set(r.cell, new Map()).get(r.cell)!;
+      const b = Number(r.bucket), n = Number(r.n);
+      h.set(b, (h.get(b) ?? 0) + n);
+      rolledObs += n;
+    }
+  }
+
   const residual: Record<string, ResidualStat> = {};
-  for (const [k, v] of Object.entries(group(clean, (o) => (o.prev_stop ? `seg:${o.prev_stop}>${o.stop_id}|${bucket(o)}` : undefined), resid))) residual[k] = residualStat(v);
-  // A train that has not left its terminal is a different animal from one already running: it is
-  // placed by schedule alone, and the schedule pads terminal departures heavily. Measured over a
-  // day, those predictions land a median 106 s late at the far horizon against 37 s for running
-  // trains, and the padding differs sharply by terminal (178-409 s). Without a level of its own
-  // they are averaged in with running trains at the coarse `route`/`all` levels, which is why the
-  // far horizon is the one place the app still loses to the MTA.
-  for (const [k, v] of Object.entries(group(clean, (o) => (o.prev_stop ? undefined : `orig:${o.stop_id}|${bucket(o)}`), resid))) residual[k] = residualStat(v);
-  for (const [k, v] of Object.entries(group(clean, (o) => `route:${o.route}|${bucket(o)}`, resid))) residual[k] = residualStat(v);
-  for (const [k, v] of Object.entries(group(clean, (o) => `all|${bucket(o)}`, resid))) residual[k] = residualStat(v);
+  for (const [k, h] of hists) residual[k] = statFromHistogram(h);
 
   const nEvents = Number((await conn.runAndReadAll(`SELECT count(*) AS n FROM ev`)).getRowObjects()[0].n);
   const window = (await conn.runAndReadAll(`SELECT min(ts) AS a, max(ts) AS b FROM ev`)).getRowObjects()[0];
   const tables: TimingTables = {
     generatedAt: new Date().toISOString(),
     window: { from: new Date(Number(window.a) * 1000).toISOString(), to: new Date(Number(window.b) * 1000).toISOString() },
-    samples: { events: nEvents, etaObs: clean.length },
+    samples: { events: nEvents, etaObs: clean.length + rolledObs },
     runHier, dwellHier, hierGate: { run: runFit.gate, dwell: dwellFit.gate },
     runTime, runTimeHour, a2a, dwellGlobal, dwell, dwellHour, approach, residual, prevByTrack,
   };
@@ -235,6 +263,7 @@ async function main() {
   console.log(g("run conditioning", runFit.gate));
   console.log(g("dwell conditioning", dwellFit.gate));
   console.log(`weather hours joined: ${bandByHour.size}`);
+  if (rolledObs) console.log(`residuals include ${rolledObs.toLocaleString()} observations from summarised days`);
   console.log(`segments with run time ${Object.keys(runTime).length} · arrival-to-arrival ${Object.keys(a2a).length} · stops with dwell ${Object.keys(dwell).length} (global prior ${dwellGlobal} s) · residual groups ${Object.keys(residual).length}`);
   for (const b of ["h0", "h1", "h2", "h3", "h4"]) {
     const r = residual[`all|${b}`];

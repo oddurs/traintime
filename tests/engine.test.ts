@@ -11,6 +11,7 @@ import { NetworkIndex } from "../src/lib/network";
 import { Kinematics } from "../src/lib/kinematics";
 import { gbmPredict } from "../src/lib/gbm";
 import { distM } from "../src/lib/geo";
+import { add as addToHistogram, merge as mergeInto, quantile as quantileOf, stat as statFrom, total as totalOf, BUCKET_S, type Histogram } from "../src/lib/histogram";
 import { arrivalsAt } from "../src/lib/arrivals";
 import type { GbmModel, Network, StopPrediction, TrainState } from "../src/lib/types";
 
@@ -228,4 +229,42 @@ test("asking for a destination drops trains that never reach it, and times the r
   assert.equal(all.length, 1, "only the train that gets there should be offered");
   assert.equal(all[0].id, "goes");
   assert.ok(all[0].rideSeconds! > 0, "and it should say how long the ride is");
+});
+
+// ---------- sufficient statistics ----------
+
+test("a histogram answers the same questions as the rows it replaces", () => {
+  // The whole argument for keeping counts instead of observations: a table built from summaries
+  // has to match one built from rows, or a year of history is worth less than a week of it.
+  const rows: number[] = [];
+  let seed = 12345;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  for (let i = 0; i < 20_000; i++) {
+    // Skewed and heavy-tailed, like a real residual: mostly early, occasionally very late.
+    rows.push(Math.round(-30 + 40 * (rnd() - 0.5) + (rnd() < 0.05 ? 300 * rnd() : 0)));
+  }
+  const h: Histogram = new Map();
+  for (const r of rows) addToHistogram(h, r);
+
+  const exact = [...rows].sort((a, b) => a - b);
+  const q = (p: number) => exact[Math.floor(exact.length * p)];
+  assert.equal(totalOf(h), rows.length, "no observation may be lost");
+  for (const p of [0.16, 0.5, 0.84]) {
+    const off = Math.abs(quantileOf(h, p) - q(p));
+    assert.ok(off <= BUCKET_S, `quantile ${p} differs by ${off} s, more than a bucket`);
+  }
+  const median = q(0.5);
+  const exactSpread = [...rows].map((x) => Math.abs(x - median)).sort((a, b) => a - b);
+  const s = statFrom(h);
+  assert.ok(Math.abs(s.median - median) <= BUCKET_S);
+  assert.ok(Math.abs(s.p68 - exactSpread[Math.floor(exactSpread.length * 0.68)]) <= BUCKET_S * 2);
+});
+
+test("histograms merge by addition, so old summaries count as much as new rows", () => {
+  const a: Histogram = new Map(), b: Histogram = new Map(), both: Histogram = new Map();
+  for (let i = 0; i < 500; i++) { addToHistogram(a, i % 97); addToHistogram(both, i % 97); }
+  for (let i = 0; i < 300; i++) { addToHistogram(b, 50 + (i % 31)); addToHistogram(both, 50 + (i % 31)); }
+  mergeInto(a, b);
+  assert.equal(totalOf(a), 800);
+  assert.equal(quantileOf(a, 0.5), quantileOf(both, 0.5), "merging must equal counting together");
 });

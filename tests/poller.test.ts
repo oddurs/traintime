@@ -78,7 +78,7 @@ test("retention: the budget drops the oldest ticks and never the newest", () => 
   for (const day of ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]) {
     writeFileSync(join(dir, `daily-${day}.parquet`), big);
   }
-  const policy = { ticksDays: 99, eventsDays: 99, compactAfterHours: 2, budgetBytes: 450_000 };
+  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 450_000 };
   const res = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000 });
   const left = readdirSync(dir).sort();
   assert.ok(res.removed >= 2, `expected the oldest files to go, dropped ${res.removed}`);
