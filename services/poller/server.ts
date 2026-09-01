@@ -80,10 +80,56 @@ export class PollerServer {
     for (const c of this.clients) send(c, full ? "snapshot" : "delta", payload);
   }
 
+  /**
+   * What browsers have reported going wrong, in the last hour.
+   *
+   * The poller reports its own health continuously and the browser reported nothing: if the map
+   * failed to start for a real person, or a style or a font never loaded, nobody ever found out.
+   * Kept in memory and deliberately small — a count, and the last few messages.
+   */
+  private clientErrors: { at: number; msg: string }[] = [];
+
+  /** Errors reported by browsers in the last hour, for /health. */
+  clientErrorReport() {
+    const cutoff = Math.floor(Date.now() / 1000) - 3600;
+    this.clientErrors = this.clientErrors.filter((e) => e.at > cutoff);
+    return { lastHour: this.clientErrors.length, recent: this.clientErrors.slice(-3).map((e) => e.msg) };
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? "/", "http://localhost");
     const now = Math.floor(Date.now() / 1000);
+    // A page on another origin has to be allowed to preflight the one thing it can post.
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-headers": "content-type",
+        "access-control-max-age": "86400",
+      });
+      return res.end();
+    }
     switch (url.pathname) {
+      case "/client-error": {
+        if (req.method !== "POST") return json(res, { error: "post only" }, 405);
+        // Bounded hard: this is an unauthenticated endpoint on the public internet, so it takes a
+        // short message and nothing else, and forgets the oldest once it has enough to be useful.
+        const body = await new Promise<string>((resolve) => {
+          let n = 0; const parts: string[] = [];
+          req.on("data", (c: Buffer) => { n += c.length; if (n < 4096) parts.push(c.toString("utf8")); });
+          req.on("end", () => resolve(parts.join("")));
+          req.on("error", () => resolve(""));
+        });
+        try {
+          const { message } = JSON.parse(body || "{}") as { message?: unknown };
+          const msg = String(message ?? "").slice(0, 200);
+          if (msg) {
+            this.clientErrors.push({ at: now, msg });
+            if (this.clientErrors.length > 200) this.clientErrors.shift();
+          }
+        } catch { /* a malformed report is not worth a 500 */ }
+        return json(res, { ok: true });
+      }
       case "/health": {
         const h = this.deps.health();
         return json(res, h, h.ok ? 200 : 503);

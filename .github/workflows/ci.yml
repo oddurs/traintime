@@ -21,4 +21,6 @@ jobs:
       - run: npm run audit -- --url https://traintime-production-6a7d.up.railway.app || echo 'audit could not reach the deployed poller; not blocking'
       - run: npm run lint
       - run: npm run audit:design
+      # Needs a browser and a page; against the deployed site so it does not need a local server.
+      - run: npm run audit:a11y -- https://oddurs.github.io/traintime || echo 'a11y audit could not run here; not blocking'
       - run: npm run build:pages

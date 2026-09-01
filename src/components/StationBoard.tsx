@@ -60,8 +60,29 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
     return out;
   }, [alerts, station, routes, index]);
 
+  /*
+   * What a screen reader is told as the board changes.
+   *
+   * The entire content of this app is a number that changes every second, and it was announced
+   * once when the board opened and never again. Announcing every tick would be unusable, so this
+   * is the next train rounded to the minute: it changes about once a minute, which is the rate at
+   * which the answer actually changes.
+   */
+  // Keyed on the minute rather than the second, so the announcement is re-made only when what it
+  // says has actually changed.
+  const spokenMinute = Math.round(now / 60);
+  const spokenNext = useMemo(() => {
+    const next = groups.flatMap((g) => g.arrivals).sort((a, b) => a.eta - b.eta)[0];
+    if (!next) return `No trains approaching ${name}.`;
+    const mins = Math.max(0, Math.round((next.eta - now) / 60));
+    const dest = index.stationName(next.destination);
+    const when = next.atPlatform ? "is at the platform" : mins <= 0 ? "is arriving now" : `in ${mins} minute${mins === 1 ? "" : "s"}`;
+    return `Next at ${name}: ${next.route} to ${dest} ${when}.`;
+  }, [groups, name, index, spokenMinute]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <section className="board" aria-label={`Arrivals at ${name}`}>
+      <p className="sr-only" aria-live="polite" aria-atomic="true">{spokenNext}</p>
       <header className="board-head">
         <div>
           <h2>{name}</h2>

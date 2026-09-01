@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FeedStatus, Selection, TrainPosition, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
@@ -10,6 +10,7 @@ import { TrainTimeClient } from "@/lib/client";
 import { fmtAgo, fmtClockSec } from "@/lib/format";
 import { useStoredFlag } from "@/lib/hooks";
 import { BASE_PATH, POLLER_URL } from "@/lib/basePath";
+import { reportClientFailures } from "@/lib/clientHealth";
 import Sheet from "./Sheet";
 import SearchBox from "./SearchBox";
 import StationBoard from "./StationBoard";
@@ -67,6 +68,9 @@ export default function Panel(props: Props) {
   const [legendDismissed, setLegendDismissed] = useStoredFlag("tt.legend.dismissed", false);
   const [showHistory, setShowHistory] = useState(false);
   const client = useMemo(() => new TrainTimeClient(POLLER_URL), []);
+  // Tell the poller when this browser fails, so /health can see the half of the system that does
+  // not run on our own machine.
+  useEffect(() => reportClientFailures(POLLER_URL), []);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -188,7 +192,7 @@ export default function Panel(props: Props) {
 
           {delayAlerts.length > 0 && (
             <section className="alerts-section">
-              <h3 className="section-title">Service changes · {delayAlerts.length} active</h3>
+              <h2 className="section-title">Service changes · {delayAlerts.length} active</h2>
               <AlertList index={index} alerts={delayAlerts} limit={3} />
             </section>
           )}

@@ -31,7 +31,7 @@ export default function SavedPlaces({ index, places, trains, now, onSelect }: Pr
 
   return (
     <section aria-label="Saved stations">
-      <h3 className="section-title">Saved</h3>
+      <h2 className="section-title">Saved</h2>
       <ul className="arrivals">
         {rows.map(({ place, group }) => {
           const next = group?.arrivals[0];

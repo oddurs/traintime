@@ -80,6 +80,8 @@ async function main() {
   let lastLearn: LearnOutcome | null = null;
   let lastMaintenance: { at: number; pruned: Record<string, number>; compacted: Record<string, number>; budget: { removed: number; freedBytes: number } } | null = null;
 
+  // The health closure is built before the server exists, so it reaches it through a holder.
+  const live: { server?: PollerServer } = {};
   const server = new PollerServer({
     tracker, net, timing, decoder,
     conn: () => recorder.connection,
@@ -96,6 +98,9 @@ async function main() {
         recorder: { ...recorder.counts, disk },
         context: context.status(),
         timing: { learned: timing.isLearned, model: !!timing.model, generatedAt: timing.tables?.generatedAt ?? null, events: timing.tables?.samples.events ?? 0 },
+        // What browsers say went wrong. Without this the only half of the system we could see
+        // was the half running on our own machine.
+        clients: live.server?.clientErrorReport() ?? { lastHour: 0, recent: [] },
         // Correctness the deployed system reports about itself, rather than waiting to be asked.
         invariants: (() => {
           const states = tracker.states(now);
@@ -113,6 +118,7 @@ async function main() {
     },
     flush: () => recorder.flush(),
   });
+  live.server = server;
   server.listen(PORT);
 
   const poll = async (feed: { id: string; cadence: number }) => {

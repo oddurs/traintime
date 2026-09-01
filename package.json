@@ -25,7 +25,8 @@
     "audit": "tsx scripts/audit.ts",
     "audit:replay": "tsx scripts/audit-replay.ts",
     "audit:design": "tsx scripts/audit-design.ts",
-    "evaluate:day": "tsx scripts/evaluate-windows.ts"
+    "evaluate:day": "tsx scripts/evaluate-windows.ts",
+    "audit:a11y": "node scripts/audit-a11y.mjs"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
