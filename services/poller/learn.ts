@@ -127,6 +127,28 @@ export async function learnOnce(net: NetworkIndex): Promise<LearnOutcome> {
 }
 
 /**
+ * Can this machine retrain the model at all?
+ *
+ * Probed at start-up rather than discovered at twenty past three in the morning: the trainer needs
+ * a Python and three libraries, and an image built without them would simply never improve the
+ * model again while reporting that everything was fine.
+ */
+export async function modelTrainingReady(): Promise<{ ready: boolean; detail: string }> {
+  if (process.env.MODEL_TRAINING === "off") return { ready: false, detail: "turned off" };
+  const python = process.env.PYTHON ?? "python3";
+  return new Promise((resolve) => {
+    const p = spawn(python, ["-c", "import sklearn, pandas, numpy, duckdb; print(sklearn.__version__)"], { env: process.env });
+    let out = "";
+    p.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    p.stderr.on("data", (d: Buffer) => { out += d.toString(); });
+    p.on("error", (e) => resolve({ ready: false, detail: String(e).slice(0, 120) }));
+    p.on("close", (code) => resolve(
+      code === 0 ? { ready: true, detail: `scikit-learn ${out.trim()}` } : { ready: false, detail: out.trim().slice(-120) },
+    ));
+  });
+}
+
+/**
  * Retrain the residual model, and keep it only if it wins.
  *
  * The tables have rebuilt themselves nightly for a while; the model did not — it was trained by

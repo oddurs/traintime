@@ -20,7 +20,7 @@ import { FeedMonitor } from "./health";
 import { ContextRecorder } from "./context";
 import { cleanTemp, compact, diskUsage, enforceBudget, prune } from "./retention";
 import { rollup, rollupStatus } from "./rollup";
-import { learnOnce, msUntilNightly, type LearnOutcome } from "./learn";
+import { learnOnce, modelTrainingReady, msUntilNightly, type LearnOutcome } from "./learn";
 import { checkInvariants, isFailure } from "../../src/lib/invariants";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -82,6 +82,12 @@ async function main() {
   let lastMaintenance: { at: number; pruned: Record<string, number>; compacted: Record<string, number>; budget: { removed: number; freedBytes: number }; rolled?: { days: string[]; cells: number } } | null = null;
 
   // The health closure is built before the server exists, so it reaches it through a holder.
+  let modelReady: { ready: boolean; detail: string } = { ready: false, detail: "not probed yet" };
+  void modelTrainingReady().then((r) => {
+    modelReady = r;
+    console.log(`[learn] model retraining ${r.ready ? "available" : "unavailable"}: ${r.detail}`);
+  });
+
   const live: { server?: PollerServer } = {};
   const server = new PollerServer({
     tracker, net, timing, decoder,
@@ -98,7 +104,12 @@ async function main() {
         feeds: { ...feeds, detail: monitor.snapshot(now) },
         recorder: { ...recorder.counts, disk, summarised: rollupStatus() },
         context: context.status(),
-        timing: { learned: timing.isLearned, model: !!timing.model, generatedAt: timing.tables?.generatedAt ?? null, events: timing.tables?.samples.events ?? 0 },
+        timing: {
+          learned: timing.isLearned, model: !!timing.model,
+          generatedAt: timing.tables?.generatedAt ?? null, events: timing.tables?.samples.events ?? 0,
+          // Whether tonight's retrain can actually happen, known now rather than at 03:20.
+          canRetrain: modelReady,
+        },
         // What browsers say went wrong. Without this the only half of the system we could see
         // was the half running on our own machine.
         clients: live.server?.clientErrorReport() ?? { lastHour: 0, recent: [] },
