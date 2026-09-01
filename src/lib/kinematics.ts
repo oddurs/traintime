@@ -108,7 +108,7 @@ export class Kinematics {
         let t = Math.max(from, now - 1200);
         while (t < now) {
           const h = Math.min(1, now - t);
-          this.integrate(fresh, this.control(fresh, st, t, undefined), h);
+          this.integrate(fresh, this.control(fresh, st, t, h), h);
           t += h;
         }
       }
@@ -118,7 +118,7 @@ export class Kinematics {
 
     const leader = st.leaderId ? byId.get(st.leaderId) : undefined;
     const leaderBody = leader ? this.bodies.get(leader.id) : undefined;
-    const target = this.control(body, st, now, leader && leaderBody ? { state: leader, body: leaderBody } : undefined);
+    const target = this.control(body, st, now, dt, leader && leaderBody ? { state: leader, body: leaderBody } : undefined);
     this.integrate(body, target, dt);
     this.applyApproachFix(body, st, dt);
     this.steer(body, dt);
@@ -131,10 +131,19 @@ export class Kinematics {
   }
 
   /** Target speed for this instant. */
-  private control(b: Body, st: TrainState, now: number, leader?: { state: TrainState; body: Body }): number {
+  private control(b: Body, st: TrainState, now: number, dt: number, leader?: { state: TrainState; body: Body }): number {
     const { brake } = this.opts;
-    const d = Math.max(0, b.L - b.s);
-    if (d <= 0.5) return 0;
+    /*
+     * The distance left, as it will be once this step has been taken.
+     *
+     * Braking against the distance at the *start* of a step starts the brake one step late, and
+     * because deceleration is capped the train can never make the time back: it arrived at the
+     * platform still doing 8.8 m/s and was snapped to a stand. Looking one step ahead is the
+     * whole fix, and it is only visible if you assert that a train's speed is one it could
+     * actually stop from.
+     */
+    const d = Math.max(0, b.L - b.s - b.v * dt);
+    if (b.L - b.s <= 0.5) return 0;
     const tau = st.eta - now;
     let u: number;
     if (tau <= 0) u = b.vMax;
