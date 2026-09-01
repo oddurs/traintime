@@ -1,5 +1,28 @@
 # Sprint plan — the weaknesses, measured
 
+> **Outcome (1 September 2026).** All five are done. Three of the five started from a premise that
+> turned out to be wrong, which is the argument for measuring first rather than planning from a
+> list of things that sound like good practice:
+>
+> - **M** blamed the kinematics for a slow evaluator. It was `adjustEta`, at 73%, building per-stop
+>   board times that neither the evaluator nor the motion simulation ever reads. **48.6 s → 7.2 s**
+>   on the same window, identical results; four windows of a day now score in 3.5 minutes. That
+>   immediately exposed overnight — 124 s of error at the far horizon against 60–72 s in the peaks,
+>   and 57% coverage against a 68% target — so σ is now measured per daypart. Coverage moved in
+>   every window; three of four now meet the target.
+> - **T** found a real defect while trying to write a test with teeth. The first two sets of motion
+>   tests passed with the braking curve deleted. The third catches all five deliberate breaks — and
+>   revealed that the controller braked against the distance at the *start* of a step, so trains
+>   arrived at the platform doing 8.8 m/s and were snapped to a stand. They berth at 1.6 m/s now.
+> - **A** shipped a live region (the countdown was announced once and never again), fixed a heading
+>   skip, and gave browsers a way to report failures to `/health`. One "defect" the probe found was
+>   a false positive and was left alone.
+> - **W** blamed a 936 KB map chunk. It is not on the critical path at all. The blockers were an
+>   82 KB alert feed competing for the link and a network file that is two thirds map geometry a
+>   board never touches. Live, on slow 4G: **419 KB / 13.6 s → 262 KB / 9.8 s**.
+> - **R** closed the tracking rule's blind spot and stopped the map vouching for trains the feed
+>   has gone quiet on. The 22 orientation conflicts are left, deliberately, with the reason stated.
+
 Every item below came from probing the running system on 1 September 2026, not from a list of
 things that sound like good practice. Where I guessed and was wrong, that is recorded too.
 
