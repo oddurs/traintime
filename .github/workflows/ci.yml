@@ -1,9 +1,10 @@
 name: CI
 
+# Every push, main included. This used to skip main because the Pages workflow checked it on the
+# way to publishing; that workflow is gone with Pages, and for a while nothing checked main at all.
 on:
   pull_request:
   push:
-    branches-ignore: [main]
 
 jobs:
   check:
