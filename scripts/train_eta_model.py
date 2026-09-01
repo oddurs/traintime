@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REC = ROOT / "data" / "rec"
 NY = ZoneInfo("America/New_York")
 HORIZONS = [45, 120, 300, 900]
-FEATURES = ["horizon", "hour", "dow", "route", "segment", "direction", "table_median", "table_sigma", "run_p50", "elapsed", "elapsed_frac"]
+FEATURES = ["horizon", "hour", "dow", "route", "segment", "direction", "table_median", "table_sigma", "run_p50", "elapsed", "elapsed_frac", "not_started"]
 
 
 def bucket(h):
@@ -68,6 +68,9 @@ def main():
     df["run_p50"] = df["segment"].map(lambda s: run_tab.get(s, {}).get("p50", np.nan) if s else np.nan)
     df["elapsed"] = np.where(df["departed_at"].notna(), df["obs_ts"] - df["departed_at"], np.nan)
     df["elapsed_frac"] = df["elapsed"] / df["run_p50"]
+    # A train that has not left its terminal is placed by schedule alone, and the schedule pads
+    # terminal departures heavily; its errors are several times larger and of a different shape.
+    df["not_started"] = df["prev_stop"].isna().astype(float)
 
     # Time-based split: the last quarter of observations is the holdout.
     df = df.sort_values("obs_ts").reset_index(drop=True)
@@ -79,12 +82,16 @@ def main():
         med = g.median()
         return pd.Series({"median": med, "sigma": (g - med).abs().quantile(0.68), "n": len(g)})
     seg_tab = train.dropna(subset=["segment"]).groupby(["segment", "bucket"])["residual"].apply(med_sig).unstack()
+    orig_tab = train[train["segment"].isna()].groupby(["stop_id", "bucket"])["residual"].apply(med_sig).unstack()
     route_tab = train.groupby(["route", "bucket"])["residual"].apply(med_sig).unstack()
     all_tab = train.groupby("bucket")["residual"].apply(med_sig).unstack()
     MIN = 8
 
     def lookup(row):
-        for tab, key in ((seg_tab, (row.segment, row.bucket)), (route_tab, (row.route, row.bucket)), (all_tab, row.bucket)):
+        # Same chain as src/lib/timing.ts: a running train backs off along its segment, one
+        # still at its terminal along that terminal.
+        first = (seg_tab, (row.segment, row.bucket)) if row.segment is not None else (orig_tab, (row.stop_id, row.bucket))
+        for tab, key in (first, (route_tab, (row.route, row.bucket)), (all_tab, row.bucket)):
             try:
                 r = tab.loc[key]
             except KeyError:

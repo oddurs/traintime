@@ -14,6 +14,12 @@ export interface KinematicsOptions {
   platformHold: number;
 }
 
+/**
+ * How fast the marker may close on a position the feed measured, in m/s. Bounded so that acting
+ * on a measurement is a correction the eye can follow rather than a teleport.
+ */
+const APPROACH_CATCH_UP = 12;
+
 const DEFAULTS: KinematicsOptions = { accel: 1.0, brake: 1.2, vMaxAbs: 27, gap: 180, platformHold: 120 };
 
 interface Body {
@@ -24,6 +30,8 @@ interface Body {
   s: number;
   v: number;
   motion: Motion;
+  /** Extra closing speed currently being applied to reach a measured position, in m/s. */
+  catchUp?: number;
   /** Smoothed compass heading, so the marker sweeps through curves instead of snapping. */
   heading: number;
 }
@@ -112,6 +120,7 @@ export class Kinematics {
     const leaderBody = leader ? this.bodies.get(leader.id) : undefined;
     const target = this.control(body, st, now, leader && leaderBody ? { state: leader, body: leaderBody } : undefined);
     this.integrate(body, target, dt);
+    this.applyApproachFix(body, st, dt);
     this.steer(body, dt);
     return this.emit(st, body, now);
   }
@@ -142,6 +151,45 @@ export class Kinematics {
       if (free !== undefined) target = Math.min(target, Math.sqrt(2 * brake * Math.max(0, free)));
     }
     return target;
+  }
+
+  /**
+   * The one moment the feed tells us where a train is between two stations.
+   *
+   * When a vehicle reports INCOMING_AT, it has entered its final approach — on the numbered
+   * lines that arrives for 90-97% of stops, a median 13 s before the train berths, and it is the
+   * only position measurement in the entire feed. Everything else here is inference from
+   * predicted times. So the marker is pulled onto the braking curve that ends at the platform in
+   * the time this platform's approach usually takes.
+   *
+   * The correction only ever moves a train forward. If the marker is already past where the
+   * measurement says it is, the honest response is to stop and let reality catch up rather than
+   * to slide backwards, which no train does.
+   */
+  private applyApproachFix(b: Body, st: TrainState, dt: number) {
+    const a = st.approach;
+    if (!a || b.L === 0 || process.env.APPROACH_FIX === "0") { b.catchUp = 0; return; }
+    // Where a train braking to a stand in this platform's typical approach time would have been
+    // when its approach began. Computed from `typical` alone, so it is a fixed point on the
+    // segment rather than a target that slides onto the platform as the approach elapses — that
+    // earlier shape delivered the marker to the platform early whenever the real approach ran
+    // long, which is often: approach times spread from 5 s to 23 s around a 13 s median, and it
+    // took the share of markers arriving early from 16% to 45%.
+    const dist = Math.min(b.L * 0.5, 0.5 * this.opts.brake * a.typical * a.typical);
+    const floor = b.L - dist;
+    // Forward only, and never the whole way in: the measurement says "at least this far along",
+    // and it is the arrival event, not this, that berths a train.
+    //
+    // The closing speed is bounded twice over, because a correction that is right about the
+    // position and wrong about the physics still reads as a glitch. It may not take the marker
+    // past the line's own top speed, and it ramps in and out under an acceleration limit, so a
+    // measurement lands as a train hurrying rather than as a train teleporting. Left unbounded
+    // it drew 39 m/s and 17 m/s² — 140 km/h, on a system whose trains do 89.
+    const want = b.s < floor ? Math.min(APPROACH_CATCH_UP, Math.max(0, b.vMax - b.v)) : 0;
+    const slew = this.opts.accel * 2 * dt;
+    const prev = b.catchUp ?? 0;
+    b.catchUp = want > prev ? Math.min(want, prev + slew) : Math.max(want, prev - slew);
+    if (b.catchUp > 0 && b.s < floor) b.s = Math.min(floor, b.s + b.catchUp * dt);
   }
 
   /**

@@ -98,7 +98,11 @@ export class Timing {
   private residual(prev: string | undefined, next: string, route: string, bucket: string): ResidualStat | undefined {
     const r = this.tables?.residual;
     if (!r) return undefined;
-    const keys = [prev ? `seg:${prev}>${next}|${bucket}` : "", `route:${route}|${bucket}`, `all|${bucket}`];
+    // Most specific level that has enough evidence wins. A train still sitting at its terminal
+    // gets that terminal's own correction, because schedule padding is a property of the terminal.
+    const keys = prev
+      ? [`seg:${prev}>${next}|${bucket}`, `route:${route}|${bucket}`, `all|${bucket}`]
+      : [`orig:${next}|${bucket}`, `route:${route}|${bucket}`, `all|${bucket}`];
     for (const k of keys) {
       const s = k ? r[k] : undefined;
       if (s && s.n >= MIN_SAMPLES) return s;
@@ -172,6 +176,8 @@ export class Timing {
         run_p50: rt,
         elapsed,
         elapsed_frac: Number.isFinite(rt) && Number.isFinite(elapsed) ? elapsed / rt : NaN,
+        // Whether the run has begun at all. The single strongest split at the far horizon.
+        not_started: c.prev === undefined ? 1 : 0,
       };
       const x = this.model.features.map((f) => feats[f] ?? NaN);
       delta = gbmPredict(this.model, x);

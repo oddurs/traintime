@@ -134,6 +134,12 @@ export interface TrainState {
   heldBehind?: boolean;
   /** The feed still publishes it, but nothing about it has changed for far too long. */
   stale?: boolean;
+  /**
+   * The one observation the feed ever gives us from between two stations: the moment a train
+   * entered its final approach, and how long that approach usually takes at this platform.
+   * Everything else about a position is inferred; this is measured.
+   */
+  approach?: { since: number; typical: number };
   /** Typical run time for the current segment, seconds (learned → scheduled → geometric). */
   runTime?: number;
   stops: StopPrediction[];

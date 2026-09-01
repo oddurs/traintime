@@ -29,22 +29,37 @@ first seen mid-segment.
 - `STOPPED_AT X` with `timestamp` = arrival at X, constant for the whole dwell.
 - `IN_TRANSIT_TO Y` / `INCOMING_AT Y` with the timestamp advancing every ~10 s while moving. The
   first in-transit timestamp is within one refresh of the departure. `INCOMING_AT` precedes
-  arrival by ~11–18 s (learnable per station).
+  arrival by ~11–18 s (learnable per station). This is the **only observation of a train between
+  two platforms the feeds ever produce** — everything else about an intermediate position is
+  inference — and it is plentiful where it appears: 90–97% of arrivals on the 1, 2, 4, 6 and 7
+  carry one, against ~1% on the lettered lines, 77,124 in all against 193,952 arrivals. The
+  approach it marks takes a median 13 s (p16 5 s, p84 23 s across 376 stops) and accounts for
+  **36% of the whole run**, cruise being a median 31 s and approach 18 s.
 - The trip update's "arrival" time for the stop the train is *currently at* is its **expected
   departure**, not its arrival — the feed does not model dwell separately. Our observed arrivals
   are ~32 s earlier than that prediction with a spread of only ~4 s.
 
 **Heartbeat feeds — the lettered lines.** The vehicle record stays `STOPPED_AT X` from arrival at
-X until arrival at Y. While it is stopped, the timestamp keeps advancing (~every 10–25 s) and the
-trip update's "arrival" for X advances with it: this is the MTA's own *expected departure* being
-pushed forward, not a presence signal. When the train leaves, the timestamp keeps being pushed
-for a while (median: until 26 s before the next arrival, 0.41× the scheduled run) and then
-freezes; the trip update drops X ~40 s after the last push. Consequences:
+X until arrival at Y. While it is stopped the timestamp keeps advancing, and the trip update's
+"arrival" for X advances with it. The trip update drops X some ~40 s after the last push.
 
 - **Arrivals are exact** (first timestamp of a new `STOPPED_AT`).
-- **Departures are unobservable.** Neither the heartbeat freeze nor the trip-update drop marks
-  the departure. traintime models departure as arrival + typical dwell (learned from the transit
-  feeds) and confirms "definitely gone" from the trip update.
+- **Departures are observable after all — the heartbeat freeze marks them.** This corrects an
+  earlier reading in this document, which held that neither the freeze nor the trip-update drop
+  located the departure and modelled it as arrival + typical dwell instead.
+
+  The advance is a metronome, not a drift: measured over 28,144 advances on `gtfs-ace`, the gap
+  between them is **16 s at the 50th, 90th, 97th and 99th percentiles alike**. It stops dead when
+  the train pulls out. So the value it froze at is a real feed timestamp for a real departure, and
+  a silence longer than 45 s (the cadence plus feed latency, with margin) is an unambiguous
+  "gone".
+
+  Tested the only way that settles it: a better departure estimate must make the run times it
+  implies more *consistent*, since the true run time over a given stretch of track barely varies.
+  Across 23,393 completed runs over 850 stretches, the spread of implied run time falls from
+  **30 s to 17 s**, and the frozen beat is tighter on 488 of the 609 stretches where both could be
+  scored. It is now the departure the tracker uses and records, which is also what finally gives
+  the lettered lines observed dwell.
 - The MTA's ETA for the next stop drifts later while it is blind, which is where most of its
   −18 to −25 s arrival bias at 1–5 minute horizons comes from. That bias is stable and learnable.
 - `IN_TRANSIT_TO` does appear on these feeds, but its timestamp is a *predicted* arrival (it can

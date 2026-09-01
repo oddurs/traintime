@@ -224,3 +224,92 @@ test("a train turning around at a terminal is one train, not two", () => {
   const drawn = tracker.states(now + 60).filter((s) => s.trainId === identity);
   assert.equal(drawn.length, 1, `a turnaround is one train — drew ${drawn.map((d) => d.id).join(" + ")}`);
 });
+
+/**
+ * The B division never reports a departure. It parks a vehicle at STOPPED_AT for the whole run
+ * and pushes its timestamp forward every 16 s; that beat freezing is the departure. These two
+ * tests pin both halves, because getting either wrong moves trains that are standing at a
+ * platform or strands trains that left a minute ago.
+ */
+function letteredTrain(stop: string, vts: number, stops: TrainUpdate["stops"]): TrainUpdate {
+  return {
+    id: "A_TEST", route: "A", direction: "S", assigned: true,
+    vehicle: { stopId: stop, status: "STOPPED_AT", timestamp: vts },
+    stops,
+  };
+}
+
+test("a running heartbeat never pins a lettered train to the platform", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  const plan = [
+    { id: "A15S", arrival: now, departure: now },
+    { id: "A16S", arrival: now + 200, departure: now + 200 },
+  ];
+  tracker.ingest(at(now, [letteredTrain("A15S", now, plan)]));
+  let t = now;
+  for (let i = 0; i < 25; i++) { t += 16; tracker.ingest(at(t, [letteredTrain("A15S", t - 8, plan)])); }
+  const s = tracker.snapshot(t).trains.find((x) => x.id === "A_TEST")!;
+  // Confirming a freeze takes 45 s, so the beat is never allowed to delay a departure — waiting
+  // on it put the marker 470 m short of the platform against 185 m when measured.
+  assert.equal(s.phase, "moving", "the modelled dwell decides when the marker starts moving");
+  assert.ok(s.departedAt! <= now + 400, "and it is not held on the beat's account");
+});
+
+test("a heartbeat that froze early departs the train early", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  const plan = [
+    { id: "A15S", arrival: now, departure: now },
+    { id: "A16S", arrival: now + 600, departure: now + 600 },
+  ];
+  tracker.ingest(at(now, [letteredTrain("A15S", now, plan)]));
+  // Two beats, then silence: this train left after 32 s, well inside any modelled dwell.
+  let t = now, frozen = now;
+  for (let i = 0; i < 2; i++) { t += 16; frozen = t; tracker.ingest(at(t, [letteredTrain("A15S", frozen, plan)])); }
+  for (let i = 0; i < 5; i++) { t += 16; tracker.ingest(at(t, [letteredTrain("A15S", frozen, plan)])); }
+  const s = tracker.snapshot(t).trains.find((x) => x.id === "A_TEST")!;
+  assert.equal(s.phase, "moving");
+  assert.equal(s.departedAt, frozen, "the beat may always move a departure earlier");
+});
+
+test("the final approach places a train near the platform, and never behind itself", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  const plan = [
+    { id: "120S", arrival: now + 40, departure: now + 40 },
+    { id: "121S", arrival: now + 130, departure: now + 130 },
+  ];
+  const t = (over: Partial<TrainUpdate["vehicle"]>) => oneTrain(now, {
+    id: "1_APPROACH", vehicle: { stopId: "119S", status: "STOPPED_AT", timestamp: now - 60, ...over },
+    stops: plan,
+  });
+  tracker.ingest(at(now - 60, [t({})]));
+  tracker.ingest(at(now - 20, [t({ stopId: "120S", status: "IN_TRANSIT_TO", timestamp: now - 20 })]));
+  const before = tracker.snapshot(now - 20).trains.find((x) => x.id === "1_APPROACH")!;
+  assert.equal(before.approach, undefined, "no approach reported yet");
+  tracker.ingest(at(now, [t({ stopId: "120S", status: "INCOMING_AT", timestamp: now })]));
+  const after = tracker.snapshot(now).trains.find((x) => x.id === "1_APPROACH")!;
+  assert.ok(after.approach, "INCOMING_AT is the one position the feed ever gives us");
+  assert.equal(after.approach!.since, now);
+  assert.ok(after.approach!.typical > 0 && after.approach!.typical < 120, "a plausible approach time");
+});
+
+test("a lettered train's frozen heartbeat is recorded as a real departure event", () => {
+  const now = 1_788_000_000;
+  const tracker = fresh();
+  const plan = (a: string, b: string) => [
+    { id: a, arrival: now, departure: now },
+    { id: b, arrival: now + 200, departure: now + 200 },
+  ];
+  tracker.ingest(at(now, [letteredTrain("A15S", now, plan("A15S", "A16S"))]));
+  let t = now, frozen = now;
+  for (let i = 0; i < 4; i++) { t += 16; frozen = t - 8; tracker.ingest(at(t, [letteredTrain("A15S", frozen, plan("A15S", "A16S"))])); }
+  // It reappears at the next stop, still STOPPED_AT — the transition the B division always makes.
+  t += 60;
+  const ev = tracker.ingest(at(t, [letteredTrain("A16S", t, plan("A16S", "A17S"))]));
+  const dep = ev.events.find((e) => e.kind === "depart" && e.stopId === "A15S");
+  assert.ok(dep, "the frozen beat is the departure, and the only one this feed will ever give");
+  assert.equal(dep!.ts, frozen);
+  assert.equal(dep!.estimated, false, "it is a real feed timestamp, so the learner may use it");
+});

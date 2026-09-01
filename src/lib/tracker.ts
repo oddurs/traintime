@@ -45,6 +45,8 @@ interface Memory {
   arrivedAt?: number;
   /** Arrival time at prevStop, for estimating an unobserved departure. */
   prevArrivedAt?: number;
+  /** When the vehicle last reported entering its final approach, and to which stop. */
+  incomingAt?: { stop: string; ts: number };
   /** Times the vehicle timestamp advanced while STOPPED_AT at the current stop. */
   beats: number;
   inferredPrev?: string;
@@ -73,6 +75,13 @@ const ETA_OBS_STOPS = 3;
  * contradicts reality while still catching predictions that are physically impossible.
  */
 const CLEARANCE_S = 40;
+/**
+ * How long the B division's 16-second heartbeat must go quiet before we conclude the train has
+ * left. Generous against the beat's own cadence plus feed latency, because calling a departure
+ * early puts a train on track it has not reached.
+ */
+const HEARTBEAT_SILENCE_S = 45;
+
 /**
  * When to stop believing in a train. The test is whether it is making progress, not whether its
  * record is changing: a train with a stable prediction and no vehicle updates looks frozen while
@@ -159,8 +168,21 @@ export class Tracker {
           const tsChanged = v.timestamp !== undefined && v.timestamp !== m.vehicleTs;
           const observed = tsChanged && v.status !== "STOPPED_AT" && m.beats === 0;
           if (m.status === "STOPPED_AT" && !observed) {
-            m.departedAt = undefined;
-            m.departedEstimated = true;
+            // The B division never reports a departure — but its heartbeat does. The vehicle
+            // timestamp is pushed forward every 16 s while a train stands at the platform and
+            // freezes the moment it pulls out, so the frozen value is a genuine feed timestamp
+            // for a genuine departure. Without it the lettered lines contribute no observed
+            // dwell and no observed run times at all: 76,571 departures against 197,902
+            // arrivals, and every one of the missing ones from a feed that behaves this way.
+            const beat = m.vehicleTs;
+            if (this.beating(m) && beat !== undefined && m.arrivedAt !== undefined && beat > m.arrivedAt) {
+              events.push({ ...base, ts: beat, stopId: m.stopId, kind: "depart", track: this.trackOf(m.u, m.stopId), estimated: false });
+              m.departedAt = beat;
+              m.departedEstimated = false;
+            } else {
+              m.departedAt = undefined;
+              m.departedEstimated = true;
+            }
           } else {
             const kind: EventKind = m.status === "STOPPED_AT" ? "depart" : "pass";
             const depTs = tsChanged ? v.timestamp! : tick.ts;
@@ -171,6 +193,7 @@ export class Tracker {
           m.prevStop = m.stopId;
           m.prevArrivedAt = m.arrivedAt;
           m.arrivedAt = undefined;
+          m.incomingAt = undefined;
           m.inferredPrev = undefined;
           m.beats = 0;
         }
@@ -190,6 +213,7 @@ export class Tracker {
           m.beats = 0;
         } else if (v.status === "INCOMING_AT" && v.stopId) {
           events.push({ ...base, ts, stopId: v.stopId, kind: "incoming", track: this.trackOf(u, v.stopId), estimated: v.timestamp === undefined });
+          m.incomingAt = { stop: v.stopId, ts };
         }
         m.status = v.status;
         m.stopId = v.stopId;
@@ -235,6 +259,21 @@ export class Tracker {
     if (m.biasN === 0 || process.env.TRIP_BIAS === "0") return 0;
     const shrunk = m.bias * (m.biasN / (m.biasN + 1.5));
     return Math.max(-120, Math.min(120, shrunk));
+  }
+
+  /**
+   * Whether this train's vehicle timestamp is a heartbeat we can read a departure out of: the
+   * feed has to behave that way as a whole, and this train has to have actually beaten.
+   */
+  private beating(m: Memory): boolean {
+    return m.beats > 0 && (this.isHeartbeatFeed(m.feed) || m.beats >= 2);
+  }
+
+  /** The approach observation, but only while it refers to the stop the train is heading for. */
+  private approachOf(m: Memory, nextStop: string): TrainState["approach"] {
+    const inc = m.incomingAt;
+    if (!inc || parentOf(inc.stop) !== parentOf(nextStop)) return undefined;
+    return { since: inc.ts, typical: this.timing.approach(nextStop) };
   }
 
   private trackOf(u: TrainUpdate, stopId: string): string | undefined {
@@ -309,6 +348,20 @@ export class Tracker {
       const heartbeat = m.beats > 0 || this.isHeartbeatFeed(m.feed);
       const dwellOf = this.timing.dwell(at, hour, cond);
       let departAt = heartbeat ? arrivedAt + dwellOf : Infinity;
+      // The B division's heartbeat locates a departure exactly — the timestamp advances on a
+      // 16-second metronome while a train stands at the platform and freezes when it pulls out —
+      // but it cannot be used to decide whether a train has left *yet*. Confirming a freeze takes
+      // 45 s, and holding the marker at the platform for that long is far worse than departing it
+      // on a modelled dwell: measured over the same window it moved the marker from a median
+      // 185 m short of the platform at the moment of real arrival to 470 m short.
+      //
+      // So the beat is only ever allowed to move a departure *earlier*. Its exact value is still
+      // recorded as the departure event (see ingest), where being 45 s late to know costs nothing
+      // and the accuracy is worth everything: it is what finally gives the lettered lines
+      // observed dwells and run times to learn the modelled dwell from.
+      if (this.beating(m) && m.vehicleTs !== undefined && now - m.vehicleTs > HEARTBEAT_SILENCE_S) {
+        departAt = Math.min(departAt, Math.max(m.vehicleTs, arrivedAt));
+      }
       if (heartbeat && !u.stops.some((s) => parentOf(s.id) === parentOf(at))) departAt = Math.min(departAt, now);
       if (now >= departAt && next && this.net.station(next.id)) {
         const { eta, sigma } = this.timing.adjustEta({ raw: next.arrival, now, route: u.route, prev: at, next: next.id, departedAt: departAt, hour, dow });
@@ -360,6 +413,7 @@ export class Tracker {
       ...base, phase: "moving", prevStop: prev, departedAt, departedEstimated, prevInferred: inferred,
       nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
       runTime: prev ? this.timing.runTime(prev, next.id, hour, u.route, cond) : undefined,
+      approach: this.approachOf(m, next.id),
       stops: this.predictions(u, now, hour, dow, prev, nextIdx),
     };
   }

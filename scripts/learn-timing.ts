@@ -204,6 +204,13 @@ async function main() {
   const bucket = (o: (typeof clean)[number]) => horizonBucket(o.predicted - o.obs_ts);
   const residual: Record<string, ResidualStat> = {};
   for (const [k, v] of Object.entries(group(clean, (o) => (o.prev_stop ? `seg:${o.prev_stop}>${o.stop_id}|${bucket(o)}` : undefined), resid))) residual[k] = residualStat(v);
+  // A train that has not left its terminal is a different animal from one already running: it is
+  // placed by schedule alone, and the schedule pads terminal departures heavily. Measured over a
+  // day, those predictions land a median 106 s late at the far horizon against 37 s for running
+  // trains, and the padding differs sharply by terminal (178-409 s). Without a level of its own
+  // they are averaged in with running trains at the coarse `route`/`all` levels, which is why the
+  // far horizon is the one place the app still loses to the MTA.
+  for (const [k, v] of Object.entries(group(clean, (o) => (o.prev_stop ? undefined : `orig:${o.stop_id}|${bucket(o)}`), resid))) residual[k] = residualStat(v);
   for (const [k, v] of Object.entries(group(clean, (o) => `route:${o.route}|${bucket(o)}`, resid))) residual[k] = residualStat(v);
   for (const [k, v] of Object.entries(group(clean, (o) => `all|${bucket(o)}`, resid))) residual[k] = residualStat(v);
 
