@@ -738,6 +738,21 @@ async function main() {
   };
   mkdirSync(join(ROOT, "public", "data"), { recursive: true });
   writeFileSync(OUT, JSON.stringify(out));
+
+  /*
+   * A second, smaller file with the map's geometry left out.
+   *
+   * A board needs station names, the routes that serve them and the complexes they belong to. It
+   * does not need a single polyline. Those polylines and the band layout derived from them are
+   * about two thirds of the file, and on a slow connection the whole thing sat on the critical
+   * path — the countdown a rider opened the app for waited behind the geometry of a map they had
+   * not looked at yet. The map fetches the full file when it mounts, which is after the board.
+   */
+  const GEOMETRY_ONLY = ["segments", "segmentSlots", "bandParts", "laneEnds", "segDir", "routeRuns"] as const;
+  const lite = Object.fromEntries(Object.entries(out).filter(([k]) => !(GEOMETRY_ONLY as readonly string[]).includes(k)));
+  const liteOut = join(ROOT, "public", "data", "network-lite.json");
+  writeFileSync(liteOut, JSON.stringify(lite));
+  console.log(`  network-lite.json ${Math.round(readFileSync(liteOut).length / 1024)} KB (board only; the map fetches the full file)`);
   const kb = Math.round(readFileSync(OUT).length / 1024);
   console.log(
     `Wrote ${OUT} (${kb} KB): ${Object.keys(routes).length} routes, ${Object.keys(stations).length} stations, ` +

@@ -17,6 +17,26 @@ import type { View } from "@/components/TrainMap";
 
 const TrainMap = dynamic(() => import("@/components/TrainMap"), { ssr: false });
 
+/**
+ * Hold the map back until the panel has painted.
+ *
+ * The map engine is 936 KB — three quarters of everything the app downloads — and although it is
+ * already code-split, rendering it on the first pass puts its request in the same queue as the
+ * ones the panel needs. Measured cold on a slow connection, nothing a rider could read appeared
+ * for 32 seconds. Waiting a frame costs nothing anyone can perceive and lets the board come first,
+ * which is the thing somebody standing on a platform actually opened the app for.
+ */
+function useDeferredMap(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const w = window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+    if (w.requestIdleCallback) { const h = w.requestIdleCallback(() => setReady(true), { timeout: 1500 }); return () => cancelIdleCallback(h); }
+    const h = setTimeout(() => setReady(true), 120);
+    return () => clearTimeout(h);
+  }, []);
+  return ready;
+}
+
 const ALERTS_EVERY = 120_000;
 
 function App({ index }: { index: NetworkIndex | null }) {
@@ -59,14 +79,23 @@ function App({ index }: { index: NetworkIndex | null }) {
 
   const byId = useMemo(() => new Map(trains.map((t) => [t.id, t])), [trains]);
 
-  // Service alerts, refreshed slowly — they change on the order of minutes.
+  /*
+   * Service alerts, refreshed slowly — they change on the order of minutes.
+   *
+   * Held back until the network index has arrived. The alert feed is 82 KB and the index is what
+   * every board is drawn from; on a slow connection the two were competing for the same link and
+   * the countdown a rider opened the app for was waiting behind a list of planned weekend
+   * closures. Measured cold on a slow 4G connection, that was 13.6 seconds before anything
+   * readable appeared.
+   */
   useEffect(() => {
+    if (!index) return;
     const ctl = new AbortController();
     const load = () => fetchAlerts(ctl.signal).then(setAlerts).catch(() => {});
     load();
     const id = setInterval(load, ALERTS_EVERY);
     return () => { ctl.abort(); clearInterval(id); };
-  }, []);
+  }, [index]);
 
   // Every view is a link.
   useEffect(() => {
@@ -183,10 +212,25 @@ function App({ index }: { index: NetworkIndex | null }) {
     return ids;
   }, [selection, trains]);
 
+  const mapReady = useDeferredMap();
+  /*
+   * The map's half: the geometry, fetched once the board is up. Two thirds of the network file is
+   * polylines and the band layout derived from them, and none of it is needed to tell somebody
+   * when their train is coming.
+   */
+  const [mapIndex, setMapIndex] = useState<NetworkIndex | null>(null);
+  useEffect(() => {
+    if (!mapReady || mapIndex) return;
+    fetch(asset("/data/network.json"))
+      .then((r) => r.json())
+      .then((n: Network) => setMapIndex(new NetworkIndex(n)))
+      .catch(() => {});
+  }, [mapReady, mapIndex]);
+
   return (
     <main className="app">
-      <TrainMap
-        index={index}
+      {mapIndex && <TrainMap
+        index={mapIndex}
         statesRef={statesRef}
         positionsRef={positionsRef}
         clock={clock}
@@ -202,7 +246,7 @@ function App({ index }: { index: NetworkIndex | null }) {
         fitRoute={fitRoute}
         onView={setView}
         reducedMotion={reducedMotion}
-      />
+      />}
       {index && (
         <Panel
           index={index} trains={trains} byId={byId} positionsRef={positionsRef} feeds={feeds}
@@ -225,8 +269,9 @@ function App({ index }: { index: NetworkIndex | null }) {
 export default function Home() {
   const [index, setIndex] = useState<NetworkIndex | null>(null);
 
+  // The board's half of the network: names, routes and complexes, without a single polyline.
   useEffect(() => {
-    fetch(asset("/data/network.json"))
+    fetch(asset("/data/network-lite.json"))
       .then((r) => r.json())
       .then((n: Network) => setIndex(new NetworkIndex(n)))
       .catch(() => {});
