@@ -165,7 +165,10 @@ async function main() {
     }
     if (ingested) {
       tracker.expire(t);
-      states = tracker.states(t);
+      // The board's per-stop times are the tracker's most expensive work and nothing here reads
+      // them: the scoring uses the next-stop eta and the motion uses prev/next. Skipping them is
+      // what makes replaying a whole day possible.
+      states = tracker.states(t, { predictions: false });
       if (t >= scoreFrom) {
         for (const st of states) {
           if (st.phase !== "moving") continue;

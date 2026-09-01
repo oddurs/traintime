@@ -1,4 +1,5 @@
 import type { GbmModel, ResidualStat, Stat, TimingTables } from "./types";
+import { daypart } from "./calendar";
 import { gbmCode, gbmPredict } from "./gbm";
 import { NetworkIndex, parentOf } from "./network";
 import { estimate, type Hierarchy } from "./hierarchy";
@@ -183,7 +184,9 @@ export class Timing {
       delta = gbmPredict(this.model, x);
       // The tables' spread describes their own estimate, not the model's; use the model's own
       // measured error so stated confidence matches observed coverage.
-      const modelSigma = this.model.sigmaByBucket?.[bucket];
+      // Night and rush hour do not deserve the same stated confidence.
+      const dp = daypart(c.hour, c.dow === 0 || c.dow === 6);
+      const modelSigma = this.model.sigmaByBucketDaypart?.[`${bucket}|${dp}`] ?? this.model.sigmaByBucket?.[bucket];
       if (modelSigma !== undefined) return { eta: Math.max(c.raw + delta + (c.bias ?? 0), c.now), sigma: Math.max(8, modelSigma) };
     }
     // Never predict an arrival in the past by adjustment alone.

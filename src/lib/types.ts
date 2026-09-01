@@ -262,6 +262,14 @@ export interface GbmModel {
   metrics?: Record<string, number>;
   /** Held-out 1σ of the model's own error, per horizon bucket — the honest spread to publish. */
   sigmaByBucket?: Record<string, number>;
+  /**
+   * The model's own held-out spread per horizon *and* daypart, keyed "h2|owl".
+   *
+   * One spread for the whole day is too narrow at night and too wide at rush hour: scored window
+   * by window, overnight covered 57% of arrivals inside 1σ against a 68% target while the peaks
+   * sat at 67%. Confidence has to be honest in every part of the day, not on average.
+   */
+  sigmaByBucketDaypart?: Record<string, number>;
 }
 
 export interface GbmTree {

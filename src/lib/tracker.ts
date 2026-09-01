@@ -295,12 +295,21 @@ export class Tracker {
   }
 
   /** Full state of every tracked train at `now`. */
-  states(now: number): TrainState[] {
+  /**
+   * Every train, as of `now`.
+   *
+   * `predictions` builds the per-stop times a board reads. It is the most expensive thing the
+   * tracker does — a dozen corrections per train per tick, each running the residual model — and
+   * neither the motion simulation nor the evaluator ever looks at them. Turning it off is what
+   * makes replaying a day tractable: it was 73% of the evaluator's runtime.
+   */
+  states(now: number, opts: { predictions?: boolean } = {}): TrainState[] {
+    const withStops = opts.predictions !== false;
     const { hour, dow } = nyHourDow(now);
     const cond = conditionsAt(now, this.timing.weather);
     const seen: { st: TrainState; lastSeen: number }[] = [];
     for (const m of this.mem.values()) {
-      const st = this.stateOf(m, now, hour, dow, cond);
+      const st = this.stateOf(m, now, hour, dow, cond, withStops);
       if (st) seen.push({ st, lastSeen: m.lastSeen });
     }
     const out = this.dedupeByTrain(seen);
@@ -319,7 +328,7 @@ export class Tracker {
     return out;
   }
 
-  private stateOf(m: Memory, now: number, hour: number, dow: number, cond: Conditions): TrainState | undefined {
+  private stateOf(m: Memory, now: number, hour: number, dow: number, cond: Conditions, withStops = true): TrainState | undefined {
     const u = m.u;
     const head = u.stops[0];
     if (!head) return undefined;
@@ -369,7 +378,7 @@ export class Tracker {
           ...base, phase: "moving", prevStop: at, departedAt: departAt, departedEstimated: true,
           nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
           runTime: this.timing.runTime(at, next.id, hour, u.route, cond),
-          stops: this.predictions(u, now, hour, dow, at, nextIdx),
+          stops: withStops ? this.predictions(u, now, hour, dow, at, nextIdx) : [],
         };
       }
       // Numbered lines publish the expected departure as the current stop's "arrival".
@@ -377,7 +386,7 @@ export class Tracker {
       return {
         ...base, phase: "dwelling", prevStop: at, nextStop: at, track: this.trackOf(u, at) ?? head.track,
         arrivedAt, expectedDeparture, eta: arrivedAt, etaRaw: atHead ? head.arrival : arrivedAt, sigma: 0,
-        stops: this.predictions(u, now, hour, dow, at, Math.max(0, nextIdx)),
+        stops: withStops ? this.predictions(u, now, hour, dow, at, Math.max(0, nextIdx)) : [],
       };
     }
 
@@ -393,7 +402,7 @@ export class Tracker {
     const unstarted = !v && (!u.assigned || next.arrival - now > 60);
     if (unstarted) {
       const { eta, sigma } = this.timing.adjustEta({ raw: next.arrival, now, route: u.route, next: next.id, hour, dow });
-      return { ...base, phase: "unstarted", nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma, stops: this.predictions(u, now, hour, dow, undefined, nextIdx) };
+      return { ...base, phase: "unstarted", nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma, stops: withStops ? this.predictions(u, now, hour, dow, undefined, nextIdx) : [] };
     }
 
     let prev = m.prevStop;
@@ -414,7 +423,7 @@ export class Tracker {
       nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
       runTime: prev ? this.timing.runTime(prev, next.id, hour, u.route, cond) : undefined,
       approach: this.approachOf(m, next.id),
-      stops: this.predictions(u, now, hour, dow, prev, nextIdx),
+      stops: withStops ? this.predictions(u, now, hour, dow, prev, nextIdx) : [],
     };
   }
 

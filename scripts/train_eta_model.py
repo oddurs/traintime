@@ -136,12 +136,37 @@ def main():
     # number no longer matches - which is why stated confidence drifts from observed coverage.
     # Measure the model's own held-out error per horizon and publish that instead.
     resid = y_te - pred
+    # Stated confidence has to match observed error in every part of the day, not on average.
+    # Scored window by window, overnight covered only 57% of arrivals inside 1 sigma against a
+    # 68% target while the peaks sat at 67%: one global spread is too narrow at night and too
+    # wide at rush hour, and a rider is told "give or take 40 s" when the honest answer is 70.
+    ny = pd.to_datetime(test["obs_ts"], unit="s", utc=True).dt.tz_convert("America/New_York")
+    hod, wknd = ny.dt.hour.values, ny.dt.dayofweek.values >= 5
+    def daypart(h, w):
+        if h < 5: return "owl"
+        if w: return "weekend-am" if h < 12 else ("weekend-pm" if h < 20 else "evening")
+        if h < 10: return "am-peak"
+        if h < 16: return "midday"
+        if h < 20: return "pm-peak"
+        return "evening"
+    dp = np.array([daypart(h, w) for h, w in zip(hod, wknd)])
     sigma_by_bucket = {}
     for b in sorted(test["bucket"].unique()):
         m = test["bucket"].values == b
         if m.sum() >= 50:
             sigma_by_bucket[b] = float(np.quantile(np.abs(resid[m] - np.median(resid[m])), 0.68))
+    sigma_by_daypart = {}
+    for b in sorted(test["bucket"].unique()):
+        for d in sorted(set(dp)):
+            m = (test["bucket"].values == b) & (dp == d)
+            # Enough to measure a spread with, or the number is noise wearing a confidence label.
+            if m.sum() >= 200:
+                sigma_by_daypart[f"{b}|{d}"] = float(np.quantile(np.abs(resid[m] - np.median(resid[m])), 0.68))
     print("model sigma by horizon:", {k: round(v, 1) for k, v in sigma_by_bucket.items()})
+    print(f"sigma by horizon and daypart: {len(sigma_by_daypart)} cells")
+    for b in sorted(test["bucket"].unique()):
+        cells = {k.split("|")[1]: round(v) for k, v in sigma_by_daypart.items() if k.startswith(b + "|")}
+        if cells: print(f"  {b}: {cells}")
     print(f"trained {model.n_iter_} iters in {time.time()-t0:.1f}s on {len(train)} rows; holdout {len(test)} rows")
     print(f"holdout MAE  raw {metrics['mae_raw']:.1f}s  tables {metrics['mae_tables']:.1f}s  model {metrics['mae_model']:.1f}s")
     for b in sorted(test["bucket"].unique()):
@@ -184,7 +209,8 @@ def main():
     out = Path(a.out)
     out.write_text(json.dumps(allow_nan=False, obj={"generatedAt": datetime.now(timezone.utc).isoformat(), "features": features, "categories": cats,
                                "baseline": baseline, "trees": trees, "metrics": metrics,
-                               "sigmaByBucket": sigma_by_bucket}))
+                               "sigmaByBucket": sigma_by_bucket,
+                               "sigmaByBucketDaypart": sigma_by_daypart}))
     print(f"wrote {out} ({out.stat().st_size // 1024} KB, {len(trees)} trees)")
 
 
