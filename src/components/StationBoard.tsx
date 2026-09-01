@@ -92,9 +92,13 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         </div>
       </header>
 
-      {onDestination && <DestinationPicker index={index} destination={destination} onChange={onDestination} />}
-
-      {stationAlerts.length > 0 && <AlertList index={index} alerts={stationAlerts} limit={2} />}
+      {/*
+        * Order is the whole usability argument here. The countdown is what someone standing on a
+        * platform came for, so it comes first; a service change is a one-line banner above it,
+        * which keeps the warning in sight without costing the answer; and choosing a destination
+        * is a second question, asked after the first has been answered.
+        */}
+      {stationAlerts.length > 0 && <AlertList index={index} alerts={stationAlerts} limit={2} collapsed />}
 
       {groups.length === 0 && (
         <p className="muted">
@@ -142,6 +146,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
           </ul>
         </div>
       ))}
+      {onDestination && <DestinationPicker index={index} destination={destination} onChange={onDestination} />}
     </section>
   );
 }

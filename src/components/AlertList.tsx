@@ -10,6 +10,14 @@ interface Props {
   index: NetworkIndex;
   alerts: Alert[];
   limit?: number;
+  /**
+   * Show a single line that opens, rather than the alerts themselves.
+   *
+   * On a station board the countdown is the whole answer, and two reroute cards above it pushed
+   * every train time off a phone screen — you opened a station and could not see a single train.
+   * A banner that says how many there are keeps the warning in front of you and costs one row.
+   */
+  collapsed?: boolean;
 }
 
 function Text({ index, text }: { index: NetworkIndex; text: string }) {
@@ -29,10 +37,22 @@ function Text({ index, text }: { index: NetworkIndex; text: string }) {
 }
 
 /** MTA service alerts, worst first, with the route bullets in their text rendered properly. */
-export default function AlertList({ index, alerts, limit = 4 }: Props) {
+export default function AlertList({ index, alerts, limit = 4, collapsed = false }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [open, setOpen] = useState(false);
   if (alerts.length === 0) return null;
+  if (collapsed && !open) {
+    const worst = alerts.some((a) => a.category === "delay") ? "delay"
+      : alerts.some((a) => a.category === "planned") ? "planned" : "info";
+    return (
+      <button className={`alert-summary ${worst}`} onClick={() => setOpen(true)} aria-expanded={false}>
+        <span className="pip" />
+        <span>{alerts.length === 1 ? "1 service change" : `${alerts.length} service changes`}</span>
+        <span className="chev" aria-hidden="true">›</span>
+      </button>
+    );
+  }
   const shown = showAll ? alerts : alerts.slice(0, limit);
   return (
     <div className="alerts">
@@ -52,6 +72,7 @@ export default function AlertList({ index, alerts, limit = 4 }: Props) {
           {showAll ? "show fewer" : `${alerts.length - limit} more`}
         </button>
       )}
+      {collapsed && <button className="alerts-more" onClick={() => setOpen(false)}>hide service changes</button>}
     </div>
   );
 }

@@ -59,7 +59,9 @@ export default function Sheet({ mobile, raiseOn, header, children }: Props) {
 
   return (
     <aside
-      className={`panel sheet ${stop}`}
+      // `has-answer` lets the phone sheet stand its brand chrome down once there is something
+      // to read: the station and its countdown are what the sheet was raised to show.
+      className={`panel sheet ${stop}${raiseOn ? " has-answer" : ""}`}
       ref={ref}
       style={{ height: HEIGHTS[stop], transform: drag ? `translateY(${Math.max(-30, Math.min(120, drag.dy))}px)` : undefined }}
     >

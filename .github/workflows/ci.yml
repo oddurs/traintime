@@ -20,4 +20,5 @@ jobs:
       - run: npm run build:network
       - run: npm run audit -- --url https://traintime-production-6a7d.up.railway.app || echo 'audit could not reach the deployed poller; not blocking'
       - run: npm run lint
+      - run: npm run audit:design
       - run: npm run build:pages
