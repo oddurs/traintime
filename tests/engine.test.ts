@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { NetworkIndex } from "../src/lib/network";
 import { Kinematics } from "../src/lib/kinematics";
 import { gbmPredict } from "../src/lib/gbm";
+import { distM } from "../src/lib/geo";
 import { arrivalsAt } from "../src/lib/arrivals";
 import type { GbmModel, Network, StopPrediction, TrainState } from "../src/lib/types";
 
@@ -162,6 +163,38 @@ test("a measured approach carries a train further along than none", () => {
   assert.equal(plain.back, 0, "a train never moves backwards");
   assert.equal(fixed.back, 0, "and the approach fix must not make it");
   assert.ok(fixed.s > plain.s + 1, `the approach should carry it further: ${fixed.s.toFixed(0)} m against ${plain.s.toFixed(0)} m`);
+});
+
+test("a train standing at a platform is on its own line, not the middle of the corridor", () => {
+  // A station's coordinate is the centre of the corridor; a service is drawn in its own band
+  // beside it. Placing a standing train at the station put it a median 2.3 m — and up to 9.2 m,
+  // which is two bands — off the track it belongs to, plainly visible once you zoom in.
+  //
+  // It has to be tested somewhere the service is actually off-centre. On a stretch it has to
+  // itself the band is zero, the two points coincide, and the test would pass either way.
+  const offCentre = (() => {
+    for (const [key, slots] of Object.entries(net.segmentSlots)) {
+      for (const [route, [band]] of Object.entries(slots)) {
+        if (Math.abs(band) < 0.5) continue;
+        const station = key.split("-")[0];
+        if (idx.platformPoint(route, station)) return { route, station, band };
+      }
+    }
+    return null;
+  })();
+  assert.ok(offCentre, "expected some service to run off the centre of a shared corridor");
+  const { route, station } = offCentre!;
+
+  const dwelling = {
+    id: "D", route, direction: "N", assigned: true, phase: "dwelling",
+    prevStop: station, nextStop: station, eta: NOW, etaRaw: NOW, sigma: 0,
+    updatedAt: NOW, stops: [] as StopPrediction[],
+  } as unknown as TrainState;
+  const [p] = new Kinematics(idx).step([dwelling], NOW, 1);
+  const onLine = idx.platformPoint(route, station)!;
+  const centre = idx.station(station)!;
+  assert.ok(distM(onLine, [centre.lon, centre.lat]) > 1, "this platform should be off the corridor centre");
+  assert.ok(distM([p.lon, p.lat], onLine) < 0.01, `stood ${distM([p.lon, p.lat], onLine).toFixed(2)} m off its own line`);
 });
 
 // ---------- the board ----------

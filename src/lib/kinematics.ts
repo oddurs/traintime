@@ -65,7 +65,9 @@ export class Kinematics {
 
   private stationBody(st: TrainState, stop: string): Body {
     const s = this.net.station(stop);
-    const p: LonLat = s ? [s.lon, s.lat] : [0, 0];
+    // Where this service's own line reaches the platform, not the middle of the corridor.
+    const onLine = this.net.platformPoint(st.route, stop);
+    const p: LonLat = onLine ?? (s ? [s.lon, s.lat] : [0, 0]);
     const prev = this.bodies.get(st.id);
     return { key: `at:${parentOf(stop)}`, path: { pts: [p], cum: [0], length: 0 }, L: 0, vMax: 0, s: 0, v: 0, motion: "stopped", heading: prev?.heading ?? 0 };
   }

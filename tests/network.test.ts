@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NetworkIndex, fanAt, bandOffsetExpression } from "../src/lib/network";
+import { NetworkIndex, fanAt, bandOffsetExpression, TRACK_M, metresPerPixel } from "../src/lib/network";
 import { distM } from "../src/lib/geo";
 import type { LonLat, Network } from "../src/lib/types";
 
@@ -48,17 +48,35 @@ test("a train rides exactly on its own line", () => {
   assert.ok(worst < 0.01, `a train drifted ${worst.toFixed(2)} m off its own line`);
 });
 
-test("the fan eases across zoom instead of stepping", () => {
-  // The fan used to be baked into the geometry, so it could only change in steps and the map
-  // visibly jumped every time the zoom crossed one. It is a paint property now, and has to be
-  // continuous for the renderer to ease it.
+test("two lines are the same distance apart at every zoom that matters", () => {
+  // The contract, and the thing that was wrong: the fan is whatever the eye needs *minus* what
+  // the true track spacing already provides, so the total on screen is constant. Tuned as two
+  // independent curves they drifted, and same-colour services spent three zoom levels between
+  // two and seven pixels apart — far enough to look wrong, not far enough to read as two lines.
+  for (let z = 14.5; z <= 18; z += 0.25) {
+    const geo = TRACK_M / metresPerPixel(z), f = fanAt(z);
+    assert.ok(Math.abs(geo + f.colour - 11) < 0.1, `colours ${(geo + f.colour).toFixed(1)} px apart at zoom ${z}`);
+    assert.ok(Math.abs(geo + f.service - 11) < 0.1, `same colour ${(geo + f.service).toFixed(1)} px apart at zoom ${z}`);
+  }
+});
+
+test("the fan is continuous, so nothing jumps as you zoom", () => {
+  // The original defect: the fan was baked into geometry and could only change in steps, so the
+  // map visibly snapped every time the zoom crossed one.
   let prev = fanAt(9), worst = 0;
   for (let z = 9; z <= 21; z += 0.05) {
     const v = fanAt(z);
     worst = Math.max(worst, Math.abs(v.colour - prev.colour), Math.abs(v.service - prev.service));
     prev = v;
   }
-  assert.ok(worst < 0.35, `the fan jumped ${worst.toFixed(2)} px within a twentieth of a zoom level`);
+  assert.ok(worst < 1.2, `the fan moved ${worst.toFixed(2)} px within a twentieth of a zoom level`);
+});
+
+test("past street level the lines stand on the real track spacing", () => {
+  // Close enough in, 4.6 m is worth more than the target on its own and the fan gets out of the
+  // way: what you see is where the track is.
+  assert.equal(fanAt(19).colour, 0);
+  assert.equal(fanAt(19).service, 0);
 });
 
 test("services sharing a trunk colour merge as the map zooms out", () => {

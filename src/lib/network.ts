@@ -30,31 +30,55 @@ export const RAMP_M = 130;
  * jumped every time the zoom crossed one. As a paint property the renderer interpolates every
  * frame, so the bands ease apart and back together continuously.
  */
-const FAN: { zoom: number; colour: number; service: number }[] = [
-  { zoom: 10, colour: 11, service: 0 },
-  { zoom: 13, colour: 11, service: 0 },
-  { zoom: 14.5, colour: 10.5, service: 5 },
-  { zoom: 16, colour: 9, service: 8.5 },
-  { zoom: 17, colour: 6, service: 5.5 },
-  { zoom: 18, colour: 2, service: 0.8 },
-  { zoom: 19, colour: 0, service: 0 },
-];
+/**
+ * How far apart two bands should look on screen, in pixels, whatever the zoom.
+ *
+ * A line and its casing are about six pixels wide, so anything under nine reads as a smear rather
+ * than as two lines.
+ */
+const TARGET_PX = 11;
+/**
+ * Where same-colour services part company. Below this they sit exactly on top of one another and
+ * a trunk reads as one line, the way the printed map draws it; above it they are fully separate.
+ *
+ * The window is deliberately narrow. Spread over three zoom levels, as it was, the 4, 5 and 6
+ * spent the whole of the mid-range two to seven pixels apart — far enough to look wrong, not far
+ * enough to read as three lines, with their casings touching. Over less than a zoom level it
+ * reads as a deliberate reveal instead.
+ */
+const MERGE_BELOW = 13.4;
+const SEPARATE_ABOVE = 14.2;
 
-/** The same curves the renderer follows, for placing trains on them. */
-export function fanAt(zoom: number): { colour: number; service: number } {
-  if (zoom <= FAN[0].zoom) return { colour: FAN[0].colour, service: FAN[0].service };
-  for (let i = 1; i < FAN.length; i++) {
-    const a = FAN[i - 1], b = FAN[i];
-    if (zoom > b.zoom) continue;
-    const t = (zoom - a.zoom) / (b.zoom - a.zoom);
-    return { colour: a.colour + (b.colour - a.colour) * t, service: a.service + (b.service - a.service) * t };
-  }
-  const last = FAN[FAN.length - 1];
-  return { colour: last.colour, service: last.service };
-}
+const smoothstep = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
 
 /**
- * The renderer's version, as a MapLibre expression giving a feature's offset in pixels.
+ * The fan, derived rather than tabulated.
+ *
+ * The geometry already carries the true 4.6 m between track centres, which is worth a growing
+ * number of pixels as you zoom in. What the fan adds is only ever the difference between that and
+ * what the eye needs — so the total stays at the target instead of the two contributions being
+ * tuned against each other by hand and drifting apart in the middle of the range.
+ *
+ * Past about zoom 18 the true spacing alone exceeds the target and the fan falls to nothing: the
+ * lines then stand exactly where the track does, which is the right answer that close in.
+ */
+export function fanAt(zoom: number): { colour: number; service: number } {
+  const geo = TRACK_M / metresPerPixel(zoom);
+  const reveal = smoothstep((zoom - MERGE_BELOW) / (SEPARATE_ABOVE - MERGE_BELOW));
+  return {
+    colour: Math.max(0, TARGET_PX - geo),
+    service: Math.max(0, TARGET_PX * reveal - geo),
+  };
+}
+
+/** The zooms the renderer is given the curve at; between them it interpolates. */
+const FAN_STOPS = [10, 12, 13, 13.4, 13.6, 13.8, 14, 14.2, 14.6, 15, 16, 17, 18, 19, 20];
+
+/**
+ * The renderer's version of the same curve, as a MapLibre expression giving a feature's offset.
+ *
+ * Sampled from `fanAt` rather than written out separately, so the lines and the trains cannot
+ * drift apart: there is one curve and this is a reading of it.
  *
  * The zoom interpolation has to be the outermost expression — MapLibre rejects one nested inside
  * another and silently drops the layer when you try, which took most of the network off the map.
@@ -63,10 +87,10 @@ export function fanAt(zoom: number): { colour: number; service: number } {
 export function bandOffsetExpression(scale = 1): unknown[] {
   return [
     "interpolate", ["linear"], ["zoom"],
-    ...FAN.flatMap(({ zoom, colour, service }) => [
-      zoom,
-      ["+", ["*", ["get", "cb"], colour * scale], ["*", ["get", "sb"], service * scale]],
-    ]),
+    ...FAN_STOPS.flatMap((z) => {
+      const f = fanAt(z);
+      return [z, ["+", ["*", ["get", "cb"], f.colour * scale], ["*", ["get", "sb"], f.service * scale]]];
+    }),
   ];
 }
 
@@ -165,6 +189,26 @@ export class NetworkIndex {
       this.lineCache.set(ck, out);
     }
     return out;
+  }
+
+  /**
+   * Where a train of this route stands when it is at this platform.
+   *
+   * Not the station's coordinate: that is the middle of the corridor, and a service is drawn in
+   * its own band beside it. Taking the end of the route's own drawn stretch puts a standing train
+   * exactly where its line is — measured, dwelling trains were sitting a median 2.3 m and up to
+   * 9.2 m off the track they belong to, which is one to two bands and plainly visible close in.
+   */
+  platformPoint(route: string, stopId: string): LonLat | undefined {
+    const station = parentOf(stopId);
+    for (const key of this.net.routeSegments[route] ?? []) {
+      const [a, b] = key.split("-");
+      if (a !== station && b !== station) continue;
+      const laid = this.laid(route, key);
+      if (!laid?.length) continue;
+      return a === station ? laid[0] : laid[laid.length - 1];
+    }
+    return undefined;
   }
 
   /** Coordinates for one stretch as drawn. */

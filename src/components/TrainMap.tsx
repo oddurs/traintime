@@ -272,11 +272,34 @@ export default function TrainMap(props: Props) {
       const px = fanAt(zoom);
       const fan = { colour: px.colour * m, service: px.service * m };
       const lastBand = lastBandRef.current;
+      /*
+       * Trains standing still at the same place, counted rather than stacked.
+       *
+       * A terminal holds a queue: nine 7 trains sit on one pixel at Flushing-Main St, eight 6s at
+       * Pelham Bay Park. Drawing them one on top of another says "a train is here" nine times and
+       * "there are nine" not at all — and the eight underneath cannot be clicked. One marker
+       * carries the count instead. A train the viewer has selected is always drawn in its own
+       * right, so selecting one never makes it vanish under the pile.
+       */
+      const stackAt = new Map<string, number>();
+      for (const p of trains) {
+        if (vis && !vis.has(p.route)) continue;
+        if (p.phase === "moving") continue;
+        const k = `${p.route}|${p.state.nextStop}|${p.phase}`;
+        stackAt.set(k, (stackAt.get(k) ?? 0) + 1);
+      }
+      const drawn = new Set<string>();
       for (const p of trains) {
         if (vis && !vis.has(p.route)) continue;
         const r = idx.net.routes[p.route];
         const selected = sel.kind === "train" && sel.id === p.id;
         const moving = p.phase === "moving" && p.speed > 0.6;
+        const stackKey = p.phase === "moving" ? "" : `${p.route}|${p.state.nextStop}|${p.phase}`;
+        const stacked = stackKey ? (stackAt.get(stackKey) ?? 1) : 1;
+        if (stackKey && stacked > 1 && !selected) {
+          if (drawn.has(stackKey)) continue;
+          drawn.add(stackKey);
+        }
         points.push({
           type: "Feature",
           properties: {
@@ -289,6 +312,10 @@ export default function TrainMap(props: Props) {
             revised: Math.max(0, Math.round(t - (p.state.updatedAt ?? t))),
             holding: p.motion === "holding", moving, bearing: Math.round(p.bearing),
             chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
+            // How many trains this marker stands for, and whether it is in service at all.
+            stacked: selected ? 1 : stacked,
+            parked: p.phase === "unstarted",
+            atPlatform: p.phase === "dwelling",
           },
           geometry: { type: "Point", coordinates: fanned(p, idx, fan, lastBand) },
         });
@@ -451,13 +478,24 @@ export default function TrainMap(props: Props) {
       map.addLayer({
         id: "trains", type: "circle", source: "trains",
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 4.5, 14, 9],
-          "circle-color": ["get", "color"],
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            10, ["case", [">", ["get", "stacked"], 1], 5.5, 4.5],
+            14, ["case", [">", ["get", "stacked"], 1], 11, 9],
+          ],
+          // A train not yet in service is drawn as an outline: it is here, but it is not running,
+          // and a solid marker claims otherwise.
+          "circle-color": ["case", ["get", "parked"], paint("--map-station-fill"), ["get", "color"]],
           // Full strength while the feed is still revising it; fading as the record goes quiet,
           // down to a train we are still drawing but no longer vouching for.
           "circle-opacity": ["case", ["get", "ghost"], 0.4,
             ["interpolate", ["linear"], ["get", "revised"], 600, 1, 2400, 0.45]],
-          "circle-stroke-color": ["case", ["get", "holding"], paint("--map-hold"), paint("--label")],
+          "circle-stroke-color": [
+            "case",
+            ["get", "holding"], paint("--map-hold"),
+            ["get", "parked"], ["get", "color"],
+            paint("--label"),
+          ],
           // A zoom expression has to sit at the top level, so the per-feature choice goes inside it.
           "circle-stroke-width": [
             "interpolate", ["linear"], ["zoom"],
@@ -465,6 +503,22 @@ export default function TrainMap(props: Props) {
             14, ["case", ["get", "holding"], 3, 2],
           ],
           "circle-stroke-opacity": ["case", ["get", "ghost"], 0.45, 1],
+        },
+      });
+      map.addLayer({
+        id: "train-stack", type: "symbol", source: "trains", minzoom: 12,
+        filter: [">", ["get", "stacked"], 1],
+        layout: {
+          // "×4" beside the bullet: four trains are waiting here, not one.
+          "text-field": ["concat", "×", ["to-string", ["get", "stacked"]]],
+          "text-font": ["Noto Sans Bold"],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 9, 15, 11],
+          "text-offset": [1.1, -0.9], "text-anchor": "left",
+          "text-allow-overlap": true, "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": paint("--label"),
+          "text-halo-color": paint("--map-halo"), "text-halo-width": 1.4,
         },
       });
       map.addLayer({
