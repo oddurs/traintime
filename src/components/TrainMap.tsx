@@ -19,7 +19,7 @@ const STYLE = "https://tiles.openfreemap.org/styles/dark";
 maplibregl.setWorkerUrl(asset("/maplibre/maplibre-gl-worker.mjs"));
 
 /** Band levels the weave is drawn in; matches zOf() in scripts/build-network.ts. */
-const WEAVE_LEVELS = 5;
+const WEAVE_LEVELS = 9;
 
 /**
  * How far a band sits from its corridor's centreline, in pixels. The true spacing is already in
@@ -245,7 +245,17 @@ export default function TrainMap(props: Props) {
       positions.clear();
       for (const p of trains) positions.set(p.id, p);
 
-      if (ts - lastDraw < 1000 / DRAW_HZ) return;
+      /*
+       * Thirty times a second is plenty while the camera is still, and visibly not enough while
+       * it is moving.
+       *
+       * The lines are eased into their bands by the renderer, in pixels, on every frame it draws.
+       * A train is eased into the same band by moving it in metres, here, on the CPU. Hold that
+       * back to thirty a second and through a pinch the trains swim off their own lines and catch
+       * up afterwards — and the further you zoom the further they swim, because the same eleven
+       * pixels is four hundred metres at city zoom and nothing at all at street level.
+       */
+      if (!map.isMoving() && ts - lastDraw < 1000 / DRAW_HZ) return;
       lastDraw = ts;
       const { visibleRoutes: vis, showRibbons: ribbons, selection: sel, highlight: hi, follow: fol } = live.current;
       const points: GeoJSON.Feature[] = [];
@@ -553,13 +563,11 @@ export default function TrainMap(props: Props) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !layersReady || !index) return;
+    // The fan widens when the map is narrowed to a few services, which is a function of the
+    // filter and not of the zoom. This used to be re-applied on every `zoomend` as well, setting
+    // the same filters and re-uploading the station source each time the camera settled, for a
+    // width that had not changed.
     applyVisibility(map, index, visibleRoutes);
-    // The fan narrows as you zoom into a corridor, so the layout is revisited when the zoom
-    // settles. `zoomend` rather than `zoom`: re-laying mid-pinch would be wasted work, and the
-    // width only ever changes at a band edge.
-    const onZoom = () => applyVisibility(map, index, visibleRoutes);
-    map.on("zoomend", onZoom);
-    return () => { map.off("zoomend", onZoom); };
   }, [visibleRoutes, index, layersReady, applyVisibility]);
 
   // --- selection highlight and camera

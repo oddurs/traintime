@@ -426,8 +426,6 @@ async function main() {
       for (const p of mine) if (nearPolyline(p, pts) < CORRIDOR_M) covered++;
       if (covered / mine.length >= SHARE_MIN) {
         for (const r of others) alongside.add(r);
-        // Kept for the orientation solver below: these two run beside each other, so whatever
-        // else is true of them they must be ordered across the corridor the same way round.
         if (key < k2) besides.push([key, k2]);
       }
     }
@@ -717,10 +715,40 @@ async function main() {
    * crossed and changed spacing as you zoomed. There is one ordering now, and one blend.
    */
   const bandParts: Record<string, Record<string, [number, number]>> = {};
+  /**
+   * Stretches that run beside one another share one ordering.
+   *
+   * A band is an index into the services sharing a corridor, and that list was built per stretch.
+   * The express and local halves of a four-track corridor are different stretches with different
+   * lists, so the same index can mean the third of five on one and the third of three on the
+   * other — two services, one band, drawn on exactly the same line. At Forest Hills the M and the
+   * diamond F were 0.0 px apart.
+   *
+   * The stretches found running alongside each other are grouped, and every member reads the same
+   * list. The grouping is tight: the widest is eight services over four stretches, so this cannot
+   * quietly chain the whole system into one corridor.
+   */
+  const corridorRoot = new Map<string, string>();
+  {
+    const rootOf = (k: string): string => (corridorRoot.get(k) === k ? k : (corridorRoot.set(k, rootOf(corridorRoot.get(k)!)), corridorRoot.get(k)!));
+    for (const k of segKeys) if (segments[k]) corridorRoot.set(k, k);
+    for (const [a, b] of besides) if (corridorRoot.has(a) && corridorRoot.has(b)) corridorRoot.set(rootOf(a), rootOf(b));
+    for (const k of [...corridorRoot.keys()]) corridorRoot.set(k, rootOf(k));
+  }
+  const groupCorridor = new Map<string, string[]>();
   for (const [key, corridor] of corridors) {
+    const root = corridorRoot.get(key) ?? key;
+    const list = groupCorridor.get(root) ?? groupCorridor.set(root, []).get(root)!;
+    for (const r of corridor) if (!list.includes(r)) list.push(r);
+    for (const r of routeSegments_.get(key) ?? []) if (!list.includes(r)) list.push(r);
+  }
+  for (const list of groupCorridor.values()) list.sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1));
+
+  for (const [key, corridor] of corridors) {
+    void corridor;
     // Belt and braces: a service running here always has a place in the ordering, so two can
     // never be handed the same band and drawn on top of each other.
-    const band = [...corridor];
+    const band = [...(groupCorridor.get(corridorRoot.get(key) ?? key) ?? [])];
     for (const r of routeSegments_.get(key) ?? []) if (!band.includes(r)) band.push(r);
     const n = band.length;
     const colourOf = (r: string) => routes[r]?.color ?? r;
@@ -855,10 +883,12 @@ async function main() {
    * choice cannot be per-crossing or the same pair would weave one way here and the other way
    * there. Bands further right always pass over bands further left, so a service changing band
    * goes over or under consistently along its whole length — which is what makes the crossing
-   * read as a weave rather than as a mistake. Five levels is enough for the widest corridor in
-   * the system, and adjacent bands always land on different levels.
+   * read as a weave rather than as a mistake. Nine levels covers the widest corridor in the
+   * system, whose bands run from -3.5 to 3.5; with five, the outermost pair of an eight-service
+   * corridor was clamped onto its neighbour's level and the crossing could not show.
    */
-  const zOf = (slot: number) => Math.max(0, Math.min(4, Math.round(slot + 2)));
+  const WEAVE_LEVELS = 9;
+  const zOf = (slot: number) => Math.max(0, Math.min(WEAVE_LEVELS - 1, Math.round(slot + (WEAVE_LEVELS - 1) / 2)));
   /**
    * Which way a drawn stroke runs relative to its corridor. The renderer offsets a line to the
    * right of the direction it is drawn in, so a stroke drawn against its corridor needs its band

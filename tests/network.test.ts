@@ -152,6 +152,54 @@ test("a change of band is a splay, not a step", () => {
   assert.ok(worst <= 8.01, `strokes parted by ${worst.toFixed(1)} m at a band change`);
 });
 
+test("a train is never drawn on track that does not exist", () => {
+  // The feed reports trips whose intermediate stops have been dropped, and then "the stop before"
+  // and "the stop next" are twenty stations apart. Joining them with a straight line drew a B from
+  // 81 St to DeKalb Av: ten kilometres across Manhattan, through Central Park, with a marker
+  // sliding along it. There is no track between them, so there is no line to draw.
+  // Both taken from a live feed: a B whose next stop is twenty stations away, and a D said to be
+  // running *south* from Grand St to 145 St, which is north of it. Neither can be walked through
+  // the route graph, because neither is a journey the railway makes.
+  const far: [string, string, string][] = [
+    ["B", "A21N", "R30N"],   // 81 St-Museum of Natural History -> DeKalb Av
+    ["D", "D22S", "D13S"],   // Grand St -> 145 St, southbound, in that order
+  ];
+  /** Where this service's track actually is, coarsely bucketed so the test is not quadratic. */
+  const CELL = 80;
+  const track = (route: string) => {
+    const grid = new Set<string>();
+    for (const key of net.routeSegments[route] ?? []) {
+      for (const p of net.segments[key] ?? []) {
+        const cos = Math.cos((p[1] * Math.PI) / 180);
+        const x = Math.round((p[0] * 111_320 * cos) / CELL), y = Math.round((p[1] * 111_320) / CELL);
+        for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) grid.add(`${x + dx}:${y + dy}`);
+      }
+    }
+    return grid;
+  };
+  for (const [route, from, to] of far) {
+    const path = idx.pathBetween(route, from, to);
+    const grid = track(route);
+    // Sampled along the line, not just at its ends. Checking only the vertices passes a straight
+    // line drawn between two real stations twenty stops apart — both ends are on track and the ten
+    // kilometres in between are not, which is the whole of the defect.
+    let off = 0, samples = 0;
+    for (let i = 0; i + 1 < path.pts.length; i++) {
+      const a = path.pts[i], b = path.pts[i + 1];
+      const steps = Math.max(1, Math.ceil(distM(a, b) / 100));
+      for (let k = 0; k <= steps; k++) {
+        const t = k / steps;
+        const p: LonLat = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        const cos = Math.cos((p[1] * Math.PI) / 180);
+        samples++;
+        if (!grid.has(`${Math.round((p[0] * 111_320 * cos) / CELL)}:${Math.round((p[1] * 111_320) / CELL)}`)) off++;
+      }
+    }
+    assert.ok(samples > 2, `${route} ${from}->${to} produced no path to check`);
+    assert.equal(off, 0, `${route} ${from}->${to} is drawn ${off} of ${samples} samples away from its own track`);
+  }
+});
+
 test("bands do not mirror where a segment key runs against its corridor", () => {
   // Segment keys are ordered by station id, which is not geography. Where that ordering reverses,
   // the same band used to land on the opposite side of the track — 22% of segments were affected.
@@ -180,11 +228,21 @@ test("every service in a corridor gets its own band, and no two share one", () =
 test("the weave has a consistent over-and-under", () => {
   // Bands further right always pass over bands further left, so a pair never weaves one way in
   // one place and the other way somewhere else.
+  //
+  // Nine levels, not five: the widest corridor runs from band -3.5 to 3.5, and with five the
+  // outermost pair on each side was clamped onto its neighbour's level, where a crossing between
+  // them cannot show at all.
+  const LEVELS = 9;
+  const zOf = (slot: number) => Math.max(0, Math.min(LEVELS - 1, Math.round(slot + (LEVELS - 1) / 2)));
+  let widest = 0;
   for (const runs of Object.values(net.routeRuns)) {
     for (const run of runs) {
-      assert.ok(Number.isInteger(run.z) && run.z >= 0 && run.z <= 4, `bad weave level ${run.z}`);
-      const expected = Math.max(0, Math.min(4, Math.round(run.slot + 2)));
-      assert.equal(run.z, expected, "draw order must follow the band, or crossings disagree");
+      assert.ok(Number.isInteger(run.z) && run.z >= 0 && run.z < LEVELS, `bad weave level ${run.z}`);
+      assert.equal(run.z, zOf(run.slot), "draw order must follow the band, or crossings disagree");
+      widest = Math.max(widest, Math.abs(run.slot));
     }
   }
+  // And there are enough levels for the bands that actually exist: clamping is the failure mode.
+  assert.ok(zOf(widest) > 0 && zOf(-widest) < LEVELS - 1,
+    `band ${widest} is clamped onto its neighbour's draw level`);
 });

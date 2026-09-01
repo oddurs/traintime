@@ -65,11 +65,22 @@ const smoothstep = (t: number) => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t)
 /**
  * How far a stroke's band may drift from the value it is drawn with, in bands.
  *
- * A band is eleven pixels through the zooms that matter, so an eighth of one is about 1.4 px —
- * under the width of the line itself, and invisible against a round join. Coarser and a splay
- * reads as a staircase; finer and the feature count climbs for nothing.
+ * A band is eleven pixels through the zooms that matter, so a sixteenth of one is about 0.7 px —
+ * a fifth of the width of the line itself, and invisible against a round join. Each piece is drawn
+ * at the mean of the bands it spans, so this bounds both the step between two pieces of one stroke
+ * and the gap where two strokes meet. Coarser and a splay reads as a staircase; finer and the
+ * feature count climbs for nothing.
  */
-const BAND_STEP = 1 / 8;
+const BAND_STEP = 1 / 16;
+
+/**
+ * How close two stretches have to meet before the join is treated as one point.
+ *
+ * They are laid out separately and ease into a shared band from either side, which closes to
+ * within a third of a metre — near enough to draw, far enough that keeping both points puts a
+ * step backwards in the middle of a curve.
+ */
+const JOIN_M = 1.5;
 
 /** One drawn piece of one service: geometry, and the band the renderer should offset it by. */
 export interface Stroke {
@@ -274,7 +285,11 @@ export class LineEngine {
           if (!piece) continue;
           for (let k = 0; k < piece.pts.length; k++) {
             const p = piece.pts[k], last = pts[pts.length - 1];
-            if (last && last[0] === p[0] && last[1] === p[1]) continue;
+            // Two stretches meet within a third of a metre of one another, not exactly, so an
+            // exact test leaves a sub-metre jog between two edges hundreds of metres long. Which
+            // is a hairpin: the line turns almost fully around and back, and a round join draws
+            // that as a blister on an otherwise smooth curve. There were 673 of them.
+            if (last && (k > 0 ? last[0] === p[0] && last[1] === p[1] : distM(last, p) < JOIN_M)) continue;
             pts.push(p);
             cb.push(piece.colour[k] * side);
             mb.push(piece.metric[k] * side);
@@ -306,12 +321,13 @@ export class LineEngine {
           mb.splice(i, 0, ...insM);
         }
 
-        // A piece is drawn at the mean of the bands it spans, so its error is half the step.
+        // A piece is drawn at the mean of the bands it spans, so its error is half a step.
+        const at = (arr: number[], from: number, to: number) => (arr[from] + arr[to]) / 2;
         const emit = (from: number, to: number) => out.push({
           route, colour, run: `${route}#${r}`,
           first: from === 0, last: to === pts.length - 1,
           slot: run.slot, shared: run.shared, z: run.z ?? 2,
-          cb: (cb[from] + cb[to]) / 2, mb: (mb[from] + mb[to]) / 2,
+          cb: at(cb, from, to), mb: at(mb, from, to),
           pts: pts.slice(from, to + 1),
         });
         let from = 0;

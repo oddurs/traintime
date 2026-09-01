@@ -63,7 +63,8 @@ notes.push(`${seenOrder.size} service pairs share a corridor`);
 if (flips.length) fail("ordered", `${flips.length} pairs swap sides between corridors: ${flips.slice(0, 4).map(([k]) => k).join(", ")}`);
 
 // ---- intertwined ----------------------------------------------------------
-const zOf = (band: number) => Math.max(0, Math.min(4, Math.round(band + 2)));
+const WEAVE_LEVELS = 9;
+const zOf = (band: number) => Math.max(0, Math.min(WEAVE_LEVELS - 1, Math.round(band + (WEAVE_LEVELS - 1) / 2)));
 let clashes = 0;
 for (const slots of Object.values(net.segmentSlots)) {
   const bands = Object.values(slots).map(([b]) => b).sort((a, b) => a - b);
@@ -119,6 +120,48 @@ notes.push(`${seams} seams inside strokes · worst ${worstSeam.toFixed(2)} m`);
 // residue of the handful of orientation cycles the settling pass cannot resolve, which is
 // sub-pixel at any zoom short of standing on the platform.
 if (worstSeam > 1) fail("ordered", `a stroke steps ${worstSeam.toFixed(1)} m at a seam — a stretch is drawn on the wrong side`);
+
+// ---- smooth ---------------------------------------------------------------
+/**
+ * A drawn line turns by a few degrees at a time, the way track does.
+ *
+ * Two stretches meet within a third of a metre of one another rather than exactly, and joining
+ * them without merging those two points left a sub-metre jog between two edges hundreds of metres
+ * long — a hairpin, drawn by a round join as a blister on the side of a smooth curve. There were
+ * 673 of them, against twelve sharp corners in the underlying centrelines: almost every one was
+ * made by the drawing rather than found in the data.
+ */
+{
+  const sharp = (pts: LonLat[]) => {
+    let n = 0, over = 0, worst = 0;
+    for (let i = 1; i + 1 < pts.length; i++) {
+      const cos = Math.cos((pts[i][1] * Math.PI) / 180);
+      const e1 = (pts[i][0] - pts[i - 1][0]) * cos, n1 = pts[i][1] - pts[i - 1][1];
+      const e2 = (pts[i + 1][0] - pts[i][0]) * cos, n2 = pts[i + 1][1] - pts[i][1];
+      const l1 = Math.hypot(e1, n1), l2 = Math.hypot(e2, n2);
+      if (!l1 || !l2) continue;
+      const deg = (Math.acos(Math.max(-1, Math.min(1, (e1 * e2 + n1 * n2) / (l1 * l2)))) * 180) / Math.PI;
+      n++;
+      if (deg > 12) over++;
+      worst = Math.max(worst, deg);
+    }
+    return { n, over, worst };
+  };
+  let drawn = { n: 0, over: 0, worst: 0 };
+  for (const st of idx.strokes()) {
+    const s2 = sharp(st.pts);
+    drawn = { n: drawn.n + s2.n, over: drawn.over + s2.over, worst: Math.max(drawn.worst, s2.worst) };
+  }
+  let raw = { n: 0, over: 0, worst: 0 };
+  for (const pts of Object.values(net.segments)) {
+    const s2 = sharp(pts);
+    raw = { n: raw.n + s2.n, over: raw.over + s2.over, worst: Math.max(raw.worst, s2.worst) };
+  }
+  notes.push(`corners over 12 deg: ${drawn.over} drawn of ${drawn.n}, against ${raw.over} in the centrelines`);
+  // A few sharp corners are in the published shapes and are not ours to invent away; a drawing
+  // that adds them by the hundred is.
+  if (drawn.over > drawn.n / 200) fail("smooth", `${drawn.over} of ${drawn.n} drawn corners turn more than 12 degrees (worst ${drawn.worst.toFixed(0)})`);
+}
 
 // ---- the ends join --------------------------------------------------------
 /**

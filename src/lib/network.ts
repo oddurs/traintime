@@ -5,6 +5,9 @@ import { LineEngine } from "./layout";
 
 export const parentOf = (id: string) => id.replace(/[NS]$/, "");
 
+/** How much of the run-in to a platform stands in for a journey we cannot trace. */
+const APPROACH_M = 400;
+
 // Drawing lives in ./layout. Re-exported so a caller has one import for the map.
 export { TRACK_M, RAMP_M, fanAt, bandOffsetExpression, metresPerPixel, LineEngine, type Stroke } from "./layout";
 
@@ -192,14 +195,56 @@ export class NetworkIndex {
       }
     }
     if (!path) {
+      /*
+       * No track between these two, and no way to chain there through the route's own graph.
+       *
+       * The feed does report this: a trip whose intermediate stops have been dropped, or a train
+       * put on a pattern the schedule has never seen, and then "the stop before" and "the stop
+       * next" are twenty stations apart. Joining them with a straight line drew a B from 81 St to
+       * DeKalb Av — ten kilometres across Manhattan, through Central Park, on track that does not
+       * exist — with a marker sliding merrily along it.
+       *
+       * What is actually known is the stop it is heading for, so the train is put on the final
+       * approach to that platform instead. It is on its own line, at a place it will really be,
+       * and the countdown beside it is unaffected.
+       */
       this.stats.straightFallback++;
-      const a = this.station(pa), b = this.station(pb);
-      const pa_: LonLat = a ? [a.lon, a.lat] : [0, 0];
-      const pb_: LonLat = b ? [b.lon, b.lat] : pa_;
-      path = makePath([pa_, pb_]);
+      path = this.approachTo(route, nextDir) ?? this.straightLine(pa, pb);
     }
     this.pathCache.set(key, path);
     return path;
+  }
+
+  /**
+   * The last stretch of track into a platform, as a path a train can be placed on.
+   *
+   * Long enough that a marker approaching it has somewhere to move, short enough that it says
+   * nothing about where the train came from — which, in the cases this is for, we do not know.
+   */
+  private approachTo(route: string, nextDir: string): Path | undefined {
+    const next = parentOf(nextDir);
+    for (const key of this.net.routeSegments[route] ?? []) {
+      const [a, b] = key.split("-");
+      if (a !== next && b !== next) continue;
+      const from = a === next ? b : a;
+      const seg = this.lines.lineSegment(route, from, next);
+      if (!seg || seg.length < 2) continue;
+      const pts: LonLat[] = [seg[seg.length - 1]];
+      let run = 0;
+      for (let i = seg.length - 2; i >= 0 && run < APPROACH_M; i--) {
+        run += distM(seg[i], seg[i + 1]);
+        pts.unshift(seg[i]);
+      }
+      if (pts.length >= 2) return makePath(pts);
+    }
+    return undefined;
+  }
+
+  private straightLine(pa: string, pb: string): Path {
+    const a = this.station(pa), b = this.station(pb);
+    const pa_: LonLat = a ? [a.lon, a.lat] : [0, 0];
+    const pb_: LonLat = b ? [b.lon, b.lat] : pa_;
+    return makePath([pa_, pb_]);
   }
 
   /** Walk backwards from next through the route's predecessor graph looking for prev. */
@@ -208,7 +253,7 @@ export class NetworkIndex {
     const back = new Map<string, string>();
     let frontier = [nextDir];
     const visited = new Set(frontier);
-    for (let depth = 0; depth < 10 && frontier.length; depth++) {
+    for (let depth = 0; depth < 24 && frontier.length; depth++) {
       const nextFrontier: string[] = [];
       for (const cur of frontier) {
         for (const p of graph[cur] ?? this.mergedPrev[cur] ?? []) {
