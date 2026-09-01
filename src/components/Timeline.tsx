@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StreamMode } from "@/lib/useTrainStream";
 import { TrainTimeClient, type DensityBucket, type Recordings } from "@/lib/client";
 import { fmtClock } from "@/lib/format";
+import { Button, Select } from "./ui";
 
 interface Props {
   client: TrainTimeClient;
@@ -94,7 +95,7 @@ export default function Timeline({ client, mode, onMode, now, live }: Props) {
   };
 
   if (!rec || rec.ticks === 0) {
-    return <p className="muted small">No recordings yet — the poller writes history as it runs.</p>;
+    return <p className="muted hint">No recordings yet — the poller writes history as it runs.</p>;
   }
 
   return (
@@ -127,18 +128,20 @@ export default function Timeline({ client, mode, onMode, now, live }: Props) {
         <span>{cursor !== null ? fmtClock(cursor) : ""}</span>
         <span>{fmtClock(rec.to)}</span>
       </div>
-      <div className="tl-controls">
-        <button className="primary" onClick={play}>play</button>
-        <select value={window_} onChange={(e) => setWindow(Number(e.target.value))} aria-label="Replay length">
-          {WINDOWS.map((w) => <option key={w.secs} value={w.secs}>{w.label}</option>)}
-        </select>
-        <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} aria-label="Replay speed">
-          {SPEEDS.map((s) => <option key={s} value={s}>{s}×</option>)}
-        </select>
-        <button onClick={exportClip} disabled={recording} title="Record this replay as a video">
+      <div className="toolbar">
+        <Button variant="filled" onClick={play}>play</Button>
+        <Select
+          value={window_} onChange={setWindow} parse={Number} ariaLabel="Replay length"
+          options={WINDOWS.map((w) => ({ value: w.secs, label: w.label }))}
+        />
+        <Select
+          value={speed} onChange={setSpeed} parse={Number} ariaLabel="Replay speed"
+          options={SPEEDS.map((s) => ({ value: s, label: `${s}\u00d7` }))}
+        />
+        <Button onClick={exportClip} disabled={recording} title="Record this replay as a video">
           {recording ? "recording…" : "clip"}
-        </button>
-        {mode.kind === "replay" && <button onClick={() => onMode({ kind: "live" })}>live</button>}
+        </Button>
+        {mode.kind === "replay" && <Button onClick={() => onMode({ kind: "live" })}>live</Button>}
       </div>
     </div>
   );

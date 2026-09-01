@@ -11,6 +11,7 @@ import { fmtAgo, fmtClockSec } from "@/lib/format";
 import { useStoredFlag } from "@/lib/hooks";
 import { BASE_PATH, POLLER_URL } from "@/lib/basePath";
 import { reportClientFailures } from "@/lib/clientHealth";
+import { Button, Chip, Notice, Section, Switch } from "./ui";
 import Sheet from "./Sheet";
 import SearchBox from "./SearchBox";
 import StationBoard from "./StationBoard";
@@ -61,6 +62,9 @@ const GROUPS: string[][] = [
   ["N", "Q", "R", "W"], ["G"], ["J", "Z"], ["L"], ["GS", "FS", "H", "SI"],
 ];
 
+/** The feed is late enough that the countdown should no longer be taken at face value. */
+const FEED_STALE_S = 60;
+
 export default function Panel(props: Props) {
   const { index, trains, byId, positionsRef, feeds, status, now, wallNow, alerts, selection, onSelect,
     follow, onFollow, visible, onToggle, onAll, showRibbons, onRibbons, mode, onMode, mobile,
@@ -81,7 +85,7 @@ export default function Panel(props: Props) {
   const shown = visible ? trains.filter((t) => visible.has(t.route)).length : trains.length;
   const feedsDown = feeds.filter((f) => !f.ok);
   const age = status.clockTs && wallNow ? Math.max(0, Math.round(wallNow - status.clockTs)) : null;
-  const healthy = status.connected && !feedsDown.length && (age === null || age < 60 || !status.live);
+  const healthy = status.connected && !feedsDown.length && (age === null || age < FEED_STALE_S || !status.live);
   const delayAlerts = useMemo(() => (alerts?.all ?? []).filter((a) => a.category === "delay"), [alerts]);
   const selectedTrain = selection.kind === "train" ? byId.get(selection.id) : undefined;
 
@@ -89,26 +93,45 @@ export default function Panel(props: Props) {
     <header className="panel-head">
       <div className="title-row">
         <h1><a href={`${BASE_PATH}/`} aria-label="traintime home">traintime</a></h1>
-        <span className={`mode ${status.live ? "live" : "replay"}`}>
-          {status.live ? "LIVE" : `REPLAY ${status.speed}×`}
-        </span>
+        <Chip tone={status.live ? "live" : "replay"}>{status.live ? "Live" : `Replay ${status.speed}×`}</Chip>
       </div>
       <div className="status">
-        <span className={`dot ${healthy ? "ok" : "bad"}`} />
-        <span>
+        <Notice tone={healthy ? "ok" : "bad"}>
           {status.connected || trains.length
             ? `${shown === trains.length ? trains.length : `${shown} / ${trains.length}`} trains`
             : (status.error ?? "connecting…")}
           {status.live && age !== null ? ` · feed ${age < 3 ? "just now" : `${age}s ago`}` : ""}
           {!status.live && status.clockTs ? ` · ${fmtClockSec(now)}${status.ended ? " · ended" : ""}` : ""}
-        </span>
+        </Notice>
       </div>
-      {feedsDown.length > 0 && <div className="warn">feed down: {feedsDown.map((f) => f.id.replace("gtfs-", "")).join(", ")}</div>}
+      {feedsDown.length > 0 && (
+        <div className="status">
+          <Notice tone="warn">feed down: {feedsDown.map((f) => f.id.replace("gtfs-", "")).join(", ")}</Notice>
+        </div>
+      )}
     </header>
   );
 
+  const footer = (
+    <footer className="panel-foot">
+      <span className="hint">
+        {status.source === "browser"
+          ? `tracking in this browser · timing learned offline${status.modelReady ? " + model" : ""}`
+          : status.source === "poller"
+            ? `poller · ${alerts ? `alerts ${fmtAgo(wallNow - alerts.fetchedAt)}` : "live feeds"}`
+            : "connecting…"}
+      </span>
+      <a className="hint link-a" href={`${BASE_PATH}/accuracy/`}>how accurate?</a>
+    </footer>
+  );
+
   return (
-    <Sheet mobile={mobile} raiseOn={selection.kind === "none" ? undefined : `${selection.kind}:${selection.id}`} header={header}>
+    <Sheet
+      mobile={mobile}
+      raiseOn={selection.kind === "none" ? undefined : `${selection.kind}:${selection.id}`}
+      header={header}
+      footer={footer}
+    >
       <SearchBox
         index={index}
         onPick={(id) => onSelect({ kind: "station", id })}
@@ -137,7 +160,10 @@ export default function Panel(props: Props) {
         />
       )}
       {selection.kind === "train" && !selectedTrain && (
-        <p className="muted">That train has finished its run. <button className="link" onClick={() => onSelect({ kind: "none" })}>Back to the map</button></p>
+        <p className="muted">
+          That train has finished its run.{" "}
+          <Button variant="ghost" onClick={() => onSelect({ kind: "none" })}>Back to the map</Button>
+        </p>
       )}
 
       {selection.kind === "none" && trains.length === 0 && (
@@ -157,7 +183,7 @@ export default function Panel(props: Props) {
                   const alert = routeStatus(alerts, id);
                   return (
                     <RouteBullet
-                      key={id} index={index} route={id} size={30} dim={!on}
+                      key={id} index={index} route={id} size="xl" dim={!on}
                       title={`${index.net.routes[id].name}${counts[id] ? ` · ${counts[id]} running` : ""}${alert ? ` · ${alert.count} service alert${alert.count > 1 ? "s" : ""}` : ""} — click to toggle, shift-click to isolate`}
                       onClick={(e) => onToggle(id, e.shiftKey)}
                     >
@@ -170,16 +196,16 @@ export default function Panel(props: Props) {
             ))}
           </div>
 
-          <div className="panel-row">
-            <button onClick={() => onAll(true)}>all</button>
-            <button onClick={() => onAll(false)}>none</button>
-            <label className="check">
-              <input type="checkbox" checked={showRibbons} onChange={(e) => onRibbons(e.target.checked)} /> uncertainty
-            </label>
+          <div className="toolbar">
+            <Button onClick={() => onAll(true)}>all</Button>
+            <Button onClick={() => onAll(false)}>none</Button>
+            <Switch checked={showRibbons} onChange={onRibbons}>uncertainty</Switch>
             {status.source === "poller" && (
-              <button className={`link ${showHistory ? "active" : ""}`} onClick={() => setShowHistory((s) => !s)}>
-                history
-              </button>
+              <span className="toolbar-end">
+                <Button variant="ghost" on={showHistory} onClick={() => setShowHistory((s) => !s)} ariaExpanded={showHistory}>
+                  history
+                </Button>
+              </span>
             )}
           </div>
 
@@ -191,24 +217,12 @@ export default function Panel(props: Props) {
           )}
 
           {delayAlerts.length > 0 && (
-            <section className="alerts-section">
-              <h2 className="section-title">Service changes · {delayAlerts.length} active</h2>
+            <Section className="alerts-section" title={`Service changes · ${delayAlerts.length} active`}>
               <AlertList index={index} alerts={delayAlerts} limit={3} />
-            </section>
+            </Section>
           )}
         </>
       )}
-
-      <footer className="panel-foot">
-        <span className="hint">
-          {status.source === "browser"
-            ? `tracking in this browser · timing learned offline${status.modelReady ? " + model" : ""}`
-            : status.source === "poller"
-              ? `poller · ${alerts ? `alerts ${fmtAgo(wallNow - alerts.fetchedAt)}` : "live feeds"}`
-              : "connecting…"}
-        </span>
-        <a className="hint link-a" href={`${BASE_PATH}/accuracy/`}>how accurate?</a>
-      </footer>
     </Sheet>
   );
 }

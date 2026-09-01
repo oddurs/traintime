@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
 import { searchStations } from "@/lib/arrivals";
+import { Button, Field, IconButton, Row } from "./ui";
 import RouteBullet from "./RouteBullet";
 
 interface Props {
@@ -11,54 +12,63 @@ interface Props {
   onChange: (id: string | null) => void;
 }
 
+/** How many destinations to offer: enough to recognise one, few enough to read at a glance. */
+const RESULTS = 5;
+
 /** Turns a station board into a journey: pick where you are going and the rows answer that. */
 export default function DestinationPicker({ index, destination, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const results = useMemo(() => (q ? searchStations(index, q, 5) : []), [index, q]);
+  const results = useMemo(() => (q ? searchStations(index, q, RESULTS) : []), [index, q]);
 
   if (destination) {
     return (
       <div className="dest-chip">
         <span>to <b>{index.stationName(destination)}</b></span>
-        <button className="icon-btn" onClick={() => onChange(null)} aria-label="Clear destination">×</button>
+        <IconButton icon="xmark" onClick={() => onChange(null)} ariaLabel="Clear destination" />
       </div>
     );
   }
 
   if (!open) {
     return (
-      <button className="dest-add" onClick={() => setOpen(true)}>
-        + where are you going?
-      </button>
+      <Button variant="tinted" start icon="plus" onClick={() => setOpen(true)}>
+        where are you going?
+      </Button>
     );
   }
 
+  const choose = (id: string) => { onChange(id); setOpen(false); setQ(""); };
+
   return (
-    <div className="dest-search">
-      <input
-        autoFocus
-        value={q}
-        placeholder="Destination station…"
-        aria-label="Destination station"
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") { setOpen(false); setQ(""); }
-          if (e.key === "Enter" && results[0]) { onChange(results[0].id); setOpen(false); setQ(""); }
-        }}
-      />
+    <Field
+      bare
+      autoFocus
+      value={q}
+      onChange={setQ}
+      placeholder="Destination station…"
+      ariaLabel="Destination station"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") { setOpen(false); setQ(""); }
+        if (e.key === "Enter" && results[0]) choose(results[0].id);
+      }}
+    >
       {results.length > 0 && (
-        <ul className="results">
+        <ul className="popover">
           {results.map((r) => (
-            <li key={r.id}>
-              <button onClick={() => { onChange(r.id); setOpen(false); setQ(""); }}>
-                <span className="res-name">{r.name}</span>
-                <span className="res-routes">{r.routes.slice(0, 5).map((rt) => <RouteBullet key={rt} index={index} route={rt} size={16} />)}</span>
-              </button>
-            </li>
+            <Row
+              key={r.id}
+              onClick={() => choose(r.id)}
+              title={r.name}
+              trailing={
+                <span className="res-routes">
+                  {r.routes.slice(0, 5).map((rt) => <RouteBullet key={rt} index={index} route={rt} size="sm" />)}
+                </span>
+              }
+            />
           ))}
         </ul>
       )}
-    </div>
+    </Field>
   );
 }

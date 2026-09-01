@@ -41,11 +41,11 @@ await send("Runtime.enable"); await send("Page.enable");
 await send("Page.navigate",{url:`${BASE}/?v=${Date.now()}`});
 await sleep(9000);
 // Open a board, because that is where the live content is.
-await js(`(()=>{const i=document.querySelector('.search input'); if(!i) return;
+await js(`(()=>{const i=document.querySelector('.field input'); if(!i) return;
   const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;
   s.call(i,'Union Sq'); i.dispatchEvent(new Event('input',{bubbles:true}));})()`);
 await sleep(2200);
-await js(`(()=>{const b=document.querySelector('.results li button'); if(b) b.click();})()`);
+await js(`(()=>{const b=document.querySelector('.popover li button'); if(b) b.click();})()`);
 await sleep(3000);
 
 const report = await js(`(()=>{

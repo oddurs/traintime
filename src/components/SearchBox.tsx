@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
 import { searchStations } from "@/lib/arrivals";
+import { Button, Field, Row } from "./ui";
 import RouteBullet from "./RouteBullet";
 
 interface Props {
@@ -64,43 +65,47 @@ export default function SearchBox({ index, onPick, onNearby, nearby, locating }:
   };
 
   return (
-    <div className="search" ref={boxRef}>
-      <div className="search-row">
-        <svg className="search-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-        <input
-          ref={inputRef}
-          value={q}
-          placeholder="Search stations…"
-          aria-label="Search stations"
-          onChange={(e) => { setQ(e.target.value); setCursor(0); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={onKeyDown}
-        />
-        <button
-          className={`near-btn ${nearby ? "on" : ""}`}
-          onClick={onNearby}
-          aria-pressed={nearby}
+    <Field
+      value={q}
+      onChange={(v) => { setQ(v); setCursor(0); setOpen(true); }}
+      placeholder="Search stations…"
+      ariaLabel="Search stations"
+      icon="magnifyingglass"
+      inputRef={inputRef}
+      boxRef={boxRef}
+      onFocus={() => setOpen(true)}
+      onKeyDown={onKeyDown}
+      accessory={
+        <Button
+          variant="ghost" on={nearby} onClick={onNearby} ariaPressed={nearby}
+          icon={nearby ? "location" : undefined}
           title={nearby ? "Stop following my location" : "Show the station nearest me and keep it up to date"}
         >
           {locating ? "locating…" : nearby ? "following you" : "near me"}
-        </button>
-      </div>
+        </Button>
+      }
+    >
       {open && results.length > 0 && (
-        <ul className="results" role="listbox">
+        <ul className="popover" role="listbox">
           {results.map((r, i) => (
-            <li key={r.id} role="option" aria-selected={i === active}>
-              <button className={i === active ? "on" : ""} onMouseEnter={() => setCursor(i)} onClick={() => pick(r)}>
-                <span className="res-name">{r.name}</span>
+            <Row
+              key={r.id}
+              role="option"
+              selected={i === active}
+              active={i === active}
+              onHover={() => setCursor(i)}
+              onClick={() => pick(r)}
+              title={r.name}
+              trailing={
                 <span className="res-routes">
-                  {r.routes.slice(0, 6).map((rt) => <RouteBullet key={rt} index={index} route={rt} size={16} />)}
+                  {r.routes.slice(0, 6).map((rt) => <RouteBullet key={rt} index={index} route={rt} size="sm" />)}
                   {r.meters !== undefined && <em>{r.meters < 1000 ? `${Math.round(r.meters)} m` : `${(r.meters / 1000).toFixed(1)} km`}</em>}
                 </span>
-              </button>
-            </li>
+              }
+            />
           ))}
         </ul>
       )}
-
-    </div>
+    </Field>
   );
 }

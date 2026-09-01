@@ -7,9 +7,11 @@ import type { AlertIndex } from "@/lib/alerts";
 import type { TrainPosition } from "@/lib/types";
 import { arrivalsAt } from "@/lib/arrivals";
 import { STALLED_S } from "@/lib/format";
-import { directionLabel, fmtClock, fmtMin } from "@/lib/format";
+import { directionLabel, fmtClock } from "@/lib/format";
 import { walkSeconds } from "@/lib/places";
+import { IconButton, List, Row } from "./ui";
 import RouteBullet from "./RouteBullet";
+import Countdown from "./Countdown";
 import AlertList from "./AlertList";
 import DestinationPicker from "./DestinationPicker";
 
@@ -31,6 +33,11 @@ interface Props {
   positionsRef?: React.RefObject<Map<string, TrainPosition>>;
   onClose: () => void;
 }
+
+/** Close enough that a number would be a lie. */
+const HERE_S = 30;
+/** How often the board re-reads the motion loop's positions to see what has stopped moving. */
+const STALL_POLL_MS = 5000;
 
 /** How a person would say it out loud, for a screen reader. */
 function spoken(index: NetworkIndex, route: string, dest: string, secs: number, atPlatform: boolean, sigma: number): string {
@@ -65,16 +72,6 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
   }, [alerts, station, routes, index]);
 
   /*
-   * What a screen reader is told as the board changes.
-   *
-   * The entire content of this app is a number that changes every second, and it was announced
-   * once when the board opened and never again. Announcing every tick would be unusable, so this
-   * is the next train rounded to the minute: it changes about once a minute, which is the rate at
-   * which the answer actually changes.
-   */
-  // Keyed on the minute rather than the second, so the announcement is re-made only when what it
-  // says has actually changed.
-  /*
    * A countdown built on a train that has not moved in minutes is not a countdown. "Three stops
    * away" is true and useless if the train has been stopped for six minutes; saying so is the
    * difference between waiting and walking.
@@ -92,11 +89,19 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
       setStalled((prev) => (prev.size === out.size && [...out].every(([k, v]) => prev.get(k) === v) ? prev : out));
     };
     read();
-    const t = setInterval(read, 5000);
+    const t = setInterval(read, STALL_POLL_MS);
     return () => clearInterval(t);
   }, [positionsRef]);
   const stalledMinutes = (id: string) => stalled.get(id) ?? null;
 
+  /*
+   * What a screen reader is told as the board changes.
+   *
+   * The entire content of this app is a number that changes every second, and it was announced
+   * once when the board opened and never again. Announcing every tick would be unusable, so this
+   * is the next train rounded to the minute: it changes about once a minute, which is the rate at
+   * which the answer actually changes.
+   */
   const spokenMinute = Math.round(now / 60);
   const spokenNext = useMemo(() => {
     const next = groups.flatMap((g) => g.arrivals).sort((a, b) => a.eta - b.eta)[0];
@@ -114,29 +119,25 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         <div>
           <h2>{name}</h2>
           {distance !== undefined && (
-            <div className="board-distance">
+            <div className="board-sub near">
               {distance < 1000 ? `${Math.round(distance)} m away` : `${(distance / 1000).toFixed(1)} km away`}
               {walk !== undefined && ` · about ${Math.max(1, Math.round(walk / 60))} min walk`}
             </div>
           )}
-          {stale !== undefined && <div className="board-stale">last seen {Math.round(stale)} s ago · reconnecting</div>}
+          {stale !== undefined && <div className="board-sub stale">last seen {Math.round(stale)} s ago · reconnecting</div>}
           <div className="board-routes">
-            {routes.map((r) => <RouteBullet key={r} index={index} route={r} size={18} />)}
+            {routes.map((r) => <RouteBullet key={r} index={index} route={r} size="md" />)}
           </div>
         </div>
         <div className="board-actions">
           {onToggleSave && (
-            <button
-              className={`icon-btn ${saved ? "on" : ""}`}
-              onClick={onToggleSave}
-              aria-pressed={!!saved}
-              aria-label={saved ? "Remove from saved stations" : "Save this station"}
+            <IconButton
+              icon={saved ? "star.fill" : "star"} on={saved} onClick={onToggleSave} ariaPressed={!!saved}
+              ariaLabel={saved ? "Remove from saved stations" : "Save this station"}
               title={saved ? "Saved — tap to remove" : "Save this station"}
-            >
-              {saved ? "★" : "☆"}
-            </button>
+            />
           )}
-          <button className="icon-btn" onClick={onClose} aria-label="Close station">×</button>
+          <IconButton icon="xmark" onClick={onClose} ariaLabel="Close station" />
         </div>
       </header>
 
@@ -159,48 +160,38 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         // the next one to leave. When every train listed starts its run here, the board says so.
         const leaving = g.arrivals.length > 0 && g.arrivals.every((a) => a.departing);
         return (
-        <div className="board-group" key={g.direction}>
-          <h3>{leaving ? "Departures" : directionLabel(g.direction)}</h3>
-          <span className="board-toward">toward {g.label}</span>
-          <ul className="arrivals">
-            {g.arrivals.map((a) => {
-              const secs = a.eta - now;
-              const here = a.atPlatform || secs < 30;
-              const catchable = walk === undefined ? undefined : secs >= walk;
-              return (
-                <li key={a.id}>
-                  <button
+          <div className="board-group" key={g.direction}>
+            <h3>{leaving ? "Departures" : directionLabel(g.direction)}</h3>
+            <span className="board-toward">toward {g.label}</span>
+            <List leading>
+              {g.arrivals.map((a) => {
+                const secs = a.eta - now;
+                const here = a.atPlatform || secs < HERE_S;
+                const catchable = walk === undefined ? undefined : secs >= walk;
+                const stalledFor = stalledMinutes(a.id);
+                const context =
+                  a.rideSeconds !== undefined
+                    ? `arrives ${fmtClock(a.destEta!)} · ${Math.round(a.rideSeconds / 60)} min ride`
+                    : a.departing && a.atPlatform ? "at the platform, ready to leave"
+                    : a.atPlatform ? "at the platform"
+                    : catchable === false ? "too soon to reach on foot"
+                    : stalledFor !== null ? `stopped for ${stalledFor} min · ${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stops away`}`
+                    : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`;
+                return (
+                  <Row
+                    key={a.id}
+                    leading={<RouteBullet index={index} route={a.route} size="lg" />}
+                    title={index.stationName(a.destination)}
+                    subtitle={context}
+                    trailing={<Countdown seconds={secs} here={here} departing={a.departing} missed={catchable === false} />}
                     onClick={() => onSelect({ kind: "train", id: a.id })}
-                    title="Show this train on the map"
-                    aria-label={spoken(index, a.route, a.destination, secs, a.atPlatform, a.sigma)}
-                  >
-                    <RouteBullet index={index} route={a.route} size={26} />
-                    <span className="arr-dest">
-                      <b>{index.stationName(a.destination)}</b>
-                      <em>
-                        {a.rideSeconds !== undefined
-                          ? `arrives ${fmtClock(a.destEta!)} · ${Math.round(a.rideSeconds / 60)} min ride`
-                          : a.departing && a.atPlatform
-                          ? "at the platform, ready to leave"
-                          : a.atPlatform
-                          ? "at the platform"
-                          : catchable === false
-                            ? "too soon to reach on foot"
-                            : stalledMinutes(a.id) !== null
-                            ? `stopped for ${stalledMinutes(a.id)} min · ${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stops away`}`
-                            : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`}
-                      </em>
-                    </span>
-                    <span className={`arr-eta ${here ? "here" : ""} ${catchable === false ? "missed" : ""}`}>
-                      <b>{here ? (a.departing ? "go" : "now") : fmtMin(secs)}</b>
-                      {!here && <i>min</i>}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+                    title_="Show this train on the map"
+                    ariaLabel={spoken(index, a.route, a.destination, secs, a.atPlatform, a.sigma)}
+                  />
+                );
+              })}
+            </List>
+          </div>
         );
       })}
       {onDestination && <DestinationPicker index={index} destination={destination} onChange={onDestination} />}

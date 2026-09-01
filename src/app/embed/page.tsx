@@ -55,7 +55,7 @@ export default function Embed() {
   const highlight = useMemo(() => new Set(groups.flatMap((g) => g.arrivals.map((a) => a.id))), [groups]);
 
   return (
-    <main className="app embed">
+    <main className="app">
       <TrainMap
         index={index} statesRef={statesRef} positionsRef={positionsRef} clock={clock} speed={1}
         visibleRoutes={visible} showRibbons selection={selection} onSelect={() => {}}
@@ -65,13 +65,13 @@ export default function Embed() {
       {index && opts.station && opts.board && (
         <div className="embed-card">
           <h2>{index.stationName(opts.station)}</h2>
-          {groups.length === 0 && <p className="muted small">No trains approaching.</p>}
+          {groups.length === 0 && <p className="muted hint">No trains approaching.</p>}
           {groups.map((g) => (
             <div className="embed-group" key={g.direction}>
               <h3>{directionLabel(g.direction)}</h3>
               {g.arrivals.map((a) => (
                 <div className="embed-row" key={a.id}>
-                  <RouteBullet index={index} route={a.route} size={19} />
+                  <RouteBullet index={index} route={a.route} size="md" />
                   <span className="embed-dest">{index.stationName(a.destination)}</span>
                   <span className="embed-eta">{a.atPlatform ? "here" : fmtMin(a.eta - now)}</span>
                 </div>

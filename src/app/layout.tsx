@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { CHROME_COLOR } from "@/lib/palette";
 import ServiceWorker from "@/components/ServiceWorker";
 import { BASE_PATH } from "@/lib/basePath";
 import "./globals.css";
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b0b0d",
+  themeColor: CHROME_COLOR,
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",

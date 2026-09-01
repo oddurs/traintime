@@ -1,5 +1,6 @@
 import type { LonLat, Network, Station } from "./types";
 import { distM, makePath, type Path } from "./geo";
+import { PALETTE } from "./palette";
 import { LineEngine } from "./layout";
 
 export const parentOf = (id: string) => id.replace(/[NS]$/, "");
@@ -102,7 +103,7 @@ export class NetworkIndex {
   }
 
   routeColor(route: string): string {
-    return this.net.routes[route]?.color ?? "#808183";
+    return this.net.routes[route]?.color ?? PALETTE["--route-unknown"];
   }
 
   /**

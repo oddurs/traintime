@@ -9,18 +9,34 @@ interface Props {
   /** Bumping this pulls a collapsed sheet up to `half` (e.g. a station was selected). */
   raiseOn?: string;
   header: React.ReactNode;
+  footer?: React.ReactNode;
   children: React.ReactNode;
 }
 
-const HEIGHTS: Record<SheetStop, string> = { peek: "auto", half: "52vh", full: "88vh" };
+/** How far a drag has to travel before it counts as a move between stops, in points. */
+const COMMIT_PX = 40;
+/** How far the sheet will follow a finger past its stop, so a drag has somewhere to go. */
+const RUBBER_UP = -30;
+const RUBBER_DOWN = 120;
+
+const ORDER: SheetStop[] = ["peek", "half", "full"];
 
 /**
  * On phones the panel is a bottom sheet you can drag between three stops; on wider screens it is
  * an ordinary side panel. One set of children either way.
+ *
+ * The heights themselves live in the stylesheet as `--sheet-half` and `--sheet-full`, reached
+ * through the stop's class — they are a decision about the interface, not about this component.
  */
-export default function Sheet({ mobile, raiseOn, header, children }: Props) {
+export default function Sheet({ mobile, raiseOn, header, footer, children }: Props) {
   const [stop, setStop] = useState<SheetStop>("peek");
   const [drag, setDrag] = useState<{ y0: number; dy: number } | null>(null);
+  /**
+   * Whether anything has scrolled out of sight above the fold. A header that grows a hairline
+   * only once there is something under it is how a native list says "there is more up there";
+   * a rule that is always drawn says nothing at all.
+   */
+  const [scrolled, setScrolled] = useState(false);
   // Starts undefined so a sheet that mounts with a selection already made still rises to show it.
   const [lastRaise, setLastRaise] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLElement>(null);
@@ -34,11 +50,21 @@ export default function Sheet({ mobile, raiseOn, header, children }: Props) {
     if (raiseOn) setStop((s) => (s === "peek" ? "half" : s));
   }
 
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const past = e.currentTarget.scrollTop > 0;
+    setScrolled((was) => (was === past ? was : past));
+  };
+
+  const scroll = (
+    <div className="panel-scroll" onScroll={onScroll}>{children}</div>
+  );
+
   if (!mobile) {
     return (
-      <aside className="panel" ref={ref}>
+      <aside className={`panel${scrolled ? " is-scrolled" : ""}`} ref={ref}>
         {header}
-        <div className="panel-scroll">{children}</div>
+        {scroll}
+        {footer}
       </aside>
     );
   }
@@ -50,10 +76,9 @@ export default function Sheet({ mobile, raiseOn, header, children }: Props) {
   const onMove = (e: React.PointerEvent) => drag && setDrag({ ...drag, dy: e.clientY - drag.y0 });
   const onUp = () => {
     if (!drag) return;
-    const order: SheetStop[] = ["peek", "half", "full"];
-    const i = order.indexOf(stop);
-    if (drag.dy < -40) setStop(order[Math.min(order.length - 1, i + 1)]);
-    else if (drag.dy > 40) setStop(order[Math.max(0, i - 1)]);
+    const i = ORDER.indexOf(stop);
+    if (drag.dy < -COMMIT_PX) setStop(ORDER[Math.min(ORDER.length - 1, i + 1)]);
+    else if (drag.dy > COMMIT_PX) setStop(ORDER[Math.max(0, i - 1)]);
     setDrag(null);
   };
 
@@ -61,9 +86,9 @@ export default function Sheet({ mobile, raiseOn, header, children }: Props) {
     <aside
       // `has-answer` lets the phone sheet stand its brand chrome down once there is something
       // to read: the station and its countdown are what the sheet was raised to show.
-      className={`panel sheet ${stop}${raiseOn ? " has-answer" : ""}`}
+      className={`panel sheet ${stop}${raiseOn ? " has-answer" : ""}${scrolled ? " is-scrolled" : ""}`}
       ref={ref}
-      style={{ height: HEIGHTS[stop], transform: drag ? `translateY(${Math.max(-30, Math.min(120, drag.dy))}px)` : undefined }}
+      style={drag ? { transform: `translateY(${Math.max(RUBBER_UP, Math.min(RUBBER_DOWN, drag.dy))}px)` } : undefined}
     >
       <div className="grabber" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
            role="button" tabIndex={0} aria-label="Resize panel"
@@ -74,7 +99,8 @@ export default function Sheet({ mobile, raiseOn, header, children }: Props) {
         <i />
       </div>
       {header}
-      <div className="panel-scroll">{children}</div>
+      {scroll}
+      {footer}
     </aside>
   );
 }

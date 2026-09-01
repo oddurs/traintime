@@ -1,3 +1,5 @@
+import { PALETTE } from "./palette";
+
 /**
  * The map's palette, read from the same token layer as everything else.
  *
@@ -9,20 +11,7 @@
  * The fallbacks are for a server render, where there is no document to read from; they are only
  * ever used to produce markup that the client immediately re-themes.
  */
-const FALLBACK: Record<string, string> = {
-  "--map-casing": "#000000",
-  "--map-station-fill": "#0b0b0d",
-  "--map-station-edge": "#c9c9d2",
-  "--map-label": "#cfcfcf",
-  "--map-halo": "#000000",
-  "--map-uncertain": "#9fd0ff",
-  "--map-hold": "#ffb454",
-  "--map-focus": "rgba(255,255,255,0.08)",
-  "--map-chevron-edge": "rgba(0,0,0,0.55)",
-  "--route-unknown": "#808183",
-  "--route-unknown-text": "#ffffff",
-  "--label": "#f5f5f7",
-};
+const FALLBACK: Record<string, string> = PALETTE;
 
 let cache: Record<string, string> | null = null;
 
@@ -40,4 +29,4 @@ export function mapTheme(): Record<string, string> {
 }
 
 /** One colour by token name. */
-export const paint = (name: keyof typeof FALLBACK | string): string => mapTheme()[name] ?? FALLBACK[name] ?? "#000";
+export const paint = (name: keyof typeof FALLBACK | string): string => mapTheme()[name] ?? FALLBACK[name] ?? PALETTE["--ground"];

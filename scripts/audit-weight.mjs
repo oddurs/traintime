@@ -95,10 +95,13 @@ await send("Page.navigate",{url:`${target}/?v=${Date.now()}`});
 // Time until something a rider can read is on screen.
 let readable = 0;
 for (let i = 0; i < 400; i++) {
-  const ok = await js(`!!document.querySelector('.arrivals button, .board, .search input')`);
+  const ok = await js(`!!document.querySelector('.list .row, .board, .field input')`);
   if (ok) { readable = Date.now() - started; break; }
   await sleep(100);
 }
+// When nothing readable turned up, say what was actually on screen rather than only that it
+// wasn't: a slow network and a broken selector look identical from the outside.
+const onScreen = readable ? "" : await js(`JSON.stringify({panel:!!document.querySelector('.panel'), field:!!document.querySelector('.field'), booting:!!document.querySelector('.booting'), text:(document.body.innerText||'').slice(0,120)})`);
 // When does the map itself appear? It is deliberately held back so the board wins the link, and
 // how long that costs is worth knowing rather than assuming.
 let mapAt = 0;
@@ -113,7 +116,7 @@ ws.close(); chrome.kill("SIGKILL"); stop();
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 console.log(`weight — ${profile}, 4x CPU throttle, cold cache, iPhone-sized viewport`);
 console.log(`  first contentful paint      ${firstPaint ? firstPaint + " ms" : "not seen"}`);
-console.log(`  something readable on screen ${readable ? readable + " ms" : "not within 40 s"}`);
+console.log(`  something readable on screen ${readable ? readable + " ms" : "not within 40 s — " + onScreen}`);
 console.log(`  transferred                 ${kb(total)} over ${bytes.size} requests`);
 console.log(`  map canvas on screen        ${mapAt ? mapAt + " ms" : "not within 40 s"}`);
 console.log("\n  what arrived before the page was readable:");

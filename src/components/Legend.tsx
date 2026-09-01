@@ -1,22 +1,32 @@
 "use client";
 
+import { Button, Card } from "./ui";
+
 interface Props {
   onDismiss: () => void;
 }
 
-/** One reading of the map's visual language, dismissed for good once understood. */
+/** The map's visual language, read once and dismissed for good. */
+const ROWS: { swatch: string; text: string }[] = [
+  { swatch: "dot", text: "at a station — confirmed by the feed" },
+  { swatch: "chev", text: "moving — points the way it is going" },
+  { swatch: "glow", text: "glow — where it might be, ±1σ" },
+  { swatch: "hold", text: "amber ring — stopped: a signal, the train in front, or not moving at all" },
+  { swatch: "ghost", text: "faded — assigned but not yet in service" },
+  { swatch: "stalefade", text: "dimmed — the feed has stopped revising it" },
+];
+
 export default function Legend({ onDismiss }: Props) {
   return (
-    <div className="legend" role="note">
-      <div className="legend-rows">
-        <span className="legend-row"><i className="swatch dot" /> at a station — confirmed by the feed</span>
-        <span className="legend-row"><i className="swatch chev" /> moving — points the way it is going</span>
-        <span className="legend-row"><i className="swatch glow" /> glow — where it might be, ±1σ</span>
-        <span className="legend-row"><i className="swatch hold" /> amber ring — stopped: a signal, the train in front, or not moving at all</span>
-        <span className="legend-row"><i className="swatch ghost" /> faded — assigned but not yet in service</span>
-        <span className="legend-row"><i className="swatch stalefade" /> dimmed — the feed has stopped revising it</span>
+    <Card className="legend">
+      <div className="legend-rows" role="note">
+        {ROWS.map((r) => (
+          <span className="legend-row" key={r.swatch}>
+            <i className={`swatch ${r.swatch}`} aria-hidden="true" /> {r.text}
+          </span>
+        ))}
       </div>
-      <button className="legend-x" onClick={onDismiss} aria-label="Dismiss legend">Got it</button>
-    </div>
+      <span><Button onClick={onDismiss} ariaLabel="Dismiss legend">Got it</Button></span>
+    </Card>
   );
 }

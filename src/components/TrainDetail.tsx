@@ -5,6 +5,7 @@ import type { Selection, TrainPosition, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
 import { etaProvenance, fmtIn, holdReason, kmh, provenance } from "@/lib/format";
+import { Button, Callout, Card, IconButton, List, Meter, Notice, Row } from "./ui";
 import RouteBullet from "./RouteBullet";
 import AlertList from "./AlertList";
 import { betterConnection } from "@/lib/connection";
@@ -24,14 +25,20 @@ interface Props {
   onClose: () => void;
 }
 
+/** How often the readout re-samples the motion loop, which integrates every frame. */
+const SAMPLE_MS = 250;
+/** How many stops ahead are worth listing before it stops being a journey and becomes a table. */
+const STOPS_SHOWN = 10;
+/** Below this, "leaves in n seconds" is noise and the answer is "now". */
+const LEAVING_S = 5;
+
 /** One train: where it is, how we know, and what it will do next. */
 export default function TrainDetail({ index, state, positionsRef, byId, now, alerts, following, onFollow, onSelect, onClose, destination }: Props) {
-  // The map integrates motion every frame; sample it a few times a second for the readout.
   const [position, setPosition] = useState<TrainPosition | undefined>(undefined);
   useEffect(() => {
     const read = () => setPosition(positionsRef.current.get(state.id));
     read();
-    const id = setInterval(read, 250);
+    const id = setInterval(read, SAMPLE_MS);
     return () => clearInterval(id);
   }, [positionsRef, state.id]);
 
@@ -40,7 +47,7 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
   const prov = provenance(index, state, now);
   const hold = position ? holdReason(index, position, byId) : null;
   const routeAlerts = useMemo(() => (alerts?.byRoute.get(state.route) ?? []).filter((a) => a.category === "delay"), [alerts, state.route]);
-  const pct = position && position.length > 0 ? Math.round((100 * position.s) / position.length) : null;
+  const progress = position && position.length > 0 ? position.s / position.length : 0;
 
   /*
    * What you need when you are on the train rather than watching it: the next stop, what you can
@@ -62,54 +69,50 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
   return (
     <section className="detail" aria-label={dest ? `${state.route} train to ${dest}` : `${state.route} train`}>
       <header className="detail-head">
-        <RouteBullet index={index} route={state.route} size={30} />
+        <RouteBullet index={index} route={state.route} size="xl" />
         <div className="detail-title">
           <h2>{dest ? `to ${dest}` : `${state.route} train`}</h2>
-          <div className="muted">
+          <div className="sub">
             {state.trainId ?? state.id}
             {state.track ? ` · track ${state.track}` : ""}
             {state.assigned ? "" : " · unassigned"}
           </div>
         </div>
-        <button className="icon-btn" onClick={onClose} aria-label="Close train">×</button>
+        <IconButton icon="xmark" onClick={onClose} ariaLabel="Close train" />
       </header>
 
-      <div className={`provenance ${prov.confident ? "sure" : "modelled"}`}>
-        <span className="prov-dot" aria-hidden="true" />
-        {prov.line}
-      </div>
+      <Card>
+        <Notice tone={prov.confident ? "ok" : "warn"}>{prov.line}</Notice>
+      </Card>
 
       {nextName && (
-        <div className="next-stop">
-          <span className="next-label">Next stop</span>
-          <div className="next-row">
-            <b>{nextName}</b>
-            {nextIn !== null && <span className="next-eta num">{fmtIn(nextIn)}</span>}
-          </div>
-          {changes.length > 0 && (
-            <div className="next-changes">
-              <span>change for</span>
-              {changes.slice(0, 8).map((r) => <RouteBullet key={r} index={index} route={r} size={18} />)}
+        <Card>
+          <div className="next-stop">
+            <h3 className="sect-title">Next stop</h3>
+            <div className="next-row">
+              <b>{nextName}</b>
+              {nextIn !== null && <span className="next-eta">{fmtIn(nextIn)}</span>}
             </div>
-          )}
-        </div>
+            {changes.length > 0 && (
+              <div className="next-changes">
+                <span>change for</span>
+                {changes.slice(0, 8).map((r) => <RouteBullet key={r} index={index} route={r} size="md" />)}
+              </div>
+            )}
+          </div>
+        </Card>
       )}
 
       {swap && (
-        <button className="swap" onClick={() => onSelect({ kind: "train", id: swap.toId })}>
-          <span className="swap-lead">Faster</span>
-          <span className="swap-body">
-            Change at <b>{swap.atName}</b> for the <RouteBullet index={index} route={swap.toRoute} size={16} /> — about{" "}
-            <b>{Math.round(swap.saving / 60)} min</b> sooner.
-          </span>
-        </button>
+        <Callout lead="Faster" onClick={() => onSelect({ kind: "train", id: swap.toId })}>
+          Change at <b>{swap.atName}</b> for the <RouteBullet index={index} route={swap.toRoute} size="sm" /> — about{" "}
+          <b>{Math.round(swap.saving / 60)} min</b> sooner.
+        </Callout>
       )}
 
       {state.phase === "moving" && position && (
         <div className="motion">
-          <div className="motion-bar" role="img" aria-label={`${pct}% of the way to ${index.stationName(state.nextStop)}`}>
-            <i style={{ width: `${pct ?? 0}%` }} />
-          </div>
+          <Meter value={progress} ariaLabel={`${Math.round(progress * 100)}% of the way to ${index.stationName(state.nextStop)}`} />
           <div className="motion-facts">
             <span>{kmh(position.speed)} km/h</span>
             <span>{hold ?? position.motion}</span>
@@ -119,30 +122,28 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
       )}
       {state.phase === "dwelling" && state.expectedDeparture !== undefined && (
         <div className="motion-facts one">
-          <span>Leaves {state.expectedDeparture - now > 5 ? `in ${Math.round(state.expectedDeparture - now)} s` : "now"}</span>
+          <span>Leaves {state.expectedDeparture - now > LEAVING_S ? `in ${Math.round(state.expectedDeparture - now)} s` : "now"}</span>
         </div>
       )}
 
       {routeAlerts.length > 0 && <AlertList index={index} alerts={routeAlerts} limit={1} />}
 
-      <ol className="stops">
-        {state.stops.slice(0, 10).map((s, i) => (
-          <li key={s.id + i}>
-            <button onClick={() => onSelect({ kind: "station", id: s.id.replace(/[NS]$/, "") })}>
-              <span className="stop-name">{index.stationName(s.id)}</span>
-              <span className="stop-eta">
-                {fmtIn(s.eta - now)}
-                <em>{etaProvenance(s.eta, s.etaRaw, s.sigma)}</em>
-              </span>
-            </button>
-          </li>
+      <List>
+        {state.stops.slice(0, STOPS_SHOWN).map((s, i) => (
+          <Row
+            key={s.id + i}
+            title={index.stationName(s.id)}
+            subtitle={etaProvenance(s.eta, s.etaRaw, s.sigma)}
+            trailing={fmtIn(s.eta - now)}
+            onClick={() => onSelect({ kind: "station", id: s.id.replace(/[NS]$/, "") })}
+          />
         ))}
-      </ol>
+      </List>
 
       <div className="detail-actions">
-        <button className={following ? "primary" : ""} onClick={() => onFollow(!following)}>
+        <Button variant={following ? "filled" : "plain"} wide onClick={() => onFollow(!following)}>
           {following ? "following — tap to stop" : "follow this train"}
-        </button>
+        </Button>
       </div>
     </section>
   );

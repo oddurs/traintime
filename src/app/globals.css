@@ -1,23 +1,45 @@
 /*
- * traintime visual system.
+ * traintime — the visual system.
  *
- * Two sources, deliberately: the 1970 NYCTA Graphics Standards Manual for the information
- * design — Helvetica, sentence case, hierarchy from size and space rather than rules or boxes,
- * circles for local services and diamonds for express — and Apple's dark mode for the surface
- * treatment: near-black grounds, layered translucent material, continuous radii, restrained
- * accents, and type that stays readable at a glance in a dark carriage.
+ * Two systems meet here, and they are kept apart on purpose rather than averaged into a third.
+ *
+ * The 1970 NYCTA Graphics Standards Manual solves reading at distance under time pressure:
+ * Helvetica, hierarchy from size and space rather than rules and boxes, the roundel as the atom
+ * of identity, sentence case, a black ground. Apple's interface guidelines solve manipulation at
+ * arm's length: the system's own face, material instead of borders, a small vocabulary of
+ * controls with known affordances, and motion that says where a thing came from.
+ *
+ * So each is given the half it is good at. Anything that is information about the railway —
+ * station names, destinations, the countdown, the roundels — is set in the SIGNAGE voice.
+ * Anything that is the application talking about itself — buttons, fields, section headers,
+ * status lines, hints — is set in the INTERFACE voice, which on an Apple device is the system
+ * face. That one split is the difference between an app that shows you a subway and a web page
+ * about one.
+ *
+ * Everything below is a token, and the components above it are built from a named set of
+ * primitives (src/components/ui) rather than from raw markup. scripts/audit-design.ts fails the
+ * build on any colour, spacing, radius, type style or duration written by hand — in this
+ * stylesheet, in the map's palette, or in a component.
  */
 
 :root {
   color-scheme: dark;
 
-  /* ---- Surfaces. Elevation is luminance and blur; borders are a last resort. ---- */
+  /* ---- Material. Elevation is luminance and blur; a border is the last resort. ---- */
   --ground: #000000;
-  --surface: rgba(20, 20, 22, 0.78);
-  --surface-solid: #16161a;
-  --surface-3: #101014;          /* sits on top of a bullet, so darker than the panel */
-  --raise: rgba(255, 255, 255, 0.06);
-  --raise-2: rgba(255, 255, 255, 0.11);
+  --mat-thin: rgba(24, 24, 27, 0.6);
+  --mat-regular: rgba(20, 20, 22, 0.78);
+  --mat-thick: rgba(16, 16, 19, 0.92);
+  --blur-thin: blur(20px) saturate(170%);
+  --blur-regular: blur(28px) saturate(150%);
+  --blur-thick: blur(40px) saturate(140%);
+  --surface-solid: #16161a;      /* a popover, which must never show the map through it */
+  --surface-sunken: #101014;     /* sits on top of a bullet, so darker than the panel */
+
+  /* ---- Fills, in Apple's three steps: what a control sits on inside a material. ---- */
+  --fill: rgba(255, 255, 255, 0.06);
+  --fill-2: rgba(255, 255, 255, 0.11);
+  --fill-3: rgba(255, 255, 255, 0.16);
   --separator: rgba(255, 255, 255, 0.085);
   --edge: rgba(255, 255, 255, 0.12);        /* the lit top edge of a glass panel */
   --edge-soft: rgba(255, 255, 255, 0.1);
@@ -34,6 +56,7 @@
   /* ---- Accents carry meaning and nothing else. ---- */
   --accent: #0a84ff;
   --accent-hover: #339cff;
+  --accent-fill: rgba(10, 132, 255, 0.16);
   --amber: #ff9f0a;
   --red: #ff453a;
   --green: #30d158;
@@ -64,33 +87,63 @@
   --mta-orange: #ff6319;
   --mta-grey: #6a6a75;
 
-  /* ---- Type. Helvetica first: the system's own typeface. Arial is its metric stand-in. ---- */
-  --font: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /*
+   * ---- Type: two voices. ----
+   *
+   * Signage is Helvetica — the system's own typeface, and the one every station is signed in.
+   * Interface is whatever the platform calls its own: San Francisco on an Apple device, Segoe on
+   * Windows, Roboto on Android. Chrome set in the host's face is most of what "native" means.
+   */
+  --font-signage: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 
   /*
-   * One scale, in rem so a reader who scales text up gets a bigger interface rather than clipped
-   * labels. Each step has a tracking to go with it: Helvetica is drawn for signage and sets loose
-   * at small sizes and loose-looking at large ones, so the scale tightens as it grows and opens up
-   * for the all-caps micro labels. Use the pair — `font: var(--t-title); letter-spacing:
-   * var(--tr-title)` — every time; the audit checks that they are never separated.
+   * One scale, in rem, so a reader who scales text up gets a bigger interface rather than clipped
+   * labels. Each step carries a tracking: Helvetica is drawn for signage and sets loose at small
+   * sizes and loose-looking at large ones, so the scale tightens as it grows and opens up for the
+   * all-caps micro labels. Use the pair — `font: var(--t-title); letter-spacing: var(--tr-title)`
+   * — every time; the audit fails the build if they are ever separated.
+   *
+   * The countdown is the one step that is fluid, and it measures the panel rather than the window
+   * (`cqi`): it is read from further away as the surface holding it grows, which on a phone is the
+   * sheet and on a desktop is a panel of fixed width. That replaced a media query that set it
+   * larger on small screens — an override of the scale rather than a part of it.
    */
-  --t-display: 700 1.9rem/1.06 var(--font);
-  --tr-display: -0.024em;
-  --t-large: 700 1.75rem/1.14 var(--font);
+  /*
+   * One knob for reading distance. A phone is held at about 35 cm and a desktop screen sits at
+   * about 55 cm, which is why iOS sets its body text larger than macOS does for the same purpose.
+   * The scale asks about the pointer rather than the window: a narrow window on a desk is still a
+   * desk, and a touchscreen is still an arm's length away however wide it is. Every step is
+   * multiplied by it, so the whole scale moves together and the proportions never change — which
+   * is the difference between a scale that responds and a pile of media queries overriding it.
+   */
+  --type-scale: 1;
+  --t-clock: 700 calc(clamp(1.75rem, 0.4rem + 6cqi, 2.4rem) * var(--type-scale))/1 var(--font-signage);
+  --tr-clock: -0.024em;
+  --t-large: 700 calc(1.75rem * var(--type-scale))/1.14 var(--font-signage);
   --tr-large: -0.022em;
-  --t-title: 700 1.25rem/1.2 var(--font);
+  --t-title: 700 calc(1.25rem * var(--type-scale))/1.2 var(--font-signage);
   --tr-title: -0.018em;
-  --t-headline: 600 0.9375rem/1.3 var(--font);
-  --tr-headline: -0.01em;
-  --t-body: 400 0.8125rem/1.45 var(--font);
+  --t-headline: 500 calc(0.9375rem * var(--type-scale))/1.3 var(--font-signage);
+  --tr-headline: -0.006em;
+  --t-body: 400 calc(0.8125rem * var(--type-scale))/1.45 var(--font-ui);
   --tr-body: 0em;
-  --t-caption: 400 0.72rem/1.35 var(--font);
-  --tr-caption: 0em;
-  --t-micro: 600 0.625rem/1.3 var(--font);
-  --tr-micro: 0.06em;
-  --t-code: 400 0.75rem/1.55 var(--mono);
+  --t-caption: 400 calc(0.75rem * var(--type-scale))/1.35 var(--font-ui);
+  --tr-caption: -0.003em;
+  --t-micro: 590 calc(0.625rem * var(--type-scale))/1.3 var(--font-ui);
+  --tr-micro: 0.055em;
+  --t-code: 400 calc(0.75rem * var(--type-scale))/1.55 var(--font-mono);
   --tr-code: 0em;
+  /*
+   * The roundel is the one type style whose size is a ratio rather than a step: the manual sets
+   * the character at about 58% of the diameter, so a 16px bullet in a search result and a 30px
+   * one heading a view are the same drawing. Two characters — GS, FS, SI — sit tighter to stay
+   * inside the shape, which is the same style with a different ratio, not a different style.
+   */
+  --roundel-ratio: 0.58;
+  --t-roundel: 500 calc(var(--bullet-size) * var(--roundel-ratio))/1 var(--font-signage);
+  --tr-roundel: -0.01em;
 
   /* ---- Radii, continuous rather than circular wherever the shape is large. ---- */
   --r-inner: 6px;
@@ -100,8 +153,10 @@
   --r-sheet: 24px;
   --r-pill: 999px;
 
-  /* ---- Elevation. ---- */
-  --shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  /* ---- Elevation: three steps, so depth is a decision rather than a habit. ---- */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.6);
   --hairline: 0.5px;
   --ring: 1.5px;
 
@@ -122,13 +177,24 @@
   /* ---- Sizes for the things that are a size rather than a space. ---- */
   --tap: 44px;              /* the smallest thing a finger is asked to hit */
   --control-h: 32px;        /* a button or field with a pointer on it */
+  --control-h-sm: 28px;
   --icon: 16px;
+  --icon-lg: 20px;
   --dot: 6px;
-  --bullet: 26px;
+  --pip: 8px;
+  --bullet-sm: 16px;
+  --bullet-md: 18px;
+  --bullet-lg: 26px;
+  --bullet-xl: 30px;
+  --switch-w: 38px;
+  --switch-h: 22px;
+  --switch-knob: 18px;
   --grabber-w: 36px;
   --panel-w: 336px;
   --doc-w: 720px;
   --embed-w: 304px;
+  --sheet-half: 52vh;
+  --sheet-full: 88vh;
 
   /* ---- One easing and one duration scale, so everything that moves moves the same way. ---- */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
@@ -137,12 +203,23 @@
   --ambient: 1.4s;   /* a loop that is meant to be ignored, not watched */
 }
 
+/* Held at arm's length rather than across a desk: the whole scale steps up by one notch. */
+@media (pointer: coarse) {
+  :root { --type-scale: 1.12; }
+}
+
+/* ===========================================================================
+   Ground
+   =========================================================================== */
+
 * { box-sizing: border-box; }
 html, body {
   margin: 0; height: 100%; background: var(--ground); color: var(--label);
-  font: var(--t-body); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; letter-spacing: var(--tr-body);
+  font: var(--t-body); letter-spacing: var(--tr-body);
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  font-optical-sizing: auto; -webkit-text-size-adjust: 100%;
 }
-button, input, select { font: inherit; }
+button, input, select { font: inherit; letter-spacing: inherit; }
 a { color: inherit; }
 .num { font-variant-numeric: tabular-nums; }
 /* Announced, never drawn: the live region that tells a screen reader the countdown changed. */
@@ -150,137 +227,310 @@ a { color: inherit; }
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
+:focus-visible { outline: var(--ring) solid var(--accent); outline-offset: var(--s0); border-radius: var(--r-inner); }
 
 .app { position: fixed; inset: 0; }
 .map { position: absolute !important; inset: 0; width: 100%; height: 100%; }
-.booting { position: absolute; inset: auto 0 var(--s5) 0; text-align: center; color: var(--label-3); font: var(--t-caption); pointer-events: none; letter-spacing: var(--tr-caption); }
+.booting { position: absolute; inset: auto 0 var(--s5) 0; text-align: center; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); pointer-events: none; }
+
+/* ===========================================================================
+   Primitives — the whole control vocabulary. Nothing above this line invents
+   its own button, row or field; src/components/ui is the only way to get one.
+   =========================================================================== */
+
+/* ---- Button ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--s1);
+  background: var(--fill); color: var(--label); border: none; border-radius: var(--r-chip);
+  padding: 0 var(--s3); min-height: var(--control-h); font: var(--t-caption); font-weight: 590;
+  letter-spacing: var(--tr-caption); cursor: pointer; white-space: nowrap;
+  transition: background var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.btn:hover { background: var(--fill-2); }
+.btn:active { background: var(--fill-3); transform: scale(0.97); }
+.btn:disabled { opacity: 0.35; cursor: default; }
+.btn:disabled:active { transform: none; }
+/* Tinted: the accent as a label on a quiet fill — Apple's default for a non-destructive action. */
+.btn--tinted { background: var(--accent-fill); color: var(--accent); }
+.btn--tinted:hover { background: var(--accent-fill); color: var(--accent-hover); }
+/* Filled: reserved for the one action a view is for. */
+.btn--filled { background: var(--accent); color: var(--on-accent); }
+.btn--filled:hover { background: var(--accent-hover); }
+.btn--ghost { background: none; color: var(--label-2); padding: 0 var(--s1); }
+.btn--ghost:hover { background: none; color: var(--label); }
+.btn--ghost.is-on { color: var(--amber); }
+.btn--wide { flex: 1; }
+.btn--touch { min-height: var(--tap); }
+.btn--start { justify-content: flex-start; text-align: left; width: 100%; }
+
+/* ---- Icon button: a square target with a drawn glyph, never a text character ---- */
+.icon-btn {
+  display: inline-grid; place-items: center; flex: none;
+  width: var(--control-h); height: var(--control-h); padding: 0;
+  background: none; border: none; border-radius: var(--r-pill); color: var(--label-2);
+  cursor: pointer; transition: background var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.icon-btn:hover { background: var(--fill); color: var(--label); }
+.icon-btn:active { transform: scale(0.92); }
+.icon-btn.is-on { color: var(--amber); }
+.icon { display: block; flex: none; }
+
+/* ---- Chip: a small piece of status, never interactive ---- */
+.chip {
+  display: inline-flex; align-items: center; gap: var(--s1); flex: none;
+  padding: var(--s0) var(--s2); border-radius: var(--r-pill);
+  font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
+}
+.chip--plain { color: var(--label-2); box-shadow: inset 0 0 0 1px var(--separator); }
+.chip--live { color: var(--green); box-shadow: inset 0 0 0 1px var(--tint-green); }
+.chip--replay { color: var(--amber); box-shadow: inset 0 0 0 1px var(--tint-amber); }
+
+/* ---- Field: one text input, with room for a leading icon and a trailing action ---- */
+.field { position: relative; }
+.field-row {
+  display: flex; align-items: center; gap: var(--s2);
+  background: var(--fill); border-radius: var(--r-chip); padding: 0 var(--s3); min-height: var(--tap);
+  transition: box-shadow var(--fast) var(--ease);
+}
+.field-row:focus-within { box-shadow: inset 0 0 0 var(--ring) var(--accent); }
+.field-icon { color: var(--label-3); flex: none; }
+.field input {
+  flex: 1; min-width: 0; background: none; border: none; padding: 0; border-radius: 0;
+  color: var(--label); font: var(--t-body); letter-spacing: var(--tr-body); color-scheme: dark;
+}
+.field input::placeholder { color: var(--label-3); }
+.field input:focus { outline: none; }
+/* A field with no chrome around it, used where the container already provides one. */
+.field--bare .field-row { min-height: var(--control-h); padding: 0 var(--s3); }
+
+/* ---- Select: the platform's own menu, in the system's chrome ---- */
+.select select {
+  background: var(--fill); color: var(--label); border: none; border-radius: var(--r-chip);
+  padding: 0 var(--s2); min-height: var(--control-h); color-scheme: dark; cursor: pointer;
+  font: var(--t-caption); letter-spacing: var(--tr-caption); font-weight: 590;
+}
+.select select:hover { background: var(--fill-2); }
+
+/* ---- Popover: results and menus that float above the panel ---- */
+.popover {
+  position: absolute; left: 0; right: 0; top: calc(100% + var(--s1)); z-index: 10;
+  margin: 0; padding: var(--s1); list-style: none;
+  background: var(--surface-solid); border-radius: var(--r-card);
+  box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge-soft);
+  max-height: 46vh; overflow-y: auto; overscroll-behavior: contain;
+}
+
+/*
+ * ---- List: the inset grouped list. ----
+ *
+ * One primitive, two insets. Separators stop short of the leading edge so the group reads as a
+ * single object rather than a stack of boxes, and how far short depends on what leads the row —
+ * a roundel or the text itself. Both were written out twice with different numbers before this.
+ */
+.list {
+  list-style: none; margin: 0; padding: 0;
+  background: var(--fill); border-radius: var(--r-card); overflow: hidden;
+  --row-inset: var(--s3);
+}
+.list--leading { --row-inset: var(--s7); }
+.list > li { position: relative; }
+.list > li + li::before {
+  content: ""; position: absolute; top: 0; left: var(--row-inset); right: 0;
+  height: var(--hairline); background: var(--separator);
+}
+.row {
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: var(--s3);
+  width: 100%; min-height: var(--tap); padding: var(--s2) var(--s3);
+  background: none; border: none; color: var(--label); text-align: left; cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+.row:hover { background: var(--fill); }
+.row:active { background: var(--fill-2); }
+.row--baseline { align-items: baseline; }
+.row-label { min-width: 0; }
+.row-label b {
+  display: block; font: var(--t-headline); letter-spacing: var(--tr-headline);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row-label em {
+  display: block; font: var(--t-caption); letter-spacing: var(--tr-caption); font-style: normal;
+  color: var(--label-3); margin-top: var(--s0);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row-trailing { flex: none; display: flex; align-items: center; gap: var(--s2); color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); font-variant-numeric: tabular-nums; }
+.row-disclosure { color: var(--label-3); flex: none; }
+
+/* ---- Card: a raised, rounded container inside the panel ---- */
+.card { background: var(--fill); border-radius: var(--r-card); padding: var(--s3); }
+.card--flush { padding: 0; }
+
+/* ---- Section: a micro-caps header over a group ---- */
+.sect { display: flex; flex-direction: column; gap: var(--s2); }
+.sect-title {
+  margin: 0; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
+  color: var(--label-3);
+}
+
+/* ---- Switch: the native toggle, in place of a checkbox ---- */
+.switch { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; min-height: var(--control-h); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.switch input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.switch i {
+  position: relative; display: block; flex: none;
+  width: var(--switch-w); height: var(--switch-h); border-radius: var(--r-pill);
+  background: var(--fill-2); transition: background var(--fast) var(--ease);
+}
+.switch i::after {
+  content: ""; position: absolute; top: var(--s0); left: var(--s0);
+  width: var(--switch-knob); height: var(--switch-knob); border-radius: 50%;
+  background: var(--label); box-shadow: var(--shadow-1);
+  transition: transform var(--fast) var(--ease);
+}
+.switch input:checked + i { background: var(--green); }
+.switch input:checked + i::after { transform: translateX(calc(var(--switch-w) - var(--switch-knob) - var(--s1))); }
+.switch input:focus-visible + i { outline: var(--ring) solid var(--accent); outline-offset: var(--s0); }
+
+/* ---- Meter: a proportion, never a control ---- */
+.meter { height: var(--s1); background: var(--fill-2); border-radius: var(--r-pill); overflow: hidden; }
+.meter i { display: block; height: 100%; border-radius: var(--r-pill); transition: width var(--slow) linear; }
+.meter--accent i { background: var(--accent); }
+.meter--amber i { background: var(--amber); }
+.meter--red i { background: var(--red); }
+
+/* ---- Toolbar: a row of controls that belong together ---- */
+.toolbar { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; color: var(--label-2); }
+.toolbar-end { margin-left: auto; }
+
+/* ---- Notice: a line of consequence, with a coloured pip ---- */
+.notice { display: flex; align-items: flex-start; gap: var(--s2); font: var(--t-caption); letter-spacing: var(--tr-caption); line-height: 1.45; color: var(--label-2); }
+.notice-pip { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--label-3); }
+.notice .notice-pip { margin-top: var(--s1); }
+.notice--plain .notice-pip { background: var(--label-3); }
+.notice--ok .notice-pip { background: var(--green); }
+.notice--warn .notice-pip { background: var(--amber); }
+.notice--bad .notice-pip { background: var(--red); }
+.notice--warn { color: var(--amber); }
+
+/* ---- Skeleton: what is shown while the first state is still arriving ---- */
 .skeleton { display: flex; flex-direction: column; gap: var(--s3); }
 .skeleton i {
   display: block; height: var(--s3); border-radius: var(--r-inner);
-  background: linear-gradient(90deg, var(--raise) 25%, var(--raise-2) 37%, var(--raise) 63%);
+  background: linear-gradient(90deg, var(--fill) 25%, var(--fill-2) 37%, var(--fill) 63%);
   background-size: 400% 100%; animation: shimmer var(--ambient) var(--ease) infinite;
 }
 .skeleton i:nth-child(2) { width: 72%; }
 .skeleton i:nth-child(3) { width: 54%; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 
-/* ---------- panel ---------- */
+/* ---- Countdown: the signature element, and the only fluid type in the system ---- */
+.clock { text-align: right; font-variant-numeric: tabular-nums; line-height: 1; }
+.clock b { display: block; font: var(--t-clock); letter-spacing: var(--tr-clock); }
+.clock i {
+  display: block; font: var(--t-micro); letter-spacing: var(--tr-micro); font-style: normal;
+  text-transform: uppercase; color: var(--label-3); margin-top: var(--s0);
+}
+.clock--here b { font: var(--t-title); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--green); }
+.clock--missed b { color: var(--label-3); }
+
+/* ===========================================================================
+   Panel — the one piece of chrome the map is read through
+   =========================================================================== */
+
+/*
+ * Translucent only where the blur exists to earn it.
+ *
+ * A material is a colour plus a blur, and without the blur it is just a hole: 78% over a map of
+ * bright coloured lines and white station labels is not a panel you can read. So the ground is
+ * opaque by default and steps back to material only where `backdrop-filter` is supported.
+ */
 .panel {
   position: absolute; top: var(--s3); left: var(--s3); z-index: 5;
   width: var(--panel-w); max-height: calc(100vh - var(--s5));
-  background: var(--surface);
-  backdrop-filter: blur(28px) saturate(150%); -webkit-backdrop-filter: blur(28px) saturate(150%);
+  background: var(--surface-solid);
   border-radius: var(--r-panel);
-  box-shadow: var(--shadow), inset 0 0 0 var(--hairline) var(--edge);
+  box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge);
   display: flex; flex-direction: column; overflow: hidden;
+  /* The countdown measures this, not the window: see --t-clock. */
+  container: panel / inline-size;
 }
-.panel-head { padding: var(--s4) var(--s4) var(--s3); flex: none; }
-.panel-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--s4) var(--s4); display: flex; flex-direction: column; gap: var(--s4); }
-.panel-foot { flex: none; display: flex; align-items: center; gap: var(--s3); justify-content: space-between; color: var(--label-3); border-top: var(--hairline) solid var(--separator); padding: var(--s3) var(--s4); font: var(--t-caption); letter-spacing: var(--tr-caption); }
+@supports (backdrop-filter: blur(1px)) {
+  .panel { background: var(--mat-regular); backdrop-filter: var(--blur-regular); -webkit-backdrop-filter: var(--blur-regular); }
+}
 
-.title-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
+.panel-head { padding: var(--s4) var(--s4) var(--s3); flex: none; position: relative; }
+/* The scroll edge: a hairline that appears only once there is something above the fold. */
+.panel-head::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--hairline);
+  background: var(--separator); opacity: 0; transition: opacity var(--fast) var(--ease);
+}
+.panel.is-scrolled .panel-head::after { opacity: 1; }
+.panel-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 0 var(--s4) var(--s4); display: flex; flex-direction: column; gap: var(--s4);
+  scroll-behavior: smooth;
+}
+.panel-foot {
+  flex: none; display: flex; align-items: center; gap: var(--s3); justify-content: space-between;
+  color: var(--label-3); border-top: var(--hairline) solid var(--separator);
+  padding: var(--s3) var(--s4); font: var(--t-caption); letter-spacing: var(--tr-caption);
+}
+
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
 .panel-head h1 { margin: 0; font: var(--t-title); letter-spacing: var(--tr-title); }
 .panel-head h1 a { text-decoration: none; }
-.mode { font: var(--t-micro); letter-spacing: var(--tr-micro); padding: var(--s0) var(--s2); border-radius: var(--r-inner); flex: none; }
-.mode.live { color: var(--green); box-shadow: inset 0 0 0 1px var(--tint-green); }
-.mode.replay { color: var(--amber); box-shadow: inset 0 0 0 1px var(--tint-amber); }
-.status { display: flex; align-items: center; gap: var(--s2); color: var(--label-2); margin-top: var(--s2); font: var(--t-caption); font-variant-numeric: tabular-nums; letter-spacing: var(--tr-caption); }
-.dot { width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--label-3); flex: none; }
-.dot.ok { background: var(--green); }
-.dot.bad { background: var(--red); }
-.warn { margin-top: var(--s2); color: var(--amber); font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.status { display: flex; align-items: center; gap: var(--s2); color: var(--label-2); margin-top: var(--s2); font: var(--t-caption); letter-spacing: var(--tr-caption); font-variant-numeric: tabular-nums; }
 .muted { color: var(--label-2); }
-.small { font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .hint { font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .link-a { color: var(--label-3); text-decoration: none; }
 .link-a:hover { color: var(--label); }
-
 .grabber { display: none; }
 
-/* ---------- controls ---------- */
-.panel-row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; color: var(--label-2); }
-.panel-row button, .detail-actions button, .tl-controls button, .alerts-more, .legend-x, .icon-btn, button.link {
-  background: var(--raise); color: var(--label); border: none; border-radius: var(--r-chip);
-  padding: var(--s2) var(--s3); font: var(--t-caption); font-weight: 600; cursor: pointer; min-height: var(--control-h);
-  transition: background var(--fast) var(--ease), transform var(--fast) var(--ease); letter-spacing: var(--tr-caption);
-}
-.panel-row button:active, .detail-actions button:active, .tl-controls button:active,
-.alerts-more:active, .legend-x:active, .icon-btn:active { transform: scale(0.97); }
-.panel-row button:hover, .detail-actions button:hover, .tl-controls button:hover, .alerts-more:hover, .legend-x:hover, .icon-btn:hover { background: var(--raise-2); }
-.panel-row button:disabled, .tl-controls button:disabled { opacity: 0.35; cursor: default; }
-button.link { margin-left: auto; background: none; padding: var(--s2) var(--s1); color: var(--label-2); }
-button.link.active { color: var(--amber); }
-button.primary, .detail-actions button.primary { background: var(--accent); color: var(--on-accent); }
-button.primary:hover { background: var(--accent-hover); }
-.icon-btn { width: var(--control-h); padding: 0; display: grid; place-items: center; font: var(--t-headline); color: var(--label-2); letter-spacing: var(--tr-headline); }
-.check { display: inline-flex; align-items: center; gap: var(--s2); font: var(--t-caption); cursor: pointer; min-height: var(--control-h); letter-spacing: var(--tr-caption); }
-.check input { accent-color: var(--accent); margin: 0; width: var(--icon); height: var(--icon); }
-select, .search input {
-  background: var(--raise); color: var(--label); border: none;
-  border-radius: var(--r-chip); padding: var(--s2); font: var(--t-caption); color-scheme: dark; min-height: var(--control-h); letter-spacing: var(--tr-caption);
-}
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* ---------- route bullets ---------- */
+/* ---- Route bullets ---- */
 .roundel {
   position: relative; display: inline-grid; place-items: center; flex: none;
   width: var(--bullet-size); height: var(--bullet-size);
   background: var(--bullet-color); border-radius: 50%;
-  border: none; padding: 0; font-family: var(--font); font-weight: 500; line-height: 1;
-  vertical-align: middle; letter-spacing: -0.01em;
+  border: none; padding: 0; vertical-align: middle;
+  font: var(--t-roundel); letter-spacing: var(--tr-roundel);
 }
-.roundel.diamond {
-  background: none;
-  /* The manual's express marker: a square on its point, the same optical area as the circle. */
-  filter: drop-shadow(0 0 0 transparent);
-}
+/* Two characters (GS, FS, SI) have to sit tighter to stay inside the shape. */
+.roundel.wide { --roundel-ratio: 0.42; }
+.roundel.diamond { background: none; }
 .roundel.diamond::before {
+  /* The manual's express marker: a square on its point, the same optical area as the circle. */
   content: ""; position: absolute; inset: 8%; background: var(--bullet-color);
   transform: rotate(45deg); border-radius: 2px;
 }
+.roundel.is-dim { opacity: 0.28; }
 .roundel-label { position: relative; z-index: 1; }
 button.roundel { cursor: pointer; transition: transform var(--fast) var(--ease); }
 button.roundel:hover { transform: scale(1.08); }
+button.roundel:active { transform: scale(0.98); }
 .roundel .count {
-  position: absolute; right: calc(var(--s0) * -1); bottom: calc(var(--s0) * -1); min-width: var(--icon); height: var(--icon); padding: 0 var(--s0); z-index: 2;
-  border-radius: var(--r-chip); background: var(--surface-3); color: var(--label-2);
+  position: absolute; right: calc(var(--s0) * -1); bottom: calc(var(--s0) * -1); z-index: 2;
+  min-width: var(--icon); height: var(--icon); padding: 0 var(--s0);
+  border-radius: var(--r-chip); background: var(--surface-sunken); color: var(--label-2);
   box-shadow: 0 0 0 var(--ring) var(--scrim);
-  font: var(--t-micro); display: grid; place-items: center; font-variant-numeric: tabular-nums; letter-spacing: var(--tr-micro);
+  font: var(--t-micro); letter-spacing: var(--tr-micro); display: grid; place-items: center; font-variant-numeric: tabular-nums;
 }
-.roundel .alert-pip { position: absolute; top: -1px; right: -1px; width: 8px; height: 8px; border-radius: 50%; z-index: 2; box-shadow: 0 0 0 var(--ring) var(--scrim); }
+.roundel .alert-pip {
+  position: absolute; top: -1px; right: -1px; width: var(--pip); height: var(--pip); z-index: 2;
+  border-radius: 50%; box-shadow: 0 0 0 var(--ring) var(--scrim);
+}
 .alert-pip.delay { background: var(--red); }
 .alert-pip.planned, .alert-pip.info { background: var(--amber); }
+.roundel-blank { width: var(--bullet-lg); height: var(--bullet-lg); border-radius: 50%; background: var(--fill-2); flex: none; }
 .routes { display: flex; flex-direction: column; gap: var(--s2); }
 .group { display: flex; flex-wrap: wrap; gap: var(--s2); }
 
-/* ---------- search ---------- */
-.search { position: relative; }
-.search-row { display: flex; align-items: center; gap: var(--s2); background: var(--raise); border-radius: var(--r-chip); padding: 0 var(--s3); min-height: var(--tap); }
-.search-row:focus-within { box-shadow: inset 0 0 0 var(--ring) var(--accent); }
-.search-icon { width: var(--icon); height: var(--icon); color: var(--label-3); flex: none; }
-.search input { flex: 1; background: none; padding: 0; font: var(--t-body); color: var(--label); min-width: 0; border-radius: 0; letter-spacing: var(--tr-body); }
-.search input::placeholder { color: var(--label-3); }
-.search input:focus { outline: none; }
-.near-btn { background: none; border: none; color: var(--accent); font: var(--t-caption); font-weight: 600; cursor: pointer; padding: var(--s2) var(--s1); white-space: nowrap; min-height: var(--control-h); letter-spacing: var(--tr-caption); }
-.near-btn.on { color: var(--green); }
-.results {
-  position: absolute; left: 0; right: 0; top: calc(100% + var(--s1)); z-index: 10; margin: 0; padding: var(--s1); list-style: none;
-  background: var(--surface-solid); border-radius: var(--r-card); box-shadow: var(--shadow), inset 0 0 0 var(--hairline) var(--edge-soft);
-  max-height: 46vh; overflow-y: auto;
-}
-.results.empty { padding: var(--s3); color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); }
-.results li button {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: 100%;
-  background: none; border: none; color: var(--label); text-align: left; padding: var(--s2); border-radius: var(--r-chip);
-  cursor: pointer; font: var(--t-body); min-height: var(--tap); letter-spacing: var(--tr-body);
-}
-.results li button.on, .results li button:hover { background: var(--raise-2); }
-.res-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ---- Search ---- */
+.res-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--t-body); letter-spacing: var(--tr-body); }
 .res-routes { display: flex; align-items: center; gap: var(--s1); flex: none; }
-.res-routes em { font-style: normal; color: var(--label-3); font: var(--t-caption); margin-left: var(--s1); font-variant-numeric: tabular-nums; letter-spacing: var(--tr-caption); }
+.res-routes em { font-style: normal; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); margin-left: var(--s1); font-variant-numeric: tabular-nums; }
+.popover li button.is-active { background: var(--fill-2); }
+.popover-empty { padding: var(--s3); color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); }
 
-/* ---------- legend ---------- */
-.legend { background: var(--raise); border-radius: var(--r-card); padding: var(--s3); display: flex; flex-direction: column; gap: var(--s3); }
+/* ---- Legend ---- */
+.legend { display: flex; flex-direction: column; gap: var(--s3); }
 .legend-rows { display: flex; flex-direction: column; gap: var(--s2); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .legend-row { display: flex; align-items: center; gap: var(--s2); }
 .swatch { width: var(--icon); height: var(--icon); flex: none; border-radius: 50%; display: inline-block; }
@@ -290,174 +540,129 @@ button.roundel:hover { transform: scale(1.08); }
 .swatch.hold { background: var(--mta-orange); box-shadow: 0 0 0 2px var(--amber); }
 .swatch.ghost { background: var(--mta-grey); opacity: 0.5; box-shadow: 0 0 0 2px var(--edge-strong); }
 .swatch.stalefade { background: var(--mta-red); opacity: 0.45; }
-.legend-x { align-self: flex-start; }
 
-/* ---------- alerts ---------- */
+/* ---- Alerts ---- */
 .alerts { display: flex; flex-direction: column; gap: var(--s2); }
-.alert { border-radius: var(--r-card); background: var(--raise); overflow: hidden; }
-.alert-head { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--label); padding: var(--s3); cursor: pointer; font: var(--t-caption); line-height: 1.45; letter-spacing: var(--tr-caption); }
-.alert-head:hover { background: var(--raise); }
+.alert { border-radius: var(--r-card); background: var(--fill); overflow: hidden; }
+.alert-head { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--label); padding: var(--s3); cursor: pointer; font: var(--t-caption); letter-spacing: var(--tr-caption); line-height: 1.45; }
+.alert-head:hover { background: var(--fill); }
 .alert-type { display: block; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; margin-bottom: var(--s1); }
 .alert.delay .alert-type { color: var(--red); }
 .alert.planned .alert-type { color: var(--amber); }
 .alert.info .alert-type { color: var(--label-3); }
 .alert-text .roundel, .alert-body .roundel { margin: 0 2px; }
-.alert-body { padding: 0 var(--s3) var(--s3); color: var(--label-2); font: var(--t-caption); line-height: 1.55; white-space: pre-wrap; letter-spacing: var(--tr-caption); }
-.alerts-more { align-self: flex-start; }
+.alert-body { padding: 0 var(--s3) var(--s3); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); line-height: 1.55; white-space: pre-wrap; }
 /*
- * A service change, as one line. It keeps the warning where you cannot miss it while leaving the
+ * A service change, as one row. It keeps the warning where you cannot miss it while leaving the
  * countdown — the thing anyone actually opened the station for — above the fold on a phone.
  */
-.alert-summary {
-  display: flex; align-items: center; gap: var(--s2); width: 100%; text-align: left;
-  background: var(--raise); border: none; border-radius: var(--r-card);
-  padding: var(--s2) var(--s3); min-height: var(--tap);
-  color: var(--label-2); font: var(--t-caption); cursor: pointer;
-  transition: background var(--fast) var(--ease); letter-spacing: var(--tr-caption);
-}
-.alert-summary:hover { background: var(--raise-2); }
-.alert-summary:active { background: var(--raise-2); }
-.alert-summary .pip { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; }
-.alert-summary.delay .pip { background: var(--red); }
-.alert-summary.planned .pip { background: var(--amber); }
-.alert-summary.info .pip { background: var(--label-3); }
-.alert-summary .chev { margin-left: auto; color: var(--label-3); font: var(--t-headline); letter-spacing: var(--tr-headline); line-height: 1; }
-.section-title { margin: 0 0 var(--s2); font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
+.pip--delay { background: var(--red); }
+.pip--planned { background: var(--amber); }
+.pip--info { background: var(--label-3); }
 
-/* ---------- arrivals board: the platform countdown clock ---------- */
+/* ===========================================================================
+   The arrivals board — the platform countdown clock
+   =========================================================================== */
+
 .board { display: flex; flex-direction: column; gap: var(--s5); }
 .board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
 .board-head h2 { margin: 0 0 var(--s2); font: var(--t-title); letter-spacing: var(--tr-title); }
 .board-routes { display: flex; gap: var(--s1); flex-wrap: wrap; }
-.board-distance { font: var(--t-caption); color: var(--green); margin: calc(var(--s1) * -1) 0 var(--s2); letter-spacing: var(--tr-caption); }
-.board-stale { font: var(--t-caption); color: var(--amber); margin: calc(var(--s1) * -1) 0 var(--s2); letter-spacing: var(--tr-caption); }
+.board-sub { font: var(--t-caption); letter-spacing: var(--tr-caption); margin: calc(var(--s1) * -1) 0 var(--s2); }
+.board-sub.near { color: var(--green); }
+.board-sub.stale { color: var(--amber); }
+.board-actions { display: flex; gap: var(--s1); flex: none; }
 .board-group + .board-group { margin-top: var(--s2); }
 .board-group h3 { margin: 0 0 var(--s0); font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
-.board-toward { display: block; font: var(--t-caption); color: var(--label-2); margin-bottom: var(--s2); letter-spacing: var(--tr-caption); }
-/* Inset grouped list: rows inside a rounded container, separators that stop short of the edge
-   so the group reads as one object rather than a stack of boxes. */
-.arrivals { list-style: none; margin: 0; padding: 0; background: var(--raise); border-radius: var(--r-card); overflow: hidden; }
-.arrivals li { position: relative; }
-.arrivals li + li::before {
-  content: ""; position: absolute; top: 0; left: var(--s7); right: 0; height: var(--hairline); background: var(--separator);
-}
-.arrivals button {
-  display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: var(--s3);
-  width: 100%; background: none; border: none; color: var(--label); text-align: left;
-  padding: var(--s3) var(--s3); cursor: pointer; min-height: var(--tap);
-  transition: background var(--fast) var(--ease);
-}
-.arrivals button:hover { background: var(--raise); }
-.arrivals button:active { background: var(--raise-2); }
-.arr-dest { min-width: 0; }
-.arr-dest b { display: block; font: var(--t-headline); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: var(--tr-headline); }
-.arr-dest em { display: block; font: var(--t-caption); font-style: normal; color: var(--label-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: var(--tr-caption); }
-.arr-eta { text-align: right; font-variant-numeric: tabular-nums; line-height: 1; }
-.arr-eta b { display: block; font: var(--t-large); letter-spacing: var(--tr-large); }
-.arr-eta i { display: block; font: var(--t-micro); font-style: normal; letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); margin-top: var(--s0); }
-.arr-eta.here b { font: var(--t-headline); color: var(--green); text-transform: uppercase; letter-spacing: var(--tr-micro); }
+.board-toward { display: block; font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); margin-bottom: var(--s2); }
 
-/* ---------- train detail ---------- */
+/* ===========================================================================
+   One train
+   =========================================================================== */
+
 .detail { display: flex; flex-direction: column; gap: var(--s4); }
 .detail-head { display: flex; align-items: center; gap: var(--s3); }
 .detail-title { flex: 1; min-width: 0; }
 .detail-title h2 { margin: 0; font: var(--t-title); letter-spacing: var(--tr-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.detail-title .muted { font: var(--t-caption); font-family: var(--mono); color: var(--label-3); margin-top: var(--s0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: var(--tr-caption); }
-.provenance { display: flex; align-items: flex-start; gap: var(--s2); font: var(--t-caption); line-height: 1.45; background: var(--raise); border-radius: var(--r-card); padding: var(--s3); letter-spacing: var(--tr-caption); }
-.prov-dot { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; margin-top: var(--s1); }
-.provenance.sure .prov-dot { background: var(--green); }
-.provenance.modelled .prov-dot { background: var(--amber); }
-.provenance.modelled { color: var(--label-2); }
+.detail-title .sub { font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label-3); margin-top: var(--s0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .motion { display: flex; flex-direction: column; gap: var(--s2); }
-.motion-bar { height: var(--s1); background: var(--raise-2); border-radius: 2px; overflow: hidden; }
-.motion-bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width var(--slow) linear; }
-.motion-facts { display: flex; gap: var(--s3); justify-content: space-between; color: var(--label-2); font: var(--t-caption); font-variant-numeric: tabular-nums; letter-spacing: var(--tr-caption); }
+.motion-facts { display: flex; gap: var(--s3); justify-content: space-between; color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); font-variant-numeric: tabular-nums; }
 .motion-facts.one { justify-content: flex-start; }
-.stops { list-style: none; margin: 0; padding: 0; background: var(--raise); border-radius: var(--r-card); overflow: hidden; }
-.stops li { position: relative; }
-.stops li + li::before {
-  content: ""; position: absolute; top: 0; left: var(--s3); right: 0; height: var(--hairline); background: var(--separator);
-}
-.stops button {
-  display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); width: 100%;
-  background: none; border: none; color: var(--label); text-align: left; padding: var(--s3);
-  cursor: pointer; font: var(--t-body); min-height: var(--tap);
-  transition: background var(--fast) var(--ease); letter-spacing: var(--tr-body);
-}
-.stops button:hover { background: var(--raise); }
-.stops button:active { background: var(--raise-2); }
-.stop-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stop-eta { flex: none; text-align: right; font-variant-numeric: tabular-nums; }
-.stop-eta em { display: block; font: var(--t-micro); font-style: normal; font-weight: 400; color: var(--label-3); margin-top: var(--s0); letter-spacing: var(--tr-micro); }
 .detail-actions { display: flex; gap: var(--s2); }
-.detail-actions button { flex: 1; min-height: var(--tap); }
 
 /*
- * Riding, rather than watching. The next stop is what you look up for, so it is set at the
- * headline size with the countdown beside it and the changes you could make underneath — the
- * three things an in-car display is for, in the order you need them.
+ * Riding, rather than watching. The next stop is what you look up for, so it is set at the title
+ * size with the countdown beside it and the changes you could make underneath — the three things
+ * an in-car display is for, in the order you need them.
  */
-.next-stop { background: var(--raise); border-radius: var(--r-card); padding: var(--s3); display: flex; flex-direction: column; gap: var(--s1); }
-.next-label { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
+.next-stop { display: flex; flex-direction: column; gap: var(--s1); }
 .next-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
 .next-row b { font: var(--t-title); letter-spacing: var(--tr-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.next-eta { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); flex: none; }
-.next-changes { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; color: var(--label-3); font: var(--t-caption); margin-top: var(--s1); letter-spacing: var(--tr-caption); }
+.next-eta { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); flex: none; font-variant-numeric: tabular-nums; }
+.next-changes { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); margin-top: var(--s1); }
 
 /* The one thing a countdown clock cannot tell you, so it is allowed to look like an answer. */
 .swap {
   display: flex; align-items: flex-start; gap: var(--s2); width: 100%; text-align: left;
-  background: var(--raise); border: none; border-radius: var(--r-card);
+  background: var(--fill); border: none; border-radius: var(--r-card);
   padding: var(--s3); min-height: var(--tap); cursor: pointer;
-  color: var(--label-2); font: var(--t-caption);
+  color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption);
   box-shadow: inset 0 0 0 1px var(--tint-green);
-  transition: background var(--fast) var(--ease); letter-spacing: var(--tr-caption);
+  transition: background var(--fast) var(--ease);
 }
-.swap:hover { background: var(--raise-2); }
+.swap:hover { background: var(--fill-2); }
 .swap-lead { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--green); flex: none; padding-top: var(--s0); }
 .swap-body { line-height: 1.45; }
 .swap-body b { color: var(--label); font-weight: 600; }
 .swap .roundel { margin: 0 var(--s0); vertical-align: middle; }
 
-/* ---------- history ---------- */
+/* ===========================================================================
+   History and feed health
+   =========================================================================== */
+
 .history { display: flex; flex-direction: column; gap: var(--s4); border-top: var(--hairline) solid var(--separator); padding-top: var(--s4); }
 .timeline { display: flex; flex-direction: column; gap: var(--s2); }
-.tl-bar { position: relative; display: flex; align-items: flex-end; gap: 1px; height: var(--s7); background: var(--raise); border-radius: var(--r-card); padding: var(--s1); cursor: crosshair; touch-action: none; }
+.tl-bar { position: relative; display: flex; align-items: flex-end; gap: 1px; height: var(--s7); background: var(--fill); border-radius: var(--r-card); padding: var(--s1); cursor: crosshair; touch-action: none; }
 /* 1px gaps: these are chart bars, not layout. */
 .tl-bar i { flex: 1; background: var(--accent); opacity: 0.55; border-radius: 1px; min-height: 2px; }
 .tl-cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--label); border-radius: 1px; pointer-events: none; }
 .tl-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber); pointer-events: none; }
-.tl-scale { display: flex; justify-content: space-between; color: var(--label-3); font: var(--t-micro); font-variant-numeric: tabular-nums; letter-spacing: var(--tr-micro); }
-.tl-controls { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+.tl-scale { display: flex; justify-content: space-between; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); font-variant-numeric: tabular-nums; }
 .health table { width: 100%; border-collapse: collapse; font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .health th { text-align: left; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); padding-bottom: var(--s2); }
 .health td { padding: var(--s1) 0; border-top: var(--hairline) solid var(--separator); }
 .health tbody tr { cursor: pointer; }
-.health tbody tr:hover { background: var(--raise); }
+.health tbody tr:hover { background: var(--fill); }
 .health .num { text-align: right; padding-right: var(--s2); }
 .health .num em { font-style: normal; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); margin-left: var(--s1); }
+.health .num.worse { color: var(--red); }
 .health .wide { width: 42%; }
-.gapbar { display: inline-block; width: calc(100% - var(--s6)); height: var(--s1); background: var(--raise-2); border-radius: var(--s0); margin-right: var(--s2); vertical-align: middle; }
-.gapbar i { display: block; height: 100%; background: var(--amber); opacity: 0.8; border-radius: 2px; }
+.health .meter { display: inline-block; width: calc(100% - var(--s6)); margin-right: var(--s2); vertical-align: middle; }
 
-/* ---------- maplibre ---------- */
-.maplibregl-ctrl-group { background: var(--surface) !important; border: none !important; border-radius: var(--r-chip) !important; box-shadow: var(--shadow), inset 0 0 0 var(--hairline) var(--edge) !important; }
+/* ===========================================================================
+   MapLibre's own chrome, brought into the system
+   =========================================================================== */
+
+.maplibregl-ctrl-group { background: var(--mat-regular) !important; border: none !important; border-radius: var(--r-chip) !important; box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge) !important; }
 .maplibregl-ctrl-group button + button { border-top: var(--hairline) solid var(--separator) !important; }
 .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(1); }
 .maplibregl-ctrl-attrib { background: var(--scrim-soft) !important; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); }
 .maplibregl-ctrl-attrib a { color: var(--label-3); }
 
-/* ---------- documents ---------- */
+/* ===========================================================================
+   Documents
+   =========================================================================== */
+
 .doc { max-width: var(--doc-w); margin: 0 auto; padding: var(--s7) var(--s5) var(--s8); }
 .doc header { margin-bottom: var(--s6); }
 .doc h1 { font: var(--t-large); letter-spacing: var(--tr-large); margin: 0 0 var(--s3); }
 .doc h2 { font: var(--t-title); letter-spacing: var(--tr-title); margin: var(--s7) 0 var(--s3); }
 .doc h3 { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); margin: var(--s5) 0 var(--s2); }
-.doc p, .doc li { color: var(--label-2); font: var(--t-body); line-height: 1.62; letter-spacing: var(--tr-body); }
+.doc p, .doc li { color: var(--label-2); font: var(--t-body); letter-spacing: var(--tr-body); line-height: 1.62; }
 .doc a { color: var(--accent); text-decoration: none; }
 .doc a:hover { text-decoration: underline; }
-.doc code { font: var(--t-code); background: var(--raise); padding: var(--s0) var(--s1); border-radius: var(--r-inner); color: var(--label); letter-spacing: var(--tr-code); }
-.doc pre { background: var(--raise); border-radius: var(--r-card); padding: var(--s4); overflow-x: auto; font: var(--t-code); color: var(--label); letter-spacing: var(--tr-code); }
+.doc code { font: var(--t-code); letter-spacing: var(--tr-code); background: var(--fill); padding: var(--s0) var(--s1); border-radius: var(--r-inner); color: var(--label); }
+.doc pre { background: var(--fill); border-radius: var(--r-card); padding: var(--s4); overflow-x: auto; font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label); }
 .doc table { width: 100%; border-collapse: collapse; margin: var(--s4) 0; }
 .doc th, .doc td { text-align: left; padding: var(--s2) var(--s3); border-bottom: var(--hairline) solid var(--separator); font: var(--t-body); letter-spacing: var(--tr-body); }
 .doc th { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
@@ -467,11 +672,17 @@ button.roundel:hover { transform: scale(1.08); }
 .doc .back:hover { color: var(--label); }
 .doc .stale { color: var(--amber); }
 
-/* ---------- embed ---------- */
+/* ===========================================================================
+   Embed
+   =========================================================================== */
+
 .embed-card {
   position: absolute; top: var(--s3); left: var(--s3); z-index: 5; max-width: var(--embed-w);
-  background: var(--surface); backdrop-filter: blur(28px) saturate(150%); -webkit-backdrop-filter: blur(28px) saturate(150%);
-  border-radius: var(--r-card); box-shadow: var(--shadow), inset 0 0 0 var(--hairline) var(--edge); padding: var(--s3) var(--s4);
+  background: var(--surface-solid);
+  border-radius: var(--r-card); box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge); padding: var(--s3) var(--s4);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .embed-card { background: var(--mat-regular); backdrop-filter: var(--blur-regular); -webkit-backdrop-filter: var(--blur-regular); }
 }
 .embed-card h2 { margin: 0 0 var(--s3); font: var(--t-headline); letter-spacing: var(--tr-headline); }
 .embed-group + .embed-group { margin-top: var(--s3); }
@@ -481,20 +692,41 @@ button.roundel:hover { transform: scale(1.08); }
 .embed-eta { font-weight: 700; font-variant-numeric: tabular-nums; }
 .embed-brand {
   position: absolute; right: var(--s3); top: var(--s3); z-index: 5; font: var(--t-micro); letter-spacing: var(--tr-micro);
-  color: var(--label); background: var(--surface); border-radius: var(--r-inner); padding: var(--s1) var(--s2); text-decoration: none;
+  color: var(--label); background: var(--mat-regular); border-radius: var(--r-inner); padding: var(--s1) var(--s2); text-decoration: none;
   box-shadow: inset 0 0 0 var(--hairline) var(--edge);
 }
 
-/* ---------- phones ---------- */
+/* ===========================================================================
+   Destination: turning a board into a journey
+   =========================================================================== */
+
+.dest-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+  background: var(--fill); border-radius: var(--r-chip); padding: var(--s1) var(--s1) var(--s1) var(--s3);
+  font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); min-height: var(--control-h);
+}
+.dest-chip b { color: var(--label); font-weight: 600; }
+
+/* ===========================================================================
+   Phones — the panel becomes a sheet
+   =========================================================================== */
+
 @media (max-width: 640px) {
   .panel.sheet {
     top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 92vh;
     border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+    background: var(--surface-solid);
     transition: height var(--slow) var(--ease), transform var(--fast) var(--ease);
     padding-bottom: env(safe-area-inset-bottom);
   }
-  .panel.sheet .grabber { display: block; padding: var(--s3) 0 var(--s0); cursor: grab; touch-action: none; }
-  .panel.sheet .grabber i { display: block; width: var(--grabber-w); height: var(--s1); border-radius: var(--r-pill); background: var(--raise-2); margin: 0 auto; }
+  @supports (backdrop-filter: blur(1px)) {
+    .panel.sheet { background: var(--mat-thick); backdrop-filter: var(--blur-thick); -webkit-backdrop-filter: var(--blur-thick); }
+  }
+  .panel.sheet.peek { height: auto; }
+  .panel.sheet.half { height: var(--sheet-half); }
+  .panel.sheet.full { height: var(--sheet-full); }
+  .panel.sheet .grabber { display: block; padding: var(--s3) 0 var(--s0); cursor: grab; touch-action: none; min-height: var(--tap); }
+  .panel.sheet .grabber i { display: block; width: var(--grabber-w); height: var(--s1); border-radius: var(--r-pill); background: var(--fill-3); margin: 0 auto; }
   .panel.sheet .panel-head { padding-top: var(--s2); }
   /*
    * Once the sheet has an answer in it, the brand stands down. On a 390-point screen the title
@@ -504,62 +736,36 @@ button.roundel:hover { transform: scale(1.08); }
   .panel.sheet.has-answer .panel-head h1 { font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-3); }
   .panel.sheet.has-answer .status { display: none; }
   .panel.sheet.has-answer .panel-head { padding-bottom: var(--s2); }
-  .panel.sheet.peek .panel-scroll { max-height: 28vh; }
+  /*
+   * Collapsed, the sheet shows the first answers and fades the rest away. Without this the list
+   * is simply cut through the middle of a row, which reads as a rendering fault rather than as
+   * "there is more here" — and a pinned footer under a sliced row makes it worse.
+   * The gradient is a mask: it is read for its alpha, so `black` here means "keep", not a colour.
+   */
+  .panel.sheet.peek .panel-scroll {
+    max-height: 28vh;
+    mask-image: linear-gradient(to bottom, black calc(100% - var(--s5)), transparent);
+  }
   .panel.sheet.peek .routes, .panel.sheet.peek .legend, .panel.sheet.peek .history, .panel.sheet.peek .alerts-section { display: none; }
   /* In the collapsed state the answer comes first; search moves below it, a drag away. */
   .panel.sheet .panel-scroll { display: flex; flex-direction: column; }
   .panel.sheet .board, .panel.sheet .detail { order: 1; }
-  .panel.sheet .search { order: 2; }
-  .panel.sheet .routes, .panel.sheet .legend, .panel.sheet .panel-row, .panel.sheet .history, .panel.sheet .alerts-section { order: 3; }
-  .panel.sheet .panel-foot { order: 4; }
-  .panel.sheet.peek .board-group + .board-group { display: none; }
+  .panel.sheet .field { order: 2; }
+  .panel.sheet .routes, .panel.sheet .legend, .panel.sheet .toolbar, .panel.sheet .history, .panel.sheet .alerts-section { order: 3; }
   .panel.sheet .panel-foot { padding-bottom: calc(var(--s3) + env(safe-area-inset-bottom)); }
+  .panel.sheet.peek .board-group + .board-group { display: none; }
   .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group { display: none; }
   .maplibregl-ctrl-bottom-right { bottom: var(--s1); }
-  .arr-eta b { font: var(--t-display); letter-spacing: var(--tr-display); }
-  .arrivals button { padding: var(--s3) var(--s2); }
+  .row { padding: var(--s3) var(--s2); }
 
   /* Touch targets: at least 44px on the short side for anything you can press. */
-  .panel.sheet button,
-  .panel.sheet select,
-  .panel.sheet .search input,
-  .panel.sheet .check { min-height: var(--tap); }
-  .panel.sheet .panel-row button, .panel.sheet .icon-btn { min-width: var(--tap); }
-  .panel.sheet .check input { width: var(--s5); height: var(--s5); }
-  .panel.sheet .grabber { min-height: var(--tap); }
+  .panel.sheet .btn, .panel.sheet .icon-btn, .panel.sheet .switch { min-height: var(--tap); }
+  .panel.sheet .icon-btn { min-width: var(--tap); width: var(--tap); }
   .panel.sheet .panel-head h1 a { display: inline-flex; align-items: center; min-height: var(--tap); }
   .panel.sheet .panel-foot a { display: inline-flex; align-items: center; min-height: var(--tap); }
-  .panel.sheet .near-btn { min-height: var(--tap); padding: 0 var(--s2); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  .panel-scroll { scroll-behavior: auto; }
 }
-
-/* ---------- saved places ---------- */
-.board-actions { display: flex; gap: var(--s1); flex: none; }
-.icon-btn.on { color: var(--amber); }
-.roundel-blank { width: var(--bullet); height: var(--bullet); border-radius: 50%; background: var(--raise-2); flex: none; }
-.arr-eta.missed b { color: var(--label-3); }
-.gapbar i.worse { background: var(--red); }
-.health .num.worse { color: var(--red); }
-
-/* ---------- destination / trip ---------- */
-.dest-add {
-  background: var(--raise); color: var(--accent); border: none; border-radius: var(--r-chip);
-  padding: var(--s2) var(--s3); font: var(--t-caption); font-weight: 600; cursor: pointer;
-  min-height: var(--control-h); text-align: left; width: 100%; letter-spacing: var(--tr-caption);
-}
-.dest-add:hover { background: var(--raise-2); }
-.dest-chip {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
-  background: var(--raise); border-radius: var(--r-chip); padding: var(--s2) var(--s2) var(--s2) var(--s3);
-  font: var(--t-caption); color: var(--label-2); min-height: var(--control-h); letter-spacing: var(--tr-caption);
-}
-.dest-chip b { color: var(--label); font-weight: 600; }
-.dest-search { position: relative; }
-.dest-search input {
-  width: 100%; background: var(--raise); color: var(--label); border: none; border-radius: var(--r-chip);
-  padding: var(--s2) var(--s3); font: var(--t-body); min-height: var(--control-h); letter-spacing: var(--tr-body);
-}
-.dest-search input:focus { outline: none; box-shadow: inset 0 0 0 var(--ring) var(--accent); }

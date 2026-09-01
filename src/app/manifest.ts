@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { CHROME_COLOR } from "@/lib/palette";
 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
@@ -13,8 +14,8 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: `${BASE}/`,
     display: "standalone",
     orientation: "any",
-    background_color: "#0b0b0d",
-    theme_color: "#0b0b0d",
+    background_color: CHROME_COLOR,
+    theme_color: CHROME_COLOR,
     categories: ["travel", "navigation", "utilities"],
     icons: [
       { src: `${BASE}/icon-192.png`, sizes: "192x192", type: "image/png", purpose: "any" },

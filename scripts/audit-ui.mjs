@@ -54,15 +54,15 @@ await send("Page.navigate",{url:BASE+"/"}); await sleep(14000);
 
 await step("initial load", async()=>{ const r=await evalJs(`JSON.stringify({trains:document.querySelector(".status")?.innerText, map:!!document.querySelector(".maplibregl-canvas")})`); return r.value??r.error; });
 await step("search + pick a station", async()=>{
-  await evalJs(`(()=>{const i=document.querySelector(".search input");const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,"Union Sq");i.dispatchEvent(new Event("input",{bubbles:true}));})()`);
+  await evalJs(`(()=>{const i=document.querySelector(".field input");const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,"Union Sq");i.dispatchEvent(new Event("input",{bubbles:true}));})()`);
   await sleep(900);
-  const r=await evalJs(`(()=>{const b=document.querySelector(".results li button"); if(!b) return "no results"; b.click(); return "clicked "+b.innerText.split("\\n")[0];})()`);
+  const r=await evalJs(`(()=>{const b=document.querySelector(".popover li button"); if(!b) return "no results"; b.click(); return "clicked "+b.innerText.split("\\n")[0];})()`);
   await sleep(2500); return r.value??r.error;});
-await step("board renders", async()=>{const r=await evalJs(`JSON.stringify({title:document.querySelector(".board h2")?.innerText, rows:document.querySelectorAll(".arrivals button").length, groups:document.querySelectorAll(".board-group").length})`); return r.value??r.error;});
+await step("board renders", async()=>{const r=await evalJs(`JSON.stringify({title:document.querySelector(".board h2")?.innerText, rows:document.querySelectorAll(".board-group .list .row").length, groups:document.querySelectorAll(".board-group").length})`); return r.value??r.error;});
 await step("open a train from the board", async()=>{
-  const r=await evalJs(`(()=>{const b=document.querySelector(".arrivals button"); if(!b) return "no rows"; b.click(); return "ok";})()`);
+  const r=await evalJs(`(()=>{const b=document.querySelector(".board-group .list .row"); if(!b) return "no rows"; b.click(); return "ok";})()`);
   await sleep(2500);
-  const d=await evalJs(`JSON.stringify({detail:!!document.querySelector(".detail"), title:document.querySelector(".detail-title h2")?.innerText, stops:document.querySelectorAll(".stops button").length, prov:document.querySelector(".provenance")?.innerText})`);
+  const d=await evalJs(`JSON.stringify({detail:!!document.querySelector(".detail"), title:document.querySelector(".detail-title h2")?.innerText, stops:document.querySelectorAll(".detail .list .row").length, prov:document.querySelector(".detail .card .notice")?.innerText})`);
   return (r.value??r.error)+" | "+(d.value??d.error);});
 await step("follow the train", async()=>{
   const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".detail-actions button")].find(x=>/follow/i.test(x.innerText)); if(!b) return "no follow"; b.click(); return b.innerText;})()`);
@@ -78,28 +78,31 @@ await step("solo a route (shift-click)", async()=>{
   await evalJs(`document.querySelectorAll(".routes .roundel")[3].dispatchEvent(new MouseEvent("click",{bubbles:true,shiftKey:true}))`);
   await sleep(2500); const r=await evalJs(`JSON.stringify({hash:location.hash, laneMode:window.__tt?.laneMode})`); return r.value??r.error;});
 await step("all / none", async()=>{
-  await evalJs(`[...document.querySelectorAll(".panel-row button")].find(b=>b.innerText==="none")?.click()`); await sleep(900);
+  await evalJs(`[...document.querySelectorAll(".toolbar .btn")].find(b=>b.innerText==="none")?.click()`); await sleep(900);
   const none=await evalJs(`JSON.stringify({trains:document.querySelector(".status")?.innerText})`);
-  await evalJs(`[...document.querySelectorAll(".panel-row button")].find(b=>b.innerText==="all")?.click()`); await sleep(900);
+  await evalJs(`[...document.querySelectorAll(".toolbar .btn")].find(b=>b.innerText==="all")?.click()`); await sleep(900);
   return (none.value??"");});
-await step("uncertainty toggle", async()=>{ await evalJs(`document.querySelector(".check input")?.click()`); await sleep(800); await evalJs(`document.querySelector(".check input")?.click()`); return "toggled";});
+await step("uncertainty toggle", async()=>{ await evalJs(`document.querySelector(".switch input")?.click()`); await sleep(800); await evalJs(`document.querySelector(".switch input")?.click()`); return "toggled";});
 await step("history panel", async()=>{
-  const r=await evalJs(`(()=>{const b=[...document.querySelectorAll("button.link")].find(x=>/history/i.test(x.innerText)); if(!b) return "no history button"; b.click(); return "opened";})()`);
+  const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".toolbar .btn--ghost")].find(x=>/history/i.test(x.innerText)); if(!b) return "no history button"; b.click(); return "opened";})()`);
   await sleep(4000);
   const d=await evalJs(`JSON.stringify({timeline:!!document.querySelector(".tl-bar"), bars:document.querySelectorAll(".tl-bar i").length, health:document.querySelectorAll(".health tbody tr").length})`);
   return (r.value??r.error)+" | "+(d.value??d.error);});
 await step("save a station", async()=>{
-  await evalJs(`(()=>{const i=document.querySelector(".search input");const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,"Bedford Av");i.dispatchEvent(new Event("input",{bubbles:true}));})()`);
-  await sleep(900); await evalJs(`document.querySelector(".results li button")?.click()`); await sleep(2200);
-  const r=await evalJs(`(()=>{const b=document.querySelector(".board-actions .icon-btn"); if(!b) return "no star"; b.click(); return b.getAttribute("aria-pressed");})()`);
-  await sleep(1200); return r.value??r.error;});
+  await evalJs(`(()=>{const i=document.querySelector(".field input");const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,"Bedford Av");i.dispatchEvent(new Event("input",{bubbles:true}));})()`);
+  await sleep(900); await evalJs(`document.querySelector(".popover li button")?.click()`); await sleep(2200);
+  const r=await evalJs(`(()=>{const b=document.querySelector(".board-actions .icon-btn"); if(!b) return "no star"; b.click(); return "clicked";})()`);
+  await sleep(1200);
+  // Read the state after React has rendered it: the attribute does not change inside the click.
+  const after=await evalJs(`document.querySelector(".board-actions .icon-btn")?.getAttribute("aria-pressed")`);
+  return (r.value??r.error)+" -> aria-pressed="+(after.value??after.error);});
 await step("destination / trip", async()=>{
-  const open=await evalJs(`(()=>{const b=document.querySelector(".dest-add"); if(!b) return "no dest button"; b.click(); return "opened";})()`);
+  const open=await evalJs(`(()=>{const b=document.querySelector(".btn--tinted"); if(!b) return "no dest button"; b.click(); return "opened";})()`);
   await sleep(700);
-  await evalJs(`(()=>{const i=document.querySelector(".dest-search input"); if(!i) return; const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,"Lorimer");i.dispatchEvent(new Event("input",{bubbles:true}));})()`);
+  await evalJs(`(()=>{const i=document.querySelector(".field--bare input"); if(!i) return; const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,"Lorimer");i.dispatchEvent(new Event("input",{bubbles:true}));})()`);
   await sleep(1000);
-  await evalJs(`document.querySelector(".dest-search .results li button")?.click()`); await sleep(2500);
-  const r=await evalJs(`JSON.stringify({chip:document.querySelector(".dest-chip")?.innerText?.replace(/\\n/g," "), rows:[...document.querySelectorAll(".arrivals button")].slice(0,2).map(b=>b.innerText.replace(/\\n/g," · "))})`);
+  await evalJs(`document.querySelector(".field--bare .popover li button")?.click()`); await sleep(2500);
+  const r=await evalJs(`JSON.stringify({chip:document.querySelector(".dest-chip")?.innerText?.replace(/\\n/g," "), rows:[...document.querySelectorAll(".board-group .list .row")].slice(0,2).map(b=>b.innerText.replace(/\\n/g," · "))})`);
   return (open.value??"")+" | "+(r.value??r.error);});
 await step("escape closes", async()=>{ await evalJs(`window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape"}))`); await sleep(1000);
   const r=await evalJs(`JSON.stringify({board:!!document.querySelector(".board"), hash:location.hash})`); return r.value??r.error;});
