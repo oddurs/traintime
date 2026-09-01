@@ -13,7 +13,7 @@ const chrome = spawn(BIN, ["--headless=new","--no-sandbox","--use-gl=angle","--u
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 let t; for(let i=0;i<60;i++){try{const l=await (await fetch(`http://127.0.0.1:${port}/json`)).json();t=l.find(x=>x.type==="page");if(t)break}catch{} await sleep(200)}
 const ws=new WebSocket(t.webSocketDebuggerUrl); await new Promise(r=>ws.onopen=r);
-let id=0; const pend=new Map(); const problems=[];
+let id=0; const pend=new Map(); const problems=[]; const reqUrl=new Map();
 ws.onmessage=(e)=>{const m=JSON.parse(e.data);
   if(m.id&&pend.has(m.id)){pend.get(m.id)(m);pend.delete(m.id);return}
   if(m.method==="Runtime.consoleAPICalled"&&["error","warning"].includes(m.params.type)){
@@ -23,7 +23,15 @@ ws.onmessage=(e)=>{const m=JSON.parse(e.data);
   if(m.method==="Runtime.exceptionThrown") problems.push({kind:"exception",txt:(m.params.exceptionDetails.exception?.description??m.params.exceptionDetails.text).slice(0,240)});
   if(m.method==="Log.entryAdded"&&m.params.entry.level==="error"){const txt=m.params.entry.text;
     if(!/favicon|GL Driver/.test(txt)) problems.push({kind:"log.error",txt:txt.slice(0,240)});}
-  if(m.method==="Network.loadingFailed"&&!/favicon/.test(m.params.errorText)) problems.push({kind:"netfail",txt:m.params.errorText+" "+(m.params.type??"")});
+  if(m.method==="Network.requestWillBeSent") reqUrl.set(m.params.requestId,m.params.request.url);
+  if(m.method==="Network.loadingFailed"&&!/favicon/.test(m.params.errorText)){
+    const url=reqUrl.get(m.params.requestId)??"";
+    // An abort is a request somebody cancelled, not one that failed: this crawl navigates while
+    // the alert feed and the state stream are still in flight, and both are meant to be dropped.
+    // Every other network error is still a problem, and now says which URL it was.
+    if(m.params.errorText!=="net::ERR_ABORTED")
+      problems.push({kind:"netfail",txt:m.params.errorText+" "+(m.params.type??"")+" "+url.slice(0,120)});
+  }
   if(m.method==="Network.responseReceived"&&m.params.response.status>=400&&!/favicon/.test(m.params.response.url)) problems.push({kind:"http"+m.params.response.status,txt:m.params.response.url.slice(0,140)});
 };
 const send=(method,params={})=>new Promise(r=>{const i=++id;pend.set(i,r);ws.send(JSON.stringify({id:i,method,params}))});
@@ -104,7 +112,7 @@ await step("map click on empty space", async()=>{
 const hasHandle = (await evalJs(`typeof window.__tt !== "undefined" && !!window.__tt.map`)).value === true;
 await step("deep zoom render", async()=>{ if(!hasHandle) return "skipped (no debug handle in a production build)";
   await evalJs(`__tt.map.jumpTo({center:[-73.9880,40.7580],zoom:16.5})`); await sleep(6000);
-  const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length, labels:__tt.map.queryRenderedFeatures({layers:["train-labels"]}).length, lines:__tt.map.queryRenderedFeatures({layers:["routes-line"]}).length})`); return r.value??r.error;});
+  const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length, labels:__tt.map.queryRenderedFeatures({layers:["train-labels"]}).length, lines:__tt.map.queryRenderedFeatures({layers:[0,1,2,3,4].map(z=>"routes-line-"+z)}).length})`); return r.value??r.error;});
 await step("zoom out to whole system", async()=>{ if(!hasHandle) return "skipped (no debug handle in a production build)";
   await evalJs(`__tt.map.jumpTo({center:[-73.94,40.71],zoom:9.8})`); await sleep(5000);
   const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length})`); return r.value??r.error;});

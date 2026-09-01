@@ -34,7 +34,7 @@ export interface Network {
   schedRun: Record<string, number>;
   /** Parent station id -> routes that serve it, in official order. */
   stationRoutes: Record<string, string[]>;
-  /** Segment key -> route -> [lane offset about the centreline, services sharing the corridor]. */
+  /** Segment key -> route -> [band offset about the centreline, services sharing the corridor]. */
   segmentSlots: Record<string, Record<string, [number, number]>>;
   /** Station id -> the complex it belongs to; a rider's "Times Sq" is five GTFS stations. */
   complexOf: Record<string, string>;
@@ -42,10 +42,24 @@ export interface Network {
   complexes: Record<string, { name: string; stations: string[]; routes: string[] }>;
   /** GTFS shape id -> its ordered directional stop ids, for exact predecessor lookup. */
   shapeStops: Record<string, string[]>;
-  /** Segment key -> route -> [track offset within its colour group, services in that group]. */
-  trackSlots: Record<string, Record<string, [number, number]>>;
+  /**
+   * Segment key -> route -> the band offset each end of the segment should reach, halfway to the
+   * neighbouring segment's. A service changing band splays across the station instead of stepping.
+   */
+  laneEnds: Record<string, Record<string, [number, number]>>;
+  /**
+   * Segment key -> route -> [which trunk colour, which service within that colour]. Colours stay
+   * apart at every zoom; services sharing one merge into a single trunk line as you zoom out.
+   */
+  bandParts: Record<string, Record<string, [number, number]>>;
+  /**
+   * Whether a segment's stored point order runs with (+1) or against (-1) its corridor. Segment
+   * keys are ordered by station id, which is not geography, so without this a band can land on
+   * the wrong side of the track wherever that ordering reverses.
+   */
+  segDir: Record<string, number>;
   /** Per route, the continuous strokes to draw: an ordered station sequence sharing one lane. */
-  routeRuns: Record<string, { slot: number; shared: number; stops: string[] }[]>;
+  routeRuns: Record<string, { slot: number; shared: number; z: number; side: number; cband: number; sband: number; stops: string[] }[]>;
 }
 
 // ---------------------------------------------------------------------------

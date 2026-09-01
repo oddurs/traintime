@@ -1,24 +1,77 @@
 import type { LonLat, Network, Station } from "./types";
-import { distM, makePath, offsetPolyline, type Path } from "./geo";
+import { distM, makePath, offsetPolylineRamped, type Path } from "./geo";
 
 export const parentOf = (id: string) => id.replace(/[NS]$/, "");
 
 /**
- * Lane geometry. Real adjacent tracks are about 4 m apart, which is invisible at any zoom you
- * would actually look at a city map through, so these are schematic: wide enough to read, and
- * applied to the geometry so a train and its line can never disagree.
+ * Real spacing between adjacent track centres on the New York subway. The drawn geometry uses
+ * the true figure, so zooming far enough in shows a four-track trunk laid out the way it is
+ * actually built, and a train sits on the track it is actually on.
  */
-export const LANE_M = 18;
-export const TRACK_M = 6;
-/** How far apart same-colour services are drawn once the view is narrowed to a few of them. */
-export const SPLIT_M = 15;
+export const TRACK_M = 4.6;
+/** How far either side of a station a change of band is swept out. */
+export const RAMP_M = 130;
 
 /**
- * How lines are laid out. Showing everything, services that share a trunk share a lane, because
- * that is what the system map does and what the colour means. Narrow the view to two services and
- * that convention hides one of them, so each visible route takes its own lane instead.
+ * The extra separation, in screen pixels, added on top of the true track spacing — as two
+ * separate curves, because two lines of different colours and two services sharing one are not
+ * the same question.
+ *
+ * A colour is a line on any map of this system and stays apart at every zoom. The 4, 5 and 6 are
+ * one green Lexington line until you are close enough to care which is which; below about zoom 14
+ * they sit exactly on top of one another, and they part as you come in. That is what the printed
+ * map does, and it is what stops a city-wide view from turning every trunk into a smear.
+ *
+ * Both curves fall to zero by zoom 19, where the true 4.6 m spacing in the geometry has grown past
+ * ten pixels and is doing the whole job on its own.
+ *
+ * It has to be pixels rather than metres. Fanning by baking metres into the geometry means the fan
+ * can only change by re-laying the network, which can only happen in steps — and the map visibly
+ * jumped every time the zoom crossed one. As a paint property the renderer interpolates every
+ * frame, so the bands ease apart and back together continuously.
  */
-export type LaneMode = "trunk" | "route";
+const FAN: { zoom: number; colour: number; service: number }[] = [
+  { zoom: 10, colour: 11, service: 0 },
+  { zoom: 13, colour: 11, service: 0 },
+  { zoom: 14.5, colour: 10.5, service: 5 },
+  { zoom: 16, colour: 9, service: 8.5 },
+  { zoom: 17, colour: 6, service: 5.5 },
+  { zoom: 18, colour: 2, service: 0.8 },
+  { zoom: 19, colour: 0, service: 0 },
+];
+
+/** The same curves the renderer follows, for placing trains on them. */
+export function fanAt(zoom: number): { colour: number; service: number } {
+  if (zoom <= FAN[0].zoom) return { colour: FAN[0].colour, service: FAN[0].service };
+  for (let i = 1; i < FAN.length; i++) {
+    const a = FAN[i - 1], b = FAN[i];
+    if (zoom > b.zoom) continue;
+    const t = (zoom - a.zoom) / (b.zoom - a.zoom);
+    return { colour: a.colour + (b.colour - a.colour) * t, service: a.service + (b.service - a.service) * t };
+  }
+  const last = FAN[FAN.length - 1];
+  return { colour: last.colour, service: last.service };
+}
+
+/**
+ * The renderer's version, as a MapLibre expression giving a feature's offset in pixels.
+ *
+ * The zoom interpolation has to be the outermost expression — MapLibre rejects one nested inside
+ * another and silently drops the layer when you try, which took most of the network off the map.
+ * So each stop combines the feature's own two bands rather than the curve being multiplied whole.
+ */
+export function bandOffsetExpression(scale = 1): unknown[] {
+  return [
+    "interpolate", ["linear"], ["zoom"],
+    ...FAN.flatMap(({ zoom, colour, service }) => [
+      zoom,
+      ["+", ["*", ["get", "cb"], colour * scale], ["*", ["get", "sb"], service * scale]],
+    ]),
+  ];
+}
+
+/** Metres per pixel at New York's latitude. */
+export const metresPerPixel = (zoom: number) => (156_543.03 * Math.cos((40.73 * Math.PI) / 180)) / 2 ** zoom;
 
 /** Indexed, query-friendly view of network.json shared by server and client. */
 export class NetworkIndex {
@@ -28,6 +81,21 @@ export class NetworkIndex {
   private mergedPrev: Record<string, string[]> = {};
   /** Diagnostics: how often we had to guess a train's track instead of knowing it. */
   readonly stats = { paths: 0, chained: 0, straightFallback: 0 };
+  /**
+   * The signed band a train is riding, in the frame the drawn line is offset in.
+   *
+   * The line is offset to the right of the direction it happens to be drawn; a train is placed
+   * relative to the direction it is travelling. These are the same side only when the two agree,
+   * so the sign is resolved here once, and the map applies the identical number to both.
+   */
+  lateralBand(route: string, prevDir: string, nextDir: string): { cb: number; sb: number } | undefined {
+    const a = parentOf(prevDir), b = parentOf(nextDir);
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    const parts = this.net.bandParts?.[key]?.[route];
+    if (!parts) return undefined;
+    const side = (this.net.segDir?.[key] ?? 1) * (a < b ? 1 : -1);
+    return { cb: parts[0] * side, sb: parts[1] * side };
+  }
 
   constructor(public readonly net: Network) {
     for (const m of Object.values(net.prevOf)) {
@@ -38,30 +106,35 @@ export class NetworkIndex {
   }
 
   /**
-   * How far this route's track sits from the corridor centreline, in metres. Lines use the
-   * colour lane only (the trunk); trains additionally take their own track within it, so the
-   * 4, 5 and 6 do not stack on top of each other under Lexington Avenue.
+   * One stretch of one service, laid into its band — the single source of truth for where that
+   * service is drawn and where its trains ride. Lines and trains used to compute this separately
+   * and disagree: a train sat 6 m off its own line normally and 9 m off it once the view was
+   * narrowed, which is exactly the "not centred on the line it belongs to" the map showed.
+   *
+   * Returned in the segment's canonical (u < v) order; callers reverse it if they need the other.
    */
-  laneMetres(route: string, key: string, includeTrack: boolean): number {
-    const lane = this.net.segmentSlots[key]?.[route]?.[0] ?? 0;
-    const track = includeTrack ? this.net.trackSlots?.[key]?.[route]?.[0] ?? 0 : 0;
-    return lane * LANE_M + track * TRACK_M;
-  }
-
-  /** Coordinates for one stretch as drawn, offset into its lane. */
-  lineSegment(route: string, u: string, v: string, mode: LaneMode = "trunk"): LonLat[] | undefined {
-    const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+  private laid(route: string, key: string): LonLat[] | undefined {
     const pts = this.net.segments[key];
     if (!pts) return undefined;
-    const ck = `${mode}|${route}|${key}`;
-    let laid = this.lineCache.get(ck);
-    if (!laid) {
-      const lane = this.net.segmentSlots[key]?.[route]?.[0] ?? 0;
-      const track = this.net.trackSlots?.[key]?.[route]?.[0] ?? 0;
-      const metres = mode === "route" ? lane * LANE_M + track * SPLIT_M : lane * LANE_M;
-      laid = offsetPolyline(pts, metres);
-      this.lineCache.set(ck, laid);
+    const ck = `${route}|${key}`;
+    let out = this.lineCache.get(ck);
+    if (!out) {
+      const band = this.net.segmentSlots[key]?.[route]?.[0] ?? 0;
+      const [u, v] = this.net.laneEnds?.[key]?.[route] ?? [band, band];
+      // The band is measured in the corridor's own direction; this segment's points may be
+      // stored the other way round, in which case the whole offset flips with them.
+      const m = TRACK_M * (this.net.segDir?.[key] ?? 1);
+      out = offsetPolylineRamped(pts, band * m, u * m, v * m, RAMP_M);
+      this.lineCache.set(ck, out);
     }
+    return out;
+  }
+
+  /** Coordinates for one stretch as drawn. */
+  lineSegment(route: string, u: string, v: string): LonLat[] | undefined {
+    const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+    const laid = this.laid(route, key);
+    if (!laid) return undefined;
     return u < v ? laid : [...laid].reverse();
   }
 
@@ -150,7 +223,8 @@ export class NetworkIndex {
     const ck = `${route}|${a}-${b}`;
     let p = this.segCache.get(ck);
     if (!p) {
-      const laid = offsetPolyline(pts, this.laneMetres(route, key, true));
+      const laid = this.laid(route, key);
+      if (!laid) return undefined;
       p = makePath(a < b ? laid : [...laid].reverse());
       this.segCache.set(ck, p);
     }

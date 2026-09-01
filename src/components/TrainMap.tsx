@@ -5,7 +5,7 @@ import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
-import { NetworkIndex, type LaneMode } from "@/lib/network";
+import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
 import { addRouteIcons, chevronId } from "@/lib/icons";
 import { asset } from "@/lib/basePath";
@@ -15,6 +15,40 @@ const STYLE = "https://tiles.openfreemap.org/styles/dark";
 // MapLibre's module worker URL doesn't survive Next's bundler; serve a copy from /public instead
 // (see the prepare:assets script in package.json).
 maplibregl.setWorkerUrl(asset("/maplibre/maplibre-gl-worker.mjs"));
+
+/** Band levels the weave is drawn in; matches zOf() in scripts/build-network.ts. */
+const WEAVE_LEVELS = 5;
+
+/**
+ * How far a band sits from its corridor's centreline, in pixels. The true spacing is already in
+ * the geometry; this is the extra separation that makes services legible, and it is the same
+ * curve the trains are placed on so a train can never drift off its own line.
+ */
+const bandOffset = (scale: number) => bandOffsetExpression(scale) as unknown as maplibregl.DataDrivenPropertyValueSpecification<number>;
+
+/** Shared with the train layer so both read one number. */
+const fanScale = { current: 1 };
+
+/**
+ * A train's drawn position: its place along the track, shifted into its own band by exactly the
+ * amount the line beside it is shifted.
+ *
+ * A train standing at a platform has no segment to take a band from, so it keeps the one it was
+ * riding — without that it would hop to the middle of the corridor every time it stopped.
+ */
+function fanned(p: TrainPosition, index: NetworkIndex, fan: { colour: number; service: number }, last: Map<string, [number, number]>): LonLat {
+  const prev = p.state.prevStop, next = p.state.nextStop;
+  const live = prev && next ? index.lateralBand(p.route, prev, next) : undefined;
+  if (live) last.set(p.id, [live.cb, live.sb]);
+  const band = live ? [live.cb, live.sb] : last.get(p.id);
+  if (!band) return [p.lon, p.lat];
+  const metres = band[0] * fan.colour + band[1] * fan.service;
+  if (metres === 0) return [p.lon, p.lat];
+  // Right of the direction of travel, which is the side the line was offset to.
+  const rad = ((p.bearing + 90) * Math.PI) / 180;
+  const cos = Math.cos((p.lat * Math.PI) / 180) || 1e-6;
+  return [p.lon + (Math.sin(rad) * metres) / (111_320 * cos), p.lat + (Math.cos(rad) * metres) / 111_320];
+}
 
 const NYC: [number, number] = [-73.955, 40.735];
 /** Trains are re-uploaded to the GPU at this rate; motion is still integrated every frame. */
@@ -46,12 +80,7 @@ interface Props {
 
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-/**
- * One feature per continuous stroke: a route's segments chained together while they keep the
- * same lane, so a line joining or leaving a shared corridor is drawn as one unbroken curve with
- * a rounded end, instead of a series of butt-ended pieces.
- */
-function routeLines(index: NetworkIndex, mode: LaneMode): GeoJSON.FeatureCollection {
+function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
   const features: GeoJSON.Feature[] = [];
   for (const [route, runs] of Object.entries(index.net.routeRuns)) {
     const r = index.net.routes[route];
@@ -59,7 +88,7 @@ function routeLines(index: NetworkIndex, mode: LaneMode): GeoJSON.FeatureCollect
     for (const run of runs) {
       const coordinates: LonLat[] = [];
       for (let i = 0; i + 1 < run.stops.length; i++) {
-        const piece = index.lineSegment(route, run.stops[i], run.stops[i + 1], mode);
+        const piece = index.lineSegment(route, run.stops[i], run.stops[i + 1]);
         if (!piece) continue;
         for (const p of piece) {
           const last = coordinates[coordinates.length - 1];
@@ -69,7 +98,7 @@ function routeLines(index: NetworkIndex, mode: LaneMode): GeoJSON.FeatureCollect
       if (coordinates.length < 2) continue;
       features.push({
         type: "Feature",
-        properties: { route, color: r.color, slot: run.slot, shared: run.shared },
+        properties: { route, color: r.color, slot: run.slot, shared: run.shared, z: run.z ?? 2, cb: (run.cband ?? 0) * (run.side ?? 1), sb: (run.sband ?? 0) * (run.side ?? 1) },
         geometry: { type: "LineString", coordinates },
       });
     }
@@ -88,10 +117,16 @@ function stationPoints(index: NetworkIndex): GeoJSON.FeatureCollection {
   };
 }
 
-/** Filter the drawn services, and relay the lines out if the lane convention has changed. */
-function applyVisibilityFactory(appliedLane: { current: LaneMode | null }) {
+/**
+ * Filter the drawn services, and set how far the bands fan apart.
+ *
+ * The fan is a paint property, so the renderer eases it across zoom levels by itself and there is
+ * nothing to re-lay. Narrowing to a handful of services is a request to tell them apart, so they
+ * get more room.
+ */
+function applyVisibilityFactory(applied: { scale: number | null }) {
   const apply = (map: maplibregl.Map, index: NetworkIndex, visible: Set<string> | null, attempt = 0) => {
-    if (!map.getLayer("routes-line")) return;
+    if (!map.getLayer("routes-line-0")) return;
     // The layer can exist while the style is still settling its sprites and glyphs, and MapLibre
     // throws rather than queueing. Waiting for "idle" is no good here — the train layer updates
     // every frame, so this map never goes idle — so retry briefly instead. Without this, a filter
@@ -102,17 +137,23 @@ function applyVisibilityFactory(appliedLane: { current: LaneMode | null }) {
     }
     const all = Object.keys(index.net.routes);
     const list = visible ? [...visible] : all;
-    const filter: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
-    map.setFilter("routes-line", filter);
-    map.setFilter("routes-casing", filter);
-    const mode: LaneMode = visible && visible.size < all.length ? "route" : "trunk";
+    const routeIn: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
+    const scale = visible && visible.size < all.length ? 1.6 : 1;
+    for (let z = 0; z < WEAVE_LEVELS; z++) {
+      const f: maplibregl.FilterSpecification = ["all", routeIn, ["==", ["get", "z"], z]];
+      map.setFilter(`routes-line-${z}`, f);
+      map.setFilter(`routes-casing-${z}`, f);
+      if (scale !== applied.scale) {
+        const offset = bandOffset(scale);
+        map.setPaintProperty(`routes-line-${z}`, "line-offset", offset);
+        map.setPaintProperty(`routes-casing-${z}`, "line-offset", offset);
+      }
+    }
+    applied.scale = scale;
+    fanScale.current = scale;
     if (process.env.NODE_ENV !== "production") {
       const w = window as unknown as { __tt?: Record<string, unknown> };
-      w.__tt = { ...(w.__tt ?? {}), laneMode: mode, visibleCount: list.length };
-    }
-    if (mode !== appliedLane.current) {
-      appliedLane.current = mode;
-      (map.getSource("routes") as GeoJSONSource | undefined)?.setData(routeLines(index, mode));
+      w.__tt = { ...(w.__tt ?? {}), fanScale: scale, visibleCount: list.length };
     }
   };
   return apply;
@@ -125,7 +166,9 @@ export default function TrainMap(props: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   // Holds the lane convention currently uploaded, so lines are only rebuilt when it changes.
-  const applyVisibility = useMemo(() => applyVisibilityFactory({ current: null }), []);
+  const applyVisibility = useMemo(() => applyVisibilityFactory({ scale: null }), []);
+  /** The band each train was last riding, so one standing at a platform keeps its lane. */
+  const lastBandRef = useRef(new Map<string, [number, number]>());
   const kinRef = useRef<Kinematics | null>(null);
   const readyRef = useRef(false);
   const layersRef = useRef(false);
@@ -190,6 +233,15 @@ export default function TrainMap(props: Props) {
       const { visibleRoutes: vis, showRibbons: ribbons, selection: sel, highlight: hi, follow: fol } = live.current;
       const points: GeoJSON.Feature[] = [];
       const bands: GeoJSON.Feature[] = [];
+      // Trains are placed on the same fan the lines are drawn with. The renderer eases the lines
+      // apart as a pixel offset, so the equivalent distance in metres is worked out for the zoom
+      // being drawn and applied to each train — otherwise a train would sit on its line at one
+      // zoom and beside it at every other.
+      const zoom = map.getZoom();
+      const m = metresPerPixel(zoom) * fanScale.current;
+      const px = fanAt(zoom);
+      const fan = { colour: px.colour * m, service: px.service * m };
+      const lastBand = lastBandRef.current;
       for (const p of trains) {
         if (vis && !vis.has(p.route)) continue;
         const r = idx.net.routes[p.route];
@@ -204,7 +256,7 @@ export default function TrainMap(props: Props) {
             holding: p.motion === "holding", moving, bearing: Math.round(p.bearing),
             chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
           },
-          geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+          geometry: { type: "Point", coordinates: fanned(p, idx, fan, lastBand) },
         });
         if (p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
           bands.push({
@@ -240,28 +292,39 @@ export default function TrainMap(props: Props) {
       kinRef.current = new Kinematics(index);
       addRouteIcons(map, index);
 
-      map.addSource("routes", { type: "geojson", data: routeLines(index, "trunk") });
+      map.addSource("routes", { type: "geojson", data: routeLines(index) });
       map.addSource("stations", { type: "geojson", data: stationPoints(index) });
       map.addSource("ribbons", { type: "geojson", data: EMPTY });
       map.addSource("trains", { type: "geojson", data: EMPTY });
       map.addSource("focus", { type: "geojson", data: EMPTY });
 
-      map.addLayer({
-        id: "routes-casing", type: "line", source: "routes",
-        layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
-        paint: {
-          "line-color": "#000", "line-opacity": 0.75,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.3, 13, 3.9, 16, 6.6],
-        },
-      });
-      map.addLayer({
-        id: "routes-line", type: "line", source: "routes",
-        layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
-        paint: {
-          "line-color": ["get", "color"], "line-opacity": 0.95,
-          "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.1, 13, 2.3, 16, 4.2],
-        },
-      });
+      // The weave. One casing-and-line pair per band level, lowest first, so a band crossing over
+      // another has its own black casing drawn on top of the line beneath — which is what makes a
+      // crossing read as one line passing under another rather than as two lines merging. A single
+      // casing layer under every line, as before, cannot do this: the casing is below both strokes,
+      // so crossings came out flat.
+      for (let z = 0; z < WEAVE_LEVELS; z++) {
+        map.addLayer({
+          id: `routes-casing-${z}`, type: "line", source: "routes",
+          filter: ["==", ["get", "z"], z],
+          layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
+          paint: {
+            "line-color": "#000", "line-opacity": 0.75,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.3, 13, 3.9, 16, 6.6],
+            "line-offset": bandOffset(1),
+          },
+        });
+        map.addLayer({
+          id: `routes-line-${z}`, type: "line", source: "routes",
+          filter: ["==", ["get", "z"], z],
+          layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
+          paint: {
+            "line-color": ["get", "color"], "line-opacity": 0.95,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.1, 13, 2.3, 16, 4.2],
+            "line-offset": bandOffset(1),
+          },
+        });
+      }
       map.addLayer({
         id: "focus-ring", type: "circle", source: "focus",
         paint: {
@@ -371,11 +434,17 @@ export default function TrainMap(props: Props) {
     else map.once("style.load", add);
   }, [index]);
 
-  // --- route visibility, and the lane convention that goes with it
+  // --- route visibility, and the fan width that goes with it
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !layersReady || !index) return;
     applyVisibility(map, index, visibleRoutes);
+    // The fan narrows as you zoom into a corridor, so the layout is revisited when the zoom
+    // settles. `zoomend` rather than `zoom`: re-laying mid-pinch would be wasted work, and the
+    // width only ever changes at a band edge.
+    const onZoom = () => applyVisibility(map, index, visibleRoutes);
+    map.on("zoomend", onZoom);
+    return () => { map.off("zoomend", onZoom); };
   }, [visibleRoutes, index, layersReady, applyVisibility]);
 
   // --- selection highlight and camera

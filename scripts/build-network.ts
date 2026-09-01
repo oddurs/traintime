@@ -332,52 +332,20 @@ async function main() {
   const routeSegmentList: Record<string, string[]> = Object.fromEntries(
     Object.entries(routeSegments).map(([r, set]) => [r, [...set]]),
   );
-  const CELL_M = 35;
-  const STEP_M = 18;
-  const cellKey = (lon: number, lat: number) => {
-    const y = Math.round((lat * 111_320) / CELL_M);
-    const x = Math.round((lon * 111_320 * Math.cos((lat * Math.PI) / 180)) / CELL_M);
-    return `${x}:${y}`;
-  };
-  const bearingOf = (a: LonLat, b: LonLat) => {
+  /** Metres between two points, good enough over a city. */
+  const distM = (a: LonLat, b: LonLat) => {
     const cos = Math.cos((((a[1] + b[1]) / 2) * Math.PI) / 180);
-    return (Math.atan2((b[0] - a[0]) * cos, b[1] - a[1]) * 180) / Math.PI;
+    return Math.hypot((b[0] - a[0]) * 111_320 * cos, (b[1] - a[1]) * 111_320);
   };
-  /** Walk a polyline emitting a point roughly every STEP_M metres, with the local bearing. */
-  function* walk(line: LonLat[]): Generator<{ p: LonLat; bearing: number }> {
-    for (let i = 0; i + 1 < line.length; i++) {
-      const a = line[i], b = line[i + 1];
-      const cos = Math.cos((((a[1] + b[1]) / 2) * Math.PI) / 180);
-      const dx = (b[0] - a[0]) * 111_320 * cos, dy = (b[1] - a[1]) * 111_320;
-      const len = Math.hypot(dx, dy);
-      const bearing = bearingOf(a, b);
-      const steps = Math.max(1, Math.round(len / STEP_M));
-      for (let k = 0; k < steps; k++) {
-        const t = k / steps;
-        yield { p: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], bearing };
-      }
-    }
-    if (line.length) yield { p: line[line.length - 1], bearing: line.length > 1 ? bearingOf(line[line.length - 2], line[line.length - 1]) : 0 };
-  }
-  /** Angle between two undirected line directions, 0..90. */
-  const align = (a: number, b: number) => {
-    let d = Math.abs(a - b) % 180;
-    if (d > 90) d = 180 - d;
-    return d;
+  /** Metres from a point to a line segment, for asking how closely two tracks run together. */
+  const pointToSegmentM = (p: LonLat, a: LonLat, b: LonLat) => {
+    const cos = Math.cos((p[1] * Math.PI) / 180);
+    const px = (p[0] - a[0]) * 111_320 * cos, py = (p[1] - a[1]) * 111_320;
+    const bx = (b[0] - a[0]) * 111_320 * cos, by = (b[1] - a[1]) * 111_320;
+    const len2 = bx * bx + by * by;
+    const t = len2 ? Math.max(0, Math.min(1, (px * bx + py * by) / len2)) : 0;
+    return Math.hypot(px - bx * t, py - by * t);
   };
-
-  const cellRoutes = new Map<string, { route: string; bearing: number }[]>();
-  for (const [route, keys] of Object.entries(routeSegmentList)) {
-    for (const key of keys) {
-      const line = segments[key];
-      if (!line) continue;
-      for (const { p, bearing } of walk(line)) {
-        const k = cellKey(p[0], p[1]);
-        const list = cellRoutes.get(k) ?? cellRoutes.set(k, []).get(k)!;
-        if (!list.some((e) => e.route === route && align(e.bearing, bearing) < 20)) list.push({ route, bearing });
-      }
-    }
-  }
 
   // The realtime trip id carries its shape ("129200_3..N01R" -> "3..N01R"), and a shape has an
   // exact ordered stop list. That is a far better answer to "where did this train come from"
@@ -394,54 +362,243 @@ async function main() {
     for (const key of keys) (routeSegments_.get(key) ?? routeSegments_.set(key, []).get(key)!).push(route);
   }
 
-  const segmentSlots: Record<string, Record<string, [number, number]>> = {};
-  const trackSlots: Record<string, Record<string, [number, number]>> = {};
+  /**
+   * Corridor layout — which band each service occupies where several share a right of way.
+   *
+   * Two things changed here from the first version, both because the map wobbled. Bands are now
+   * per *service* rather than per trunk colour, which is what the MTA's own 2025 map does: the 4,
+   * 5 and 6 are three green bands, not one. And corridor membership is decided by whole-segment
+   * overlap rather than by sampling cells and comparing bearings, because that sampling was not
+   * stable — the F changed band at 2 Av and again at 7 Av with the corridor around it completely
+   * unchanged, purely because a few samples fell the other side of a threshold. Sixty percent of
+   * the lane changes in the network were that artefact rather than anything real.
+   */
   const order = (r: string) => routes[r]?.sortOrder ?? 999;
-  for (const [key, line] of Object.entries(segments)) {
+  const CORRIDOR_M = 45;
+  const SHARE_MIN = 0.6;
+  const CELL = 250;
+
+  const segKeys = Object.keys(segments);
+  /** Points along a segment at a fixed spacing, for asking "how much of this runs beside that". */
+  const probes = new Map<string, LonLat[]>();
+  for (const k of segKeys) {
+    const pts = segments[k];
+    const out: LonLat[] = [];
+    let carry = 0;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const d = distM(pts[i], pts[i + 1]);
+      for (let t = carry; t < d; t += 40) out.push([pts[i][0] + ((pts[i + 1][0] - pts[i][0]) * t) / d, pts[i][1] + ((pts[i + 1][1] - pts[i][1]) * t) / d]);
+      carry = Math.max(0, carry + Math.ceil((d - carry) / 40) * 40 - d);
+    }
+    if (!out.length) out.push(pts[0]);
+    probes.set(k, out);
+  }
+  const bucket = (p: LonLat) => `${Math.round((p[0] * 111_320 * Math.cos((p[1] * Math.PI) / 180)) / CELL)}:${Math.round((p[1] * 111_320) / CELL)}`;
+  const grid = new Map<string, Set<string>>();
+  for (const k of segKeys) for (const p of probes.get(k)!) (grid.get(bucket(p)) ?? grid.set(bucket(p), new Set()).get(bucket(p))!).add(k);
+
+  const nearPolyline = (p: LonLat, pts: LonLat[]) => {
+    let best = Infinity;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const d = pointToSegmentM(p, pts[i], pts[i + 1]);
+      if (d < best) best = d;
+      if (best < CORRIDOR_M) return best;
+    }
+    return best;
+  };
+
+  /** Routes running alongside each segment, itself included. */
+  const corridors = new Map<string, string[]>();
+  for (const key of segKeys) {
     const own = [...(routeSegments_.get(key) ?? [])];
-    if (own.length === 0) continue;
-    const seen = new Map<string, number>();
-    let samples = 0;
-    for (const { p, bearing } of walk(line)) {
-      samples++;
-      const y = Math.round((p[1] * 111_320) / CELL_M);
-      const x = Math.round((p[0] * 111_320 * Math.cos((p[1] * Math.PI) / 180)) / CELL_M);
-      const near = new Set<string>();
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (const e of cellRoutes.get(`${x + dx}:${y + dy}`) ?? []) {
-            if (align(e.bearing, bearing) < 25) near.add(e.route);
-          }
+    if (!own.length) continue;
+    const mine = probes.get(key)!;
+    const candidates = new Set<string>();
+    for (const p of mine) for (const k2 of grid.get(bucket(p)) ?? []) if (k2 !== key) candidates.add(k2);
+    const alongside = new Set(own);
+    for (const k2 of candidates) {
+      const others = routeSegments_.get(k2) ?? [];
+      if (!others.length || others.every((r) => alongside.has(r))) continue;
+      const pts = segments[k2];
+      let covered = 0;
+      for (const p of mine) if (nearPolyline(p, pts) < CORRIDOR_M) covered++;
+      if (covered / mine.length >= SHARE_MIN) for (const r of others) alongside.add(r);
+    }
+    corridors.set(key, [...alongside].sort((a, b) => order(a) - order(b) || (a < b ? -1 : 1)));
+  }
+
+  // An isolated disagreement between two identical neighbours is noise, not topology. One pass of
+  // smoothing along each route's own chain removes the flickers the overlap test still produces.
+  const byStation = new Map<string, Map<string, string[]>>();
+  for (const [route, keys] of Object.entries(routeSegmentList)) {
+    const m = new Map<string, string[]>();
+    for (const k of keys) if (segments[k]) for (const st of k.split("-")) (m.get(st) ?? m.set(st, []).get(st)!).push(k);
+    byStation.set(route, m);
+  }
+  let smoothed = 0;
+  for (const [route, stationMap] of byStation) {
+    for (const key of routeSegmentList[route] ?? []) {
+      if (!segments[key]) continue;
+      const [u, v] = key.split("-");
+      const before = (stationMap.get(u) ?? []).filter((k) => k !== key);
+      const after = (stationMap.get(v) ?? []).filter((k) => k !== key);
+      if (before.length !== 1 || after.length !== 1) continue;
+      const neighbour = corridors.get(before[0]);
+      const a = neighbour?.join(","), b = corridors.get(after[0])?.join(",");
+      const here = corridors.get(key)?.join(",");
+      // Only adopt a neighbour's corridor if it still accounts for everything running here.
+      // Adopting a narrower one drops this segment's own services out of the ordering, and they
+      // then all land on band zero on top of each other.
+      if (!neighbour || !a || a !== b || here === a) continue;
+      if (!(routeSegments_.get(key) ?? []).every((r) => neighbour.includes(r))) continue;
+      corridors.set(key, [...neighbour]);
+      smoothed++;
+    }
+  }
+
+  /**
+   * Which way each segment "runs".
+   *
+   * A band is drawn a fixed distance to one side of the centreline, and which side that is
+   * depends on the direction the segment's points are stored in. Segment keys are ordered by
+   * station id, which has nothing to do with geography: where a station id sorts after both of
+   * its neighbours, the two segments either side of it both point *into* it, their perpendiculars
+   * oppose, and the same band lands on opposite sides of the track. That mirrored a service onto
+   * the wrong side of its corridor, and showed up as strokes ending a clean two bands apart.
+   *
+   * So each segment gets an orientation propagated across stations between stretches of track
+   * that actually continue into one another — a turn of less than 60 degrees. Junctions do not
+   * propagate, because there is no sense in which a branch continues the trunk.
+   */
+  const awayFrom = (k: string, st: string): LonLat => {
+    const pts = segments[k];
+    const [u] = k.split("-");
+    const [a, b] = u === st ? [pts[0], pts[1] ?? pts[0]] : [pts[pts.length - 1], pts[pts.length - 2] ?? pts[pts.length - 1]];
+    const cos = Math.cos((a[1] * Math.PI) / 180);
+    const e = (b[0] - a[0]) * cos, n = b[1] - a[1];
+    const len = Math.hypot(e, n) || 1;
+    return [e / len, n / len];
+  };
+  const stationSegs = new Map<string, string[]>();
+  for (const k of segKeys) if (segments[k]) for (const st of k.split("-")) (stationSegs.get(st) ?? stationSegs.set(st, []).get(st)!).push(k);
+
+  /**
+   * The stretches meeting at a station, partitioned into the lines that actually run through it.
+   *
+   * Blending a band change needs a group every member agrees on, or the two sides ease to
+   * different places and part company. Asking each stretch for "the ones that continue from me"
+   * does not give that — the relation is symmetric but the groups it produces are not. So the
+   * relation is closed into equivalence classes: every stretch in a class sees the same class,
+   * the mean of their bands is the same number for all of them, and the change closes exactly.
+   *
+   * A branch forms a class of its own and keeps its band, which is what stops a junction from
+   * pinching every line down to one band before fanning them out again.
+   */
+  const throughClass = new Map<string, Map<string, string[]>>();
+  for (const [st, ks] of stationSegs) {
+    const parent = new Map(ks.map((k) => [k, k]));
+    const find = (k: string): string => (parent.get(k) === k ? k : (parent.set(k, find(parent.get(k)!)), parent.get(k)!));
+    for (let i = 0; i < ks.length; i++) {
+      const here = awayFrom(ks[i], st);
+      for (let j = i + 1; j < ks.length; j++) {
+        const there = awayFrom(ks[j], st);
+        if (here[0] * there[0] + here[1] * there[1] <= -0.5) parent.set(find(ks[i]), find(ks[j]));
+      }
+    }
+    const classes = new Map<string, string[]>();
+    for (const k of ks) (classes.get(find(k)) ?? classes.set(find(k), []).get(find(k))!).push(k);
+    throughClass.set(st, new Map(ks.map((k) => [k, classes.get(find(k))!])));
+  }
+
+  const segDir: Record<string, number> = {};
+  let orientConflicts = 0;
+  for (const seed of segKeys) {
+    if (segDir[seed] !== undefined || !segments[seed]) continue;
+    segDir[seed] = 1;
+    const queue = [seed];
+    while (queue.length) {
+      const k = queue.shift()!;
+      for (const st of k.split("-")) {
+        const here = awayFrom(k, st);
+        for (const k2 of stationSegs.get(st) ?? []) {
+          if (k2 === k) continue;
+          const there = awayFrom(k2, st);
+          // Both vectors point away from the station, so a straight-through pair points opposite.
+          if (here[0] * there[0] + here[1] * there[1] > -0.5) continue;
+
+          // Canonical order already chains if exactly one of them ends at this station.
+          const chains = (k.split("-")[1] === st) !== (k2.split("-")[1] === st);
+          const want = chains ? segDir[k] : -segDir[k];
+          if (segDir[k2] === undefined) { segDir[k2] = want; queue.push(k2); }
+          else if (segDir[k2] !== want) orientConflicts++;
         }
       }
-      for (const r of near) seen.set(r, (seen.get(r) ?? 0) + 1);
     }
-    // A route shares this corridor if it runs alongside for most of the segment.
-    const corridor = [...seen.entries()].filter(([r, n]) => n >= samples * 0.6 || own.includes(r)).map(([r]) => r);
-    corridor.sort((a, b) => order(a) - order(b));
-    // Services sharing a trunk share a colour by design (the 4, 5 and 6 are all Lexington green),
-    // so lanes are assigned per colour: one green trunk here, but red beside green where the
-    // Eastern Parkway lines run together. Routes in the same colour group get the same lane.
-    const lanes: string[] = [];
-    for (const r of corridor) {
-      const c = routes[r]?.color ?? r;
-      if (!lanes.includes(c)) lanes.push(c);
-    }
-    const n = lanes.length;
+  }
+
+  const segmentSlots: Record<string, Record<string, [number, number]>> = {};
+  /**
+   * The same position, split into the part that separates trunk colours and the part that
+   * separates services sharing one.
+   *
+   * They are drawn on different schedules. Two colours are two lines on any map and stay apart at
+   * every zoom; the 4, 5 and 6 are one green Lexington line until you are close enough to care
+   * which is which, and only then do they part. Keeping the two apart is what lets the map read
+   * as a system diagram zoomed out and as track zoomed in.
+   */
+  const bandParts: Record<string, Record<string, [number, number]>> = {};
+  for (const [key, corridor] of corridors) {
+    // Belt and braces: a service running here always has a place in the ordering, so two can
+    // never be handed the same band and drawn on top of each other.
+    const band = [...corridor];
+    for (const r of routeSegments_.get(key) ?? []) if (!band.includes(r)) band.push(r);
+    const n = band.length;
+    const colourOf = (r: string) => routes[r]?.color ?? r;
+    const colours: string[] = [];
+    for (const r of band) if (!colours.includes(colourOf(r))) colours.push(colourOf(r));
     const slots: Record<string, [number, number]> = {};
-    const tracks: Record<string, [number, number]> = {};
-    for (const r of own) {
-      const i = lanes.indexOf(routes[r]?.color ?? r);
-      slots[r] = [i < 0 ? 0 : i - (n - 1) / 2, n];
-      // Within a colour, each service still runs on its own track: the 4 and 5 use Lexington's
-      // express pair while the 6 uses the local. Trains ride these; the drawn line does not.
-      const sameColour = corridor.filter((x) => (routes[x]?.color ?? x) === (routes[r]?.color ?? r));
-      const j = sameColour.indexOf(r);
-      tracks[r] = [j < 0 ? 0 : j - (sameColour.length - 1) / 2, sameColour.length];
+    const parts: Record<string, [number, number]> = {};
+    for (const r of routeSegments_.get(key) ?? []) {
+      slots[r] = [band.indexOf(r) - (n - 1) / 2, n];
+      const group = band.filter((x) => colourOf(x) === colourOf(r));
+      parts[r] = [
+        colours.indexOf(colourOf(r)) - (colours.length - 1) / 2,
+        group.indexOf(r) - (group.length - 1) / 2,
+      ];
     }
     segmentSlots[key] = slots;
-    trackSlots[key] = tracks;
+    bandParts[key] = parts;
   }
+
+  /**
+   * Where a service changes band it must not step sideways. `laneEnds` records the offset each
+   * end of a segment should reach, halfway between this band and the neighbouring one, so the
+   * change is drawn as a splay straddling the station — each side ramping to meet the other —
+   * rather than as a break. Trains read the same numbers, so a train stays on its own line
+   * through the transition.
+   */
+  const laneEnds: Record<string, Record<string, [number, number]>> = {};
+  for (const route of byStation.keys()) {
+    for (const key of routeSegmentList[route] ?? []) {
+      if (!segments[key]) continue;
+      const [u, v] = key.split("-");
+      const mine = segmentSlots[key]?.[route]?.[0] ?? 0;
+      // A stretch eases to the mean of the bands this service uses on the stretches that carry
+      // straight on from it. Each one computes the same mean, so a change of band closes exactly.
+      //
+      // Only straight-through stretches count. Including branches too made every line at a
+      // junction converge on one band before fanning out again, which drew a visible pinch at
+      // Canal St and everywhere else services part company. A branch is already heading away;
+      // it does not need dragging sideways first.
+      const blend = (station: string) => {
+        const group = (throughClass.get(station)?.get(key) ?? [key]).filter((k) => segmentSlots[k]?.[route]);
+        if (group.length < 2) return mine;
+        return group.reduce((sum, k) => sum + segmentSlots[k]![route]![0] * (segDir[k] ?? 1), 0) / group.length / (segDir[key] ?? 1);
+      };
+      (laneEnds[key] ??= {})[route] = [blend(u), blend(v)];
+    }
+  }
+
   // Group the stations, and name each complex after whichever of its stations serves the most
   // routes — that is the name on the street.
   const groups = new Map<string, string[]>();
@@ -471,7 +628,7 @@ async function main() {
   console.log(`complexes: ${Object.keys(complexes).length} (${multi.length} spanning more than one station, largest ${Math.max(...Object.values(complexes).map((c) => c.stations.length))})`);
 
   const shared = Object.values(segmentSlots).filter((s) => Object.values(s).some(([, n]) => n > 1)).length;
-  console.log(`corridors: ${shared} of ${Object.keys(segmentSlots).length} segments share track`);
+  console.log(`corridors: ${shared} of ${Object.keys(segmentSlots).length} segments share track (${smoothed} flickers smoothed, ${orientConflicts} orientation conflicts)`);
 
   // --- Continuous runs --------------------------------------------------------
   // Drawing one disconnected feature per segment leaves a hard butt end wherever a lane changes,
@@ -479,14 +636,34 @@ async function main() {
   // segments into the longest runs that keep the same lane, so a line is one continuous stroke
   // from where it joins a corridor to where it leaves. Runs are stored as station sequences; the
   // client stitches the geometry it already has.
-  const routeRuns: Record<string, { slot: number; shared: number; stops: string[] }[]> = {};
+  /**
+   * Draw order for the weave. Where two bands cross, one has to pass over the other, and the
+   * choice cannot be per-crossing or the same pair would weave one way here and the other way
+   * there. Bands further right always pass over bands further left, so a service changing band
+   * goes over or under consistently along its whole length — which is what makes the crossing
+   * read as a weave rather than as a mistake. Five levels is enough for the widest corridor in
+   * the system, and adjacent bands always land on different levels.
+   */
+  const zOf = (slot: number) => Math.max(0, Math.min(4, Math.round(slot + 2)));
+  /**
+   * Which way a drawn stroke runs relative to its corridor. The renderer offsets a line to the
+   * right of the direction it is drawn in, so a stroke drawn against its corridor needs its band
+   * negated or it fans out on the wrong side.
+   */
+  const sideOf = (a: string, b: string) => {
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    return (segDir[key] ?? 1) * (a < b ? 1 : -1);
+  };
+  let sideFlips = 0;
+  const routeRuns: Record<string, { slot: number; shared: number; z: number; side: number; cband: number; sband: number; stops: string[] }[]> = {};
   for (const [route, keySet] of Object.entries(routeSegmentList)) {
     const edges = keySet
       .filter((k) => segments[k])
       .map((k) => {
         const [a, b] = k.split("-");
         const [slot, shared] = segmentSlots[k]?.[route] ?? [0, 1];
-        return { k, a, b, slot, shared };
+        const [cband, sband] = bandParts[k]?.[route] ?? [0, 0];
+        return { k, a, b, slot, shared, cband, sband, lane: `${slot}|${cband}|${sband}` };
       });
     const adj = new Map<string, typeof edges>();
     for (const e of edges) {
@@ -494,12 +671,12 @@ async function main() {
       (adj.get(e.b) ?? adj.set(e.b, []).get(e.b)!).push(e);
     }
     const used = new Set<string>();
-    const runs: { slot: number; shared: number; stops: string[] }[] = [];
+    const runs: { slot: number; shared: number; z: number; side: number; cband: number; sband: number; stops: string[] }[] = [];
     /** Extend from `station` while exactly one unused edge continues with the same lane. */
-    const extend = (station: string, slot: number, stops: string[], append: boolean) => {
+    const extend = (station: string, lane: string, stops: string[], append: boolean) => {
       let cur = station;
       for (;;) {
-        const options = (adj.get(cur) ?? []).filter((e) => !used.has(e.k) && e.slot === slot);
+        const options = (adj.get(cur) ?? []).filter((e) => !used.has(e.k) && e.lane === lane);
         if (options.length !== 1) break;
         const e = options[0];
         used.add(e.k);
@@ -511,15 +688,27 @@ async function main() {
       if (used.has(e.k)) continue;
       used.add(e.k);
       const stops = [e.a, e.b];
-      extend(e.b, e.slot, stops, true);
-      extend(e.a, e.slot, stops, false);
-      runs.push({ slot: e.slot, shared: e.shared, stops });
+      extend(e.b, e.lane, stops, true);
+      extend(e.a, e.lane, stops, false);
+      // A stroke is offset as one feature, so it must be drawn on one side of its corridor all
+      // the way along. Where the corridor's orientation reverses mid-stroke — at a sharp turn the
+      // orientation pass would not propagate through — the stroke is cut there instead.
+      let from = 0, side = sideOf(stops[0], stops[1]);
+      for (let i = 1; i + 1 < stops.length; i++) {
+        const here = sideOf(stops[i], stops[i + 1]);
+        if (here === side) continue;
+        runs.push({ slot: e.slot, shared: e.shared, z: zOf(e.slot), side, cband: e.cband, sband: e.sband, stops: stops.slice(from, i + 1) });
+        sideFlips++;
+        from = i;
+        side = here;
+      }
+      runs.push({ slot: e.slot, shared: e.shared, z: zOf(e.slot), side, cband: e.cband, sband: e.sband, stops: stops.slice(from) });
     }
     routeRuns[route] = runs;
   }
   const runCount = Object.values(routeRuns).reduce((n, r) => n + r.length, 0);
   const segCount = Object.values(routeSegmentList).reduce((n, r) => n + r.length, 0);
-  console.log(`runs: ${segCount} route-segments chained into ${runCount} continuous strokes`);
+  console.log(`runs: ${segCount} route-segments chained into ${runCount} continuous strokes (${sideFlips} cut where the corridor reverses)`);
 
   const out = {
     generatedAt: new Date().toISOString(),
@@ -536,7 +725,9 @@ async function main() {
     complexes,
     shapeStops,
     segmentSlots,
-    trackSlots,
+    bandParts,
+    laneEnds,
+    segDir,
     routeRuns,
     stationRoutes: Object.fromEntries(
       Object.entries(stationRoutes).map(([k, v]) => [
