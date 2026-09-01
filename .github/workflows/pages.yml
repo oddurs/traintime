@@ -1,8 +1,9 @@
 name: Deploy to GitHub Pages
 
+# Deploys are manual. Run it from the Actions tab, or `gh workflow run "Deploy to GitHub Pages"`.
+# Continuous integration still runs on every push — see ci.yml — so nothing stops being checked;
+# only publishing waits to be asked for.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -38,13 +39,10 @@ jobs:
         with:
           path: out
 
-  # Publishing is skipped while the repository is private: GitHub Pages needs a paid plan for
-  # private repositories, and a job that fails on every push stops anybody noticing the ones that
-  # matter. The build above still runs in full — typecheck, tests, audits, the static export — so
-  # a regression is caught whether or not the site is being published.
+  # Note: GitHub Pages needs a paid plan for a private repository, so this step will not succeed
+  # while the repository is private, even when run by hand.
   deploy:
     needs: build
-    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
