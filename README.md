@@ -2,7 +2,7 @@
 
 **Every New York City subway train, moving on a map of the city — simulated from the MTA's realtime feeds, and measured against what the trains actually did.**
 
-Live at **https://oddurs.github.io/traintime/** · [how accurate is it?](https://oddurs.github.io/traintime/accuracy/) · [API](https://oddurs.github.io/traintime/api-docs/)
+Live at **https://traintime-site-production.up.railway.app/** · [how accurate is it?](https://traintime-site-production.up.railway.app/accuracy/) · [API](https://traintime-site-production.up.railway.app/api-docs/)
 
 ![traintime](docs/screenshot.png)
 
@@ -21,7 +21,7 @@ recording of the feeds and scored by replay against observed station events.
   doesn't report departures". Uncertainty is drawn as a ribbon and stated in words.
 - **History.** With a poller running, scrub the recorded day, replay it at up to 60×, see per-line
   headways, and export a clip.
-- **Anywhere.** Installable PWA, offline shell, [embeddable views](https://oddurs.github.io/traintime/embed/?station=A24),
+- **Anywhere.** Installable PWA, offline shell, [embeddable views](https://traintime-site-production.up.railway.app/embed/?station=A24),
   and a documented API.
 
 ## Run it

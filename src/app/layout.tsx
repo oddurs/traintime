@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   title: { default: title, template: "%s · traintime" },
   description,
   applicationName: "traintime",
-  metadataBase: new URL("https://oddurs.github.io"),
+  metadataBase: new URL("https://traintime-site-production.up.railway.app"),
   icons: {
     icon: [
       { url: `${BASE_PATH}/icon-192.png`, sizes: "192x192", type: "image/png" },

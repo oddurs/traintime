@@ -11,17 +11,24 @@ only publishing waits to be asked for.
 
 ## The site
 
+<https://traintime-site-production.up.railway.app>
+
 ```
-gh workflow run "Deploy to GitHub Pages"
+npm run build:site                      # check it builds, and look at ./out
+railway up --service traintime-site
 ```
 
-The workflow builds and publishes `out/`. **It will not succeed while the repository is private**:
-GitHub Pages needs a paid plan for private repositories, so the publish step fails even when run
-by hand. The build half still runs and is still useful as a check.
+A second Railway service beside the poller, serving the static export with compression. GitHub
+Pages is gone: the repository is private and Pages needs a paid plan for that.
 
-If the site needs to be public again, the options are a GitHub plan that allows Pages on private
-repositories, or hosting the static export somewhere that serves private repositories on a free
-tier — Railway (where the poller already lives), Cloudflare Pages, Vercel or Netlify all do.
+The two are separate services on purpose. The poller records the feeds continuously and its
+recordings are the product, so restarting it to ship a stylesheet would cost a gap in the history
+and a warm-up every time.
+
+`railway.json` deliberately names neither a Dockerfile nor a start command — both services build
+from this repository, so nothing in a shared config may assume which one it is. Each service picks
+its Dockerfile through `RAILWAY_DOCKERFILE_PATH` and its process through that Dockerfile's `CMD`.
+The site is told where the poller lives at build time through `POLLER_URL`.
 
 ## The poller
 
