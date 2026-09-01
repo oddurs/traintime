@@ -38,8 +38,13 @@ jobs:
         with:
           path: out
 
+  # Publishing is skipped while the repository is private: GitHub Pages needs a paid plan for
+  # private repositories, and a job that fails on every push stops anybody noticing the ones that
+  # matter. The build above still runs in full — typecheck, tests, audits, the static export — so
+  # a regression is caught whether or not the site is being published.
   deploy:
     needs: build
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
