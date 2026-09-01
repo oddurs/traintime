@@ -510,31 +510,75 @@ async function main() {
     throughClass.set(st, new Map(ks.map((k) => [k, classes.get(find(k))!])));
   }
 
+  /**
+   * Which way each stretch runs, agreed across the whole network.
+   *
+   * Two stretches that continue into one another want the same orientation. Spreading one
+   * outwards from a seed satisfies almost all of those wishes, but the network has cycles — go
+   * round a loop and the far side can disagree with where you started. Taking the first answer
+   * and leaving the disagreement is what put a two-band step in the middle of a line.
+   *
+   * So the spread is followed by a settling pass: any stretch that disagrees with more of its
+   * neighbours than it agrees with is flipped, repeatedly, until nothing improves. It is a local
+   * search and it cannot promise perfection — a cycle of odd parity has no consistent answer at
+   * all — but it moves the remaining disagreements to where they cost least.
+   */
+  type Link = { other: string; same: boolean };
+  const links = new Map<string, Link[]>();
+  for (const k of segKeys) {
+    if (!segments[k]) continue;
+    const out: Link[] = [];
+    for (const st of k.split("-")) {
+      const here = awayFrom(k, st);
+      for (const k2 of stationSegs.get(st) ?? []) {
+        if (k2 === k || !segments[k2]) continue;
+        const there = awayFrom(k2, st);
+        // Both vectors point away from the station, so a straight-through pair points opposite.
+        if (here[0] * there[0] + here[1] * there[1] > -0.5) continue;
+        // Canonical order already chains if exactly one of them ends at this station.
+        out.push({ other: k2, same: (k.split("-")[1] === st) !== (k2.split("-")[1] === st) });
+      }
+    }
+    links.set(k, out);
+  }
+
   const segDir: Record<string, number> = {};
-  let orientConflicts = 0;
   for (const seed of segKeys) {
     if (segDir[seed] !== undefined || !segments[seed]) continue;
     segDir[seed] = 1;
     const queue = [seed];
     while (queue.length) {
       const k = queue.shift()!;
-      for (const st of k.split("-")) {
-        const here = awayFrom(k, st);
-        for (const k2 of stationSegs.get(st) ?? []) {
-          if (k2 === k) continue;
-          const there = awayFrom(k2, st);
-          // Both vectors point away from the station, so a straight-through pair points opposite.
-          if (here[0] * there[0] + here[1] * there[1] > -0.5) continue;
-
-          // Canonical order already chains if exactly one of them ends at this station.
-          const chains = (k.split("-")[1] === st) !== (k2.split("-")[1] === st);
-          const want = chains ? segDir[k] : -segDir[k];
-          if (segDir[k2] === undefined) { segDir[k2] = want; queue.push(k2); }
-          else if (segDir[k2] !== want) orientConflicts++;
-        }
+      for (const { other, same } of links.get(k) ?? []) {
+        if (segDir[other] !== undefined) continue;
+        segDir[other] = same ? segDir[k] : -segDir[k];
+        queue.push(other);
       }
     }
   }
+
+  const disagreements = () => {
+    let n = 0;
+    for (const [k, ls] of links) for (const { other, same } of ls) {
+      if (k < other && (segDir[k] === segDir[other]) !== same) n++;
+    }
+    return n;
+  };
+  const before = disagreements();
+  for (let sweep = 0; sweep < 12; sweep++) {
+    let flipped = 0;
+    for (const [k, ls] of links) {
+      let agree = 0, disagree = 0;
+      for (const { other, same } of ls) {
+        if (segDir[other] === undefined) continue;
+        ((segDir[k] === segDir[other]) === same ? () => agree++ : () => disagree++)();
+      }
+      if (disagree > agree) { segDir[k] = -segDir[k]; flipped++; }
+    }
+    if (!flipped) break;
+  }
+  const orientConflicts = disagreements();
+  if (before !== orientConflicts) console.log(`  orientation: settled ${before} disagreements down to ${orientConflicts}`);
 
   const segmentSlots: Record<string, Record<string, [number, number]>> = {};
   /**
@@ -578,7 +622,7 @@ async function main() {
    * through the transition.
    */
   const laneEnds: Record<string, Record<string, [number, number]>> = {};
-  for (const route of byStation.keys()) {
+  for (const [route, stationMap] of byStation) {
     for (const key of routeSegmentList[route] ?? []) {
       if (!segments[key]) continue;
       const [u, v] = key.split("-");
@@ -591,9 +635,21 @@ async function main() {
       // Canal St and everywhere else services part company. A branch is already heading away;
       // it does not need dragging sideways first.
       const blend = (station: string) => {
-        const group = (throughClass.get(station)?.get(key) ?? [key]).filter((k) => segmentSlots[k]?.[route]);
+        // Where a service has exactly two stretches at a station it is passing through, however
+        // sharply. The geometric "carries straight on" test wants a turn of less than 60 degrees,
+        // which is right for deciding what a *corridor* does but wrong for one service's own
+        // continuity: the N through Union Sq, the E through Queens Plaza and the 4 through
+        // Brooklyn Bridge all curve harder than that, and each was left with a step of up to
+        // 6.9 m in the middle of an otherwise continuous line.
+        const mineHere = (stationMap.get(station) ?? []).filter((k) => segmentSlots[k]?.[route]);
+        const group = mineHere.length === 2
+          ? mineHere
+          : (throughClass.get(station)?.get(key) ?? [key]).filter((k) => segmentSlots[k]?.[route]);
         if (group.length < 2) return mine;
-        return group.reduce((sum, k) => sum + segmentSlots[k]![route]![0] * (segDir[k] ?? 1), 0) / group.length / (segDir[key] ?? 1);
+        // Left in the corridor's frame, like the band itself. The drawing multiplies both by the
+        // stretch's orientation; converting here as well applied it twice, which is invisible
+        // wherever neighbouring stretches share an orientation and a 6.9 m step where they do not.
+        return group.reduce((sum, k) => sum + segmentSlots[k]![route]![0] * (segDir[k] ?? 1), 0) / group.length;
       };
       (laneEnds[key] ??= {})[route] = [blend(u), blend(v)];
     }
