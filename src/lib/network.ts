@@ -79,6 +79,43 @@ export class NetworkIndex {
   private segCache = new Map<string, Path>();
   private lineCache = new Map<string, LonLat[]>();
   private mergedPrev: Record<string, string[]> = {};
+  private terminals: Map<string, string[]> | null = null;
+
+  /**
+   * The services for which this station is the end of the line.
+   *
+   * A terminal is a different place from a stop and the map should say so: the line ends there,
+   * trains lay over rather than dwell, and what a rider wants is a departure rather than an
+   * arrival. Eighty of the system's stations are one, and eighteen are the terminal for more than
+   * one service.
+   */
+  terminalFor(station: string): string[] {
+    if (!this.terminals) {
+      this.terminals = new Map();
+      for (const [shape, stops] of Object.entries(this.net.shapeStops)) {
+        const route = shape.split(/[._]/)[0];
+        for (const end of [stops[0], stops[stops.length - 1]]) {
+          if (!end) continue;
+          const p = parentOf(end);
+          const list = this.terminals.get(p) ?? this.terminals.set(p, []).get(p)!;
+          if (!list.includes(route)) list.push(route);
+        }
+      }
+    }
+    return this.terminals.get(parentOf(station)) ?? [];
+  }
+
+  /**
+   * How many services a rider can catch here, counting the whole complex — "Times Sq" is thirteen
+   * routes across five GTFS stations, and the map should draw it as the interchange it is.
+   */
+  servesCount(station: string): number {
+    const members = this.complexStations(parentOf(station));
+    const seen = new Set<string>();
+    for (const m of members) for (const r of this.net.stationRoutes[m] ?? []) seen.add(r);
+    return seen.size;
+  }
+
   /** Diagnostics: how often we had to guess a train's track instead of knowing it. */
   readonly stats = { paths: 0, chained: 0, straightFallback: 0 };
   /**

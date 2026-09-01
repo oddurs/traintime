@@ -15,6 +15,13 @@ export interface Arrival {
   /** How many stops before this one the train still has to make. */
   stopsAway: number;
   atPlatform: boolean;
+  /**
+   * This train's run begins here — it is leaving, not arriving.
+   *
+   * At a terminal that is the only thing a rider can act on: the trains that pull in are ending
+   * their runs, and the countdown that matters is the one to the next departure.
+   */
+  departing: boolean;
   /** When a destination is asked for: our predicted arrival there, and the ride length. */
   destEta?: number;
   rideSeconds?: number;
@@ -62,6 +69,7 @@ export function arrivalsAt(
       found.push({
         id: st.id, route: st.route, direction: st.direction, eta, etaRaw: st.etaRaw,
         sigma: 0, destination: dest, stopsAway: 0, atPlatform: true,
+        departing: st.stops.length > 1 && target.has(parentOf(st.stops[0].id)),
         destEta, rideSeconds: destEta === undefined ? undefined : destEta - eta,
         state: st,
       });
@@ -80,7 +88,7 @@ export function arrivalsAt(
     }
     found.push({
       id: st.id, route: st.route, direction: st.direction, eta: s.eta, etaRaw: s.etaRaw, sigma: s.sigma,
-      destination: dest, stopsAway: idx, atPlatform: false,
+      destination: dest, stopsAway: idx, atPlatform: false, departing: idx === 0 && st.prevStop === undefined && st.stops.length > 1,
       destEta, rideSeconds: destEta === undefined ? undefined : destEta - s.eta,
       state: st,
     });

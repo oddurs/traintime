@@ -85,3 +85,36 @@ when the two agree.
 One MapLibre trap is load-bearing enough to be asserted in a test: a zoom interpolation must be
 the outermost expression. Nested inside a multiply it is not rejected loudly — the layer is
 silently dropped, which took most of the network off the map.
+
+
+## Drawing the stations
+
+Every station used to be the same grey dot, which threw away most of what the system is:
+
+| | |
+|---|---|
+| terminals — a service starts or ends there | **80** (18 for more than one service) |
+| interchanges — three or more services at one complex | **133** |
+| single-service stops | 153 |
+| largest complex | Times Sq, **13 services** |
+| places a service's band is drawn *through* a station it never stops at | **302** |
+
+That last row is the one that was actually wrong rather than merely flat. The 6X band runs past
+125 St, 116 St and 110 St, and the map put a station dot on it with nothing to say the express
+does not stop.
+
+The printed map has had a vocabulary for this since 1970, so this borrows it:
+
+- **a plain stop** is a small dark tick on the line
+- **an interchange** is the larger light circle, and its name is set in bold at a larger size
+- **a terminal** carries an outer ring, because the line ends there — drawn as a ring rather than
+  a bigger dot so a terminal that is also an interchange reads as both
+- **a station a shown service runs past** is dimmed. Filter to an express and the stops it skips
+  recede, rather than sitting there looking like somewhere you could get off.
+
+## Terminals are a different place
+
+A train pulling into a terminal is ending its run; the one a rider can act on is the next to
+leave. So when every train listed for a direction begins its run at that station, the board says
+**Departures**, a train standing there reads "at the platform, ready to leave", and the countdown
+says **go** rather than **now**.

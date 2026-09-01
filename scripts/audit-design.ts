@@ -12,10 +12,17 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const CSS = join(process.cwd(), "src/app/globals.css");
+/**
+ * The map is styled in TypeScript, not CSS, because MapLibre paints into a canvas. That put a
+ * second palette in the codebase that this audit could not see — station fills, label colours and
+ * halos written out as literals. They are read from the token layer through src/lib/mapTheme.ts
+ * now, and these files are checked so they stay that way.
+ */
+const THEMED_TS = ["src/components/TrainMap.tsx", "src/lib/icons.ts"];
 const src = readFileSync(CSS, "utf8");
 const lines = src.split("\n");
 
-interface Finding { line: number; kind: string; text: string; detail: string }
+interface Finding { line: number; kind: string; text: string; detail: string; file?: string }
 const findings: Finding[] = [];
 
 /** The token layer: what the system actually offers. */
@@ -124,6 +131,21 @@ lines.forEach((raw, i) => {
   }
 });
 
+{
+  for (const rel of THEMED_TS) {
+    let text: string;
+    try { text = readFileSync(join(process.cwd(), rel), "utf8"); } catch { continue; }
+    text.split("\n").forEach((line, i) => {
+      if (/^\s*(\*|\/\/)/.test(line)) return;
+      for (const c of line.matchAll(/"#[0-9a-fA-F]{3,8}"|"rgba?\([^)]*\)"/g)) {
+        // Fully transparent is "no fill", not a colour anybody chose.
+        if (/^"rgba?\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)"$/.test(c[0])) continue;
+        findings.push({ line: i + 1, kind: "colour", file: rel, text: line.trim().slice(0, 70), detail: `${c[0]} should come from mapTheme()` });
+      }
+    });
+  }
+}
+
 /**
  * Type styles carry their tracking with them.
  *
@@ -174,7 +196,7 @@ for (const kind of order) {
   const list = byKind.get(kind);
   if (!list?.length) continue;
   console.log(`  [${kind}] ${list.length}`);
-  for (const f of list.slice(0, 12)) console.log(`      globals.css:${f.line}  ${f.text}  — ${f.detail}`);
+  for (const f of list.slice(0, 12)) console.log(`      ${f.file ?? "globals.css"}:${f.line}  ${f.text}  — ${f.detail}`);
   if (list.length > 12) console.log(`      … and ${list.length - 12} more`);
   console.log("");
 }

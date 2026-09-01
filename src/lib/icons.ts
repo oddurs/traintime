@@ -1,3 +1,4 @@
+import { paint } from "./mapTheme";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import type { NetworkIndex } from "./network";
 
@@ -25,7 +26,7 @@ function chevron(color: string, ratio: number): ImageData | null {
   g.lineTo(-8.5, 15);
   g.closePath();
   g.fillStyle = color;
-  g.strokeStyle = "rgba(0,0,0,0.55)";
+  g.strokeStyle = paint("--map-chevron-edge");
   g.lineWidth = 1.4;
   g.lineJoin = "round";
   g.stroke();

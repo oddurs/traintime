@@ -129,7 +129,7 @@ export default function Panel(props: Props) {
       {selection.kind === "train" && selectedTrain && (
         <TrainDetail
           index={index} state={selectedTrain} positionsRef={positionsRef} byId={byId} now={now} alerts={alerts} following={follow} onFollow={onFollow}
-          onSelect={onSelect} onClose={() => onSelect({ kind: "none" })}
+          onSelect={onSelect} onClose={() => onSelect({ kind: "none" })} destination={destination}
         />
       )}
       {selection.kind === "train" && !selectedTrain && (

@@ -97,3 +97,34 @@ to a quiet label once the sheet has an answer in it. Three arrivals are visible 
 **Alerts are not decoration and not an obstacle.** A reroute changes whether the train in front of
 you is any use, so it stays in sight — as one row, coloured by severity, that opens to the full
 text.
+
+
+## Riding, rather than watching
+
+The train view was built for someone looking at the map — speed, motion state, a progress bar.
+None of that is what you want while you are on the train. In the carriage the questions are: what
+is the next stop, what can I change to there, and did I get on the right one.
+
+So the train view leads with the next stop at title size, the services you could change to there
+as bullets beneath it, and then the run ahead with our own per-stop times and their uncertainty.
+
+One thing we deliberately do **not** show is which side the doors open. That needs platform
+configuration, which is not in the feed. Guessing would be worse than staying quiet.
+
+### The change
+
+We hold a full per-stop prediction for every train in the system at the same instant, which is the
+one thing a countdown clock or an in-car display cannot: they know about one train. That makes a
+question answerable that nobody else can answer — given the train you are on and where you are
+going, should you get off and take a different one?
+
+Measured against live state with real destinations, advice exists for **20% of journeys**, and it
+is the advice a New Yorker gives: *on the 1, change at 23 St for the 2*; *on the A, change at
+50 St for the E*; *on the E, change at Steinway St for the F*.
+
+It is only offered when a destination has been named — without one there is no journey to be
+faster about, and "sooner to the end of my run" is not something anyone can act on. It also has to
+clear three bars, because telling someone to get off a train costs them the train: the other
+service must actually reach the destination, the change must be one you could make (75 seconds to
+cross, and it has to still be ahead of you), and the saving must be worth saying — under two
+minutes is noise dressed up as advice. Six tests hold those bars in place.

@@ -8,6 +8,7 @@ import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
 import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
 import { addRouteIcons, chevronId } from "@/lib/icons";
+import { paint } from "@/lib/mapTheme";
 import { asset } from "@/lib/basePath";
 import { readHash } from "@/lib/urlState";
 
@@ -106,14 +107,36 @@ function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
   return { type: "FeatureCollection", features };
 }
 
-function stationPoints(index: NetworkIndex): GeoJSON.FeatureCollection {
+/**
+ * Stations, with the role each one plays.
+ *
+ * Every station used to be drawn as the same grey dot, which threw away most of what the system
+ * is: 80 of them are the end of a line, 133 are interchanges where three or more services meet,
+ * and one — Times Sq — is thirteen. The MTA's own map has had a vocabulary for this since 1970,
+ * so this borrows it: a plain stop is a small dark tick on the line, an interchange is the larger
+ * light circle, and a terminal carries an outer ring because the line stops there.
+ *
+ * `served` says whether any service currently shown actually calls here. Filtering to an express
+ * leaves the stations it runs past but does not stop at, and those are dimmed rather than left
+ * looking like somewhere you could get off.
+ */
+function stationPoints(index: NetworkIndex, visible: Set<string> | null): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
-    features: Object.values(index.net.stations).map((s) => ({
-      type: "Feature",
-      properties: { id: s.id, name: s.name },
-      geometry: { type: "Point", coordinates: [s.lon, s.lat] },
-    })),
+    features: Object.values(index.net.stations).map((s) => {
+      const routes = index.net.stationRoutes[s.id] ?? [];
+      const n = index.servesCount(s.id);
+      const terminal = index.terminalFor(s.id).length > 0;
+      return {
+        type: "Feature" as const,
+        properties: {
+          id: s.id, name: s.name, n, terminal,
+          interchange: n >= 3,
+          served: !visible || routes.some((r) => visible.has(r)),
+        },
+        geometry: { type: "Point" as const, coordinates: [s.lon, s.lat] },
+      };
+    }),
   };
 }
 
@@ -124,7 +147,7 @@ function stationPoints(index: NetworkIndex): GeoJSON.FeatureCollection {
  * nothing to re-lay. Narrowing to a handful of services is a request to tell them apart, so they
  * get more room.
  */
-function applyVisibilityFactory(applied: { scale: number | null }) {
+function applyVisibilityFactory(applied: { scale: number | null; served: string | null }) {
   const apply = (map: maplibregl.Map, index: NetworkIndex, visible: Set<string> | null, attempt = 0) => {
     if (!map.getLayer("routes-line-0")) return;
     // The layer can exist while the style is still settling its sprites and glyphs, and MapLibre
@@ -151,6 +174,13 @@ function applyVisibilityFactory(applied: { scale: number | null }) {
     }
     applied.scale = scale;
     fanScale.current = scale;
+    // Stations a shown service runs past without stopping are dimmed rather than left looking
+    // like somewhere you could get off — filter to an express and the local stops recede.
+    const key = visible ? list.slice().sort().join(",") : "*";
+    if (key !== applied.served) {
+      applied.served = key;
+      (map.getSource("stations") as GeoJSONSource | undefined)?.setData(stationPoints(index, visible));
+    }
     if (process.env.NODE_ENV !== "production") {
       const w = window as unknown as { __tt?: Record<string, unknown> };
       w.__tt = { ...(w.__tt ?? {}), fanScale: scale, visibleCount: list.length };
@@ -166,7 +196,7 @@ export default function TrainMap(props: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   // Holds the lane convention currently uploaded, so lines are only rebuilt when it changes.
-  const applyVisibility = useMemo(() => applyVisibilityFactory({ scale: null }), []);
+  const applyVisibility = useMemo(() => applyVisibilityFactory({ scale: null, served: null }), []);
   /** The band each train was last riding, so one standing at a platform keeps its lane. */
   const lastBandRef = useRef(new Map<string, [number, number]>());
   const kinRef = useRef<Kinematics | null>(null);
@@ -251,7 +281,7 @@ export default function TrainMap(props: Props) {
           type: "Feature",
           properties: {
             id: p.id, route: p.route, label: p.route.replace(/X$/, "").slice(0, 2),
-            color: r?.color ?? "#808183", textColor: r?.textColor ?? "#ffffff",
+            color: r?.color ?? paint("--route-unknown"), textColor: r?.textColor ?? paint("--route-unknown-text"),
             ghost: p.phase === "unstarted" || !p.state.assigned || !!p.state.stale,
             holding: p.motion === "holding", moving, bearing: Math.round(p.bearing),
             chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
@@ -261,7 +291,7 @@ export default function TrainMap(props: Props) {
         if (p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
           bands.push({
             type: "Feature",
-            properties: { color: selected ? "#ffffff" : (r?.color ?? "#808183") },
+            properties: { color: selected ? paint("--label") : (r?.color ?? paint("--route-unknown")) },
             geometry: { type: "LineString", coordinates: p.ribbon },
           });
         }
@@ -293,7 +323,7 @@ export default function TrainMap(props: Props) {
       addRouteIcons(map, index);
 
       map.addSource("routes", { type: "geojson", data: routeLines(index) });
-      map.addSource("stations", { type: "geojson", data: stationPoints(index) });
+      map.addSource("stations", { type: "geojson", data: stationPoints(index, null) });
       map.addSource("ribbons", { type: "geojson", data: EMPTY });
       map.addSource("trains", { type: "geojson", data: EMPTY });
       map.addSource("focus", { type: "geojson", data: EMPTY });
@@ -309,7 +339,7 @@ export default function TrainMap(props: Props) {
           filter: ["==", ["get", "z"], z],
           layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
           paint: {
-            "line-color": "#000", "line-opacity": 0.75,
+            "line-color": paint("--map-casing"), "line-opacity": 0.75,
             "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.3, 13, 3.9, 16, 6.6],
             "line-offset": bandOffset(1),
           },
@@ -329,24 +359,57 @@ export default function TrainMap(props: Props) {
         id: "focus-ring", type: "circle", source: "focus",
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 10, 14, 20],
-          "circle-color": "rgba(255,255,255,0.08)", "circle-stroke-color": "#fff", "circle-stroke-width": 2, "circle-stroke-opacity": 0.9,
+          "circle-color": paint("--map-focus"), "circle-stroke-color": paint("--label"), "circle-stroke-width": 2, "circle-stroke-opacity": 0.9,
+        },
+      });
+      map.addLayer({
+        id: "station-terminals", type: "circle", source: "stations", minzoom: 12.5,
+        filter: ["get", "terminal"],
+        paint: {
+          // The line ends here. An outer ring rather than a bigger dot, so a terminal that is
+          // also an interchange reads as both.
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 12.5, 3.2, 14, 5.4, 16, 8],
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-color": paint("--map-station-edge"),
+          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 12.5, 0.8, 16, 1.4],
+          "circle-stroke-opacity": ["case", ["get", "served"], 0.75, 0.2],
         },
       });
       map.addLayer({
         id: "stations", type: "circle", source: "stations", minzoom: 12,
         paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 1.4, 14, 2.8, 16, 4.5],
-          "circle-color": "#0b0b0d",
-          "circle-stroke-color": "#c9c9d2",
+          // An interchange is drawn as the larger light circle the printed map uses; a plain stop
+          // is a small dark tick on the line.
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            12, ["case", ["get", "interchange"], 2.2, 1.4],
+            14, ["case", ["get", "interchange"], 4.2, 2.8],
+            16, ["case", ["get", "interchange"], 6.4, 4.5],
+          ],
+          "circle-color": ["case", ["get", "interchange"], paint("--map-station-edge"), paint("--map-station-fill")],
+          "circle-stroke-color": ["case", ["get", "interchange"], paint("--map-station-fill"), paint("--map-station-edge")],
           "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 12, 1, 16, 1.6],
-          "circle-opacity": 1,
-          "circle-stroke-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.5, 14, 0.9],
+          "circle-opacity": ["case", ["get", "served"], 1, 0.25],
+          "circle-stroke-opacity": [
+            "interpolate", ["linear"], ["zoom"],
+            12, ["case", ["get", "served"], 0.5, 0.15],
+            14, ["case", ["get", "served"], 0.9, 0.2],
+          ],
         },
       });
       map.addLayer({
         id: "station-labels", type: "symbol", source: "stations", minzoom: 13.5,
-        layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-offset": [0, 0.9], "text-anchor": "top", "text-optional": true },
-        paint: { "text-color": "#cfcfcf", "text-halo-color": "#000", "text-halo-width": 1.2 },
+        layout: {
+          "text-field": ["get", "name"],
+          "text-font": ["case", ["get", "interchange"], ["literal", ["Noto Sans Bold"]], ["literal", ["Noto Sans Regular"]]],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, ["case", ["get", "interchange"], 11, 10], 16, ["case", ["get", "interchange"], 13, 11]],
+          "text-offset": [0, 0.9], "text-anchor": "top", "text-optional": true,
+        },
+        paint: {
+          "text-color": ["case", ["get", "interchange"], paint("--label"), paint("--map-label")],
+          "text-halo-color": paint("--map-halo"), "text-halo-width": 1.2,
+          "text-opacity": ["case", ["get", "served"], 1, 0.35],
+        },
       });
       map.addLayer({
         id: "ribbons", type: "line", source: "ribbons", minzoom: 12.5,
@@ -364,7 +427,7 @@ export default function TrainMap(props: Props) {
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 9, 14, 16],
           "circle-color": "rgba(0,0,0,0)",
-          "circle-stroke-color": ["case", ["get", "selected"], "#ffffff", "#9fd0ff"],
+          "circle-stroke-color": ["case", ["get", "selected"], paint("--label"), paint("--map-uncertain")],
           "circle-stroke-width": ["case", ["get", "selected"], 2.5, 1.5],
           "circle-stroke-opacity": 0.95,
         },
@@ -387,7 +450,7 @@ export default function TrainMap(props: Props) {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 4.5, 14, 9],
           "circle-color": ["get", "color"],
           "circle-opacity": ["case", ["get", "ghost"], 0.4, 1],
-          "circle-stroke-color": ["case", ["get", "holding"], "#ffb454", "#ffffff"],
+          "circle-stroke-color": ["case", ["get", "holding"], paint("--map-hold"), paint("--label")],
           // A zoom expression has to sit at the top level, so the per-feature choice goes inside it.
           "circle-stroke-width": [
             "interpolate", ["linear"], ["zoom"],

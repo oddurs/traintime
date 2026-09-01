@@ -106,9 +106,13 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         </p>
       )}
 
-      {groups.map((g) => (
+      {groups.map((g) => {
+        // At a terminal the trains pulling in are ending their runs; what a rider can act on is
+        // the next one to leave. When every train listed starts its run here, the board says so.
+        const leaving = g.arrivals.length > 0 && g.arrivals.every((a) => a.departing);
+        return (
         <div className="board-group" key={g.direction}>
-          <h3>{directionLabel(g.direction)}</h3>
+          <h3>{leaving ? "Departures" : directionLabel(g.direction)}</h3>
           <span className="board-toward">toward {g.label}</span>
           <ul className="arrivals">
             {g.arrivals.map((a) => {
@@ -128,6 +132,8 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
                       <em>
                         {a.rideSeconds !== undefined
                           ? `arrives ${fmtClock(a.destEta!)} · ${Math.round(a.rideSeconds / 60)} min ride`
+                          : a.departing && a.atPlatform
+                          ? "at the platform, ready to leave"
                           : a.atPlatform
                           ? "at the platform"
                           : catchable === false
@@ -136,7 +142,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
                       </em>
                     </span>
                     <span className={`arr-eta ${here ? "here" : ""} ${catchable === false ? "missed" : ""}`}>
-                      <b>{here ? "now" : fmtMin(secs)}</b>
+                      <b>{here ? (a.departing ? "go" : "now") : fmtMin(secs)}</b>
                       {!here && <i>min</i>}
                     </span>
                   </button>
@@ -145,7 +151,8 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
             })}
           </ul>
         </div>
-      ))}
+        );
+      })}
       {onDestination && <DestinationPicker index={index} destination={destination} onChange={onDestination} />}
     </section>
   );

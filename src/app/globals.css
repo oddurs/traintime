@@ -41,6 +41,23 @@
   --tint-amber: rgba(255, 159, 10, 0.45);
   --glow: rgba(159, 208, 255, 0.8);
 
+  /*
+   * The map's own palette. MapLibre paints into a canvas and cannot resolve a custom property, so
+   * src/lib/mapTheme.ts reads these at start-up — the map is themed from here like everything
+   * else rather than from a second set of literals nobody could audit.
+   */
+  --map-casing: #000000;
+  --map-station-fill: #0b0b0d;
+  --map-station-edge: #c9c9d2;
+  --map-label: #cfcfcf;
+  --map-halo: #000000;
+  --map-uncertain: #9fd0ff;
+  --map-hold: #ffb454;
+  --map-focus: rgba(255, 255, 255, 0.08);
+  --map-chevron-edge: rgba(0, 0, 0, 0.55);
+  --route-unknown: #808183;
+  --route-unknown-text: #ffffff;
+
   /* ---- The MTA's own palette, for the legend's samples of what the map draws. ---- */
   --mta-red: #ee352e;
   --mta-blue: #0039a6;
@@ -368,6 +385,33 @@ button.roundel:hover { transform: scale(1.08); }
 .stop-eta em { display: block; font: var(--t-micro); font-style: normal; font-weight: 400; color: var(--label-3); margin-top: var(--s0); letter-spacing: var(--tr-micro); }
 .detail-actions { display: flex; gap: var(--s2); }
 .detail-actions button { flex: 1; min-height: var(--tap); }
+
+/*
+ * Riding, rather than watching. The next stop is what you look up for, so it is set at the
+ * headline size with the countdown beside it and the changes you could make underneath — the
+ * three things an in-car display is for, in the order you need them.
+ */
+.next-stop { background: var(--raise); border-radius: var(--r-card); padding: var(--s3); display: flex; flex-direction: column; gap: var(--s1); }
+.next-label { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
+.next-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
+.next-row b { font: var(--t-title); letter-spacing: var(--tr-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.next-eta { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); flex: none; }
+.next-changes { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; color: var(--label-3); font: var(--t-caption); margin-top: var(--s1); }
+
+/* The one thing a countdown clock cannot tell you, so it is allowed to look like an answer. */
+.swap {
+  display: flex; align-items: flex-start; gap: var(--s2); width: 100%; text-align: left;
+  background: var(--raise); border: none; border-radius: var(--r-card);
+  padding: var(--s3); min-height: var(--tap); cursor: pointer;
+  color: var(--label-2); font: var(--t-caption);
+  box-shadow: inset 0 0 0 1px var(--tint-green);
+  transition: background var(--fast) var(--ease);
+}
+.swap:hover { background: var(--raise-2); }
+.swap-lead { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--green); flex: none; padding-top: var(--s0); }
+.swap-body { line-height: 1.45; }
+.swap-body b { color: var(--label); font-weight: 600; }
+.swap .roundel { margin: 0 var(--s0); vertical-align: middle; }
 
 /* ---------- history ---------- */
 .history { display: flex; flex-direction: column; gap: var(--s4); border-top: var(--hairline) solid var(--separator); padding-top: var(--s4); }
