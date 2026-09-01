@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Selection, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
+import type { TrainPosition } from "@/lib/types";
 import { arrivalsAt } from "@/lib/arrivals";
+import { STALLED_S } from "@/lib/format";
 import { directionLabel, fmtClock, fmtMin } from "@/lib/format";
 import { walkSeconds } from "@/lib/places";
 import RouteBullet from "./RouteBullet";
@@ -25,6 +27,8 @@ interface Props {
   destination?: string;
   onDestination?: (id: string | null) => void;
   onSelect: (s: Selection) => void;
+  /** Live positions, so a board can say that a train it is counting down has stopped moving. */
+  positionsRef?: React.RefObject<Map<string, TrainPosition>>;
   onClose: () => void;
 }
 
@@ -42,7 +46,7 @@ function spoken(index: NetworkIndex, route: string, dest: string, secs: number, 
  * The arrivals board for one station, computed from the same train states the map draws —
  * so what it says and what you see can never disagree.
  */
-export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, destination, onDestination, onSelect, onClose }: Props) {
+export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, destination, onDestination, onSelect, onClose, positionsRef }: Props) {
   const groups = useMemo(() => arrivalsAt(index, trains, station, 6, destination), [index, trains, station, destination]);
   // With a location we can say which trains are actually catchable on foot, which is the
   // difference between a timetable and advice.
@@ -70,6 +74,29 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
    */
   // Keyed on the minute rather than the second, so the announcement is re-made only when what it
   // says has actually changed.
+  /*
+   * A countdown built on a train that has not moved in minutes is not a countdown. "Three stops
+   * away" is true and useless if the train has been stopped for six minutes; saying so is the
+   * difference between waiting and walking.
+   */
+  const [stalled, setStalled] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!positionsRef) return;
+    // Sampled rather than read during render: positions live in a ref that the motion loop writes
+    // every frame, and React may not read one while rendering.
+    const read = () => {
+      const out = new Map<string, number>();
+      for (const [id, p] of positionsRef.current ?? []) {
+        if (p.stalledFor >= STALLED_S) out.set(id, Math.max(1, Math.round(p.stalledFor / 60)));
+      }
+      setStalled((prev) => (prev.size === out.size && [...out].every(([k, v]) => prev.get(k) === v) ? prev : out));
+    };
+    read();
+    const t = setInterval(read, 5000);
+    return () => clearInterval(t);
+  }, [positionsRef]);
+  const stalledMinutes = (id: string) => stalled.get(id) ?? null;
+
   const spokenMinute = Math.round(now / 60);
   const spokenNext = useMemo(() => {
     const next = groups.flatMap((g) => g.arrivals).sort((a, b) => a.eta - b.eta)[0];
@@ -159,6 +186,8 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
                           ? "at the platform"
                           : catchable === false
                             ? "too soon to reach on foot"
+                            : stalledMinutes(a.id) !== null
+                            ? `stopped for ${stalledMinutes(a.id)} min · ${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stops away`}`
                             : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`}
                       </em>
                     </span>

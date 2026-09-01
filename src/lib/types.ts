@@ -194,6 +194,15 @@ export interface TrainPosition {
   /** Metres along the current segment, and its length. */
   s: number;
   length: number;
+  /**
+   * How long this train has been between stations without moving, in seconds.
+   *
+   * The engine holds a marker rather than creeping it forward when the feed's own arrival time
+   * says the train cannot be making progress — which is the right thing to draw, but for twenty
+   * minutes at a stretch it was still being described as "moving". Replaying an hour, 751 trains
+   * sat motionless mid-segment for a minute or more and 533 of them for over five.
+   */
+  stalledFor: number;
   /** Track geometry covering ±1σ of arrival time around the marker. */
   ribbon?: LonLat[];
   state: TrainState;

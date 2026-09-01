@@ -8,6 +8,7 @@ import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
 import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
 import { addRouteIcons, chevronId } from "@/lib/icons";
+import { STALLED_S } from "@/lib/format";
 import { paint } from "@/lib/mapTheme";
 import { asset } from "@/lib/basePath";
 import { readHash } from "@/lib/urlState";
@@ -293,7 +294,7 @@ export default function TrainMap(props: Props) {
         if (vis && !vis.has(p.route)) continue;
         const r = idx.net.routes[p.route];
         const selected = sel.kind === "train" && sel.id === p.id;
-        const moving = p.phase === "moving" && p.speed > 0.6;
+        const moving = p.phase === "moving" && p.speed > 0.6 && p.stalledFor < STALLED_S;
         const stackKey = p.phase === "moving" ? "" : `${p.route}|${p.state.nextStop}|${p.phase}`;
         const stacked = stackKey ? (stackAt.get(stackKey) ?? 1) : 1;
         if (stackKey && stacked > 1 && !selected) {
@@ -310,7 +311,11 @@ export default function TrainMap(props: Props) {
             // not touched in forty minutes was being drawn exactly like one revised nine seconds
             // ago, which is a claim about freshness we cannot support.
             revised: Math.max(0, Math.round(t - (p.state.updatedAt ?? t))),
-            holding: p.motion === "holding", moving, bearing: Math.round(p.bearing),
+            // Amber means the train is not moving and we know why, or has not moved for minutes
+            // and we may not. Either way it is the thing to notice about it.
+            holding: p.motion === "holding" || p.stalledFor >= STALLED_S,
+            stalled: p.stalledFor >= STALLED_S,
+            moving, bearing: Math.round(p.bearing),
             chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
             // How many trains this marker stands for, and whether it is in service at all.
             stacked: selected ? 1 : stacked,

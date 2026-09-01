@@ -74,7 +74,20 @@ export function etaProvenance(eta: number, etaRaw: number, sigma: number): strin
 }
 
 /** Why a train is not moving, when it isn't at a platform. */
+/** Long enough that "stopped" is the honest word, rather than a pause between signals. */
+export const STALLED_S = 120;
+
+/** Minutes, for a duration a rider reads at a glance. */
+const mins = (s: number) => `${Math.max(1, Math.round(s / 60))} min`;
+
 export function holdReason(index: NetworkIndex, t: TrainPosition, byId: Map<string, TrainState>): string | null {
+  // A train that has not moved for minutes is stopped, whatever the reason, and saying so comes
+  // before naming a cause we may not know.
+  if (t.stalledFor >= STALLED_S) {
+    const leader = t.state.leaderId ? byId.get(t.state.leaderId) : undefined;
+    const behind = leader ? ` behind the ${leader.route}` : "";
+    return `Stopped for ${mins(t.stalledFor)}${behind}, between ${index.stationName(t.state.prevStop ?? t.state.nextStop)} and ${index.stationName(t.state.nextStop)}`;
+  }
   if (t.motion !== "holding") return null;
   const leader = t.state.leaderId ? byId.get(t.state.leaderId) : undefined;
   if (leader) {
