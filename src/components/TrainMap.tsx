@@ -283,6 +283,10 @@ export default function TrainMap(props: Props) {
             id: p.id, route: p.route, label: p.route.replace(/X$/, "").slice(0, 2),
             color: r?.color ?? paint("--route-unknown"), textColor: r?.textColor ?? paint("--route-unknown-text"),
             ghost: p.phase === "unstarted" || !p.state.assigned || !!p.state.stale,
+            // How long since the feed last revised anything about this train. A train the MTA has
+            // not touched in forty minutes was being drawn exactly like one revised nine seconds
+            // ago, which is a claim about freshness we cannot support.
+            revised: Math.max(0, Math.round(t - (p.state.updatedAt ?? t))),
             holding: p.motion === "holding", moving, bearing: Math.round(p.bearing),
             chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
           },
@@ -449,7 +453,10 @@ export default function TrainMap(props: Props) {
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 4.5, 14, 9],
           "circle-color": ["get", "color"],
-          "circle-opacity": ["case", ["get", "ghost"], 0.4, 1],
+          // Full strength while the feed is still revising it; fading as the record goes quiet,
+          // down to a train we are still drawing but no longer vouching for.
+          "circle-opacity": ["case", ["get", "ghost"], 0.4,
+            ["interpolate", ["linear"], ["get", "revised"], 600, 1, 2400, 0.45]],
           "circle-stroke-color": ["case", ["get", "holding"], paint("--map-hold"), paint("--label")],
           // A zoom expression has to sit at the top level, so the per-feature choice goes inside it.
           "circle-stroke-width": [

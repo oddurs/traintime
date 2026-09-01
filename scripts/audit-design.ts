@@ -154,9 +154,11 @@ lines.forEach((raw, i) => {
  * how a scale quietly stops being one — the sizes stay right and the texture drifts.
  */
 {
-  const tracked = new Set(
-    [...tokens.keys()].filter((k) => k.startsWith("tr-") && !/^0(em)?$/.test(tokens.get(k) ?? "")).map((k) => k.slice(3)),
-  );
+  // Every step, including the ones whose tracking is currently zero. Exempting those left the
+  // rule blind exactly where most of the text is: body and caption could be set with any tracking
+  // at all and nothing would notice. A zero that is declared is a decision; a zero that is
+  // inferred is a gap.
+  const tracked = new Set([...tokens.keys()].filter((k) => k.startsWith("tr-")).map((k) => k.slice(3)));
   for (const block of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const selector = block[1].trim().split("\n").pop()!.trim();
     if (selector.startsWith("@") || selector.startsWith(":root")) continue;
