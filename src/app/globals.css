@@ -94,17 +94,41 @@
    * paper; src/lib/trunks.ts says which services run on each, and the design audit checks that
    * every service the feed publishes has a trunk to belong to.
    */
-  --trunk-8av: #0062cf;
-  --trunk-6av: #eb6800;
-  --trunk-crosstown: #799534;
-  --trunk-nassau: #8e5c33;
-  --trunk-canarsie: #7c858c;
-  --trunk-shuttle: #4e555c;
-  --trunk-broadway: #f6bc26;
-  --trunk-7av: #d82233;
-  --trunk-lexington: #009952;
-  --trunk-flushing: #9a38a1;
-  --trunk-sir: #08179c;
+  --trunk-7av: #ee352e;
+  --trunk-lexington: #00933c;
+  --trunk-flushing: #b933ad;
+  --trunk-8av: #0039a6;
+  --trunk-6av: #ff6319;
+  --trunk-broadway: #fccc0a;
+  --trunk-crosstown: #6cbe45;
+  --trunk-nassau: #996633;
+  --trunk-canarsie: #a7a9ac;
+  --trunk-shuttle: #808183;
+  --trunk-sir: #0078c6;
+  /*
+   * One line, lightened for a black ground.
+   *
+   * The emblem keeps the colour the MTA prints; a line on the map has a different job. Measured
+   * against the map's own ground, ten of the eleven trunks clear 4:1 and read at a two-pixel
+   * stroke. 8 Avenue does not — #0039a6 is 2.14:1 on black, which is a line you lose. Lifting its
+   * lightness from 33% to 48%, hue and saturation untouched, takes it to 3.5:1. Everything else
+   * draws in the colour it is printed in.
+   */
+  --line-8av: #0053f3;
+
+  /*
+   * ---- The roundel. ----
+   *
+   * The proportions of a route bullet, mirrored from src/lib/roundel.ts so the map can draw the
+   * same emblem the panel does. The character is set bold at these fractions of the diameter.
+   */
+  --roundel-circle: 0.7;
+  --roundel-circle-wide: 0.5;
+  --roundel-diamond: 0.58;
+  --roundel-diamond-wide: 0.44;
+  --roundel-weight: 700;
+  /** How far down the character moves so its capital is centred rather than its em box. */
+  --roundel-optical: 0.09em;
   /* What a bullet's character is set in, and the only two inks the system uses. */
   --ink-light: #ffffff;
   --ink-dark: #000000;
@@ -158,13 +182,13 @@
   --t-code: 400 calc(0.75rem * var(--type-scale))/1.55 var(--font-mono);
   --tr-code: 0em;
   /*
-   * The roundel is the one type style whose size is a ratio rather than a step: the manual sets
-   * the character at about 58% of the diameter, so a 16px bullet in a search result and a 30px
-   * one heading a view are the same drawing. Two characters — GS, FS, SI — sit tighter to stay
-   * inside the shape, which is the same style with a different ratio, not a different style.
+   * The roundel is the one type style whose size is a ratio rather than a step: the character is
+   * a fixed fraction of the diameter, so a 16px bullet in a search result and a 30px one heading
+   * a view are the same drawing. Two characters, and anything inside an express diamond, sit
+   * tighter to stay within the shape — the same style at a different ratio, not a different style.
    */
-  --roundel-ratio: 0.58;
-  --t-roundel: 500 calc(var(--bullet-size) * var(--roundel-ratio))/1 var(--font-signage);
+  --roundel-ratio: var(--roundel-circle);
+  --t-roundel: var(--roundel-weight) calc(var(--bullet-size) * var(--roundel-ratio))/1 var(--font-signage);
   --tr-roundel: -0.01em;
 
   /* ---- Radii, continuous rather than circular wherever the shape is large. ---- */
@@ -204,6 +228,7 @@
   --icon-lg: 20px;
   --dot: 6px;
   --pip: 8px;
+  --badge: 14px;
   --bullet-sm: 16px;
   --bullet-md: 18px;
   --bullet-lg: 26px;
@@ -515,7 +540,13 @@ a { color: inherit; }
   font: var(--t-roundel); letter-spacing: var(--tr-roundel);
 }
 /* Two characters (GS, FS, SI) have to sit tighter to stay inside the shape. */
-.roundel.wide { --roundel-ratio: 0.42; }
+.roundel.wide { --roundel-ratio: var(--roundel-circle-wide); }
+/*
+ * A diamond is narrower than the circle it replaces at the height the character sits: a square on
+ * its point has a width of 0.71D across its middle, so the same character would run over the edge.
+ */
+.roundel.diamond { --roundel-ratio: var(--roundel-diamond); }
+.roundel.diamond.wide { --roundel-ratio: var(--roundel-diamond-wide); }
 .roundel.diamond { background: none; }
 .roundel.diamond::before {
   /* The manual's express marker: a square on its point, the same optical area as the circle. */
@@ -523,15 +554,32 @@ a { color: inherit; }
   transform: rotate(45deg); border-radius: 2px;
 }
 .roundel.is-dim { opacity: 0.28; }
-.roundel-label { position: relative; z-index: 1; }
+/*
+ * Centre the capital, not the box it sits in.
+ *
+ * A line box is centred on the em square, and a capital sits in the upper part of that square —
+ * Helvetica's cap top is 0.05em below the box top and its baseline 0.77em down, so the character's
+ * optical centre is about a tenth of its own size above the middle. Left alone, every bullet in
+ * the app had its number riding high, which is the first thing that reads as wrong about a mark
+ * everyone already knows the shape of.
+ */
+.roundel-label { position: relative; z-index: 1; transform: translateY(var(--roundel-optical)); }
 button.roundel { cursor: pointer; transition: transform var(--fast) var(--ease); }
 button.roundel:hover { transform: scale(1.08); }
 button.roundel:active { transform: scale(0.98); }
+/*
+ * How many of this service are running, as a badge in the corner.
+ *
+ * It used to be sixteen pixels across and set two from the edge, which on a thirty-pixel bullet
+ * put it past the centre: it covered a third of the emblem and its dark ring cut a notch out of
+ * the circle. A round bullet leaves its bounding box corner almost empty, so the badge sits out
+ * there instead and the mark underneath stays a mark.
+ */
 .roundel .count {
-  position: absolute; right: calc(var(--s0) * -1); bottom: calc(var(--s0) * -1); z-index: 2;
-  min-width: var(--icon); height: var(--icon); padding: 0 var(--s0);
-  border-radius: var(--r-chip); background: var(--surface-sunken); color: var(--label-2);
-  box-shadow: 0 0 0 var(--ring) var(--scrim);
+  position: absolute; right: calc(var(--s1) * -1); bottom: calc(var(--s1) * -1); z-index: 2;
+  min-width: var(--badge); height: var(--badge); padding: 0 var(--s0);
+  border-radius: var(--r-pill); background: var(--surface-sunken); color: var(--label-2);
+  box-shadow: 0 0 0 1px var(--scrim);
   font: var(--t-micro); letter-spacing: var(--tr-micro); display: grid; place-items: center; font-variant-numeric: tabular-nums;
 }
 .roundel .alert-pip {

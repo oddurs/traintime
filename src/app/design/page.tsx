@@ -82,7 +82,15 @@ export default function DesignPage() {
       <p>
         The subway is organised by trunk, not by service: the 1, 2 and 3 are three services on one
         red line. A service takes its colour from its trunk, and the map collapses a trunk to a
-        single line once you are too far away to tell its services apart.
+        single line once you are too far away to tell its services apart. These are the colours the
+        MTA prints.
+      </p>
+      <p>
+        An emblem and a line have different jobs. Ten of the eleven trunks clear 4:1 against the
+        map&rsquo;s black ground and read at a two-pixel stroke; 8 Avenue does not, so its line is
+        lifted from <code>#0039a6</code> to <code>#0053f3</code> — hue and saturation untouched —
+        while the bullet keeps the printed colour. The ink is the agency&rsquo;s too, except on the
+        three light grounds where white measures under 3:1 and cannot be read at all.
       </p>
       <div className="ds-stack">
         {index && Object.keys(TRUNKS).map((id) => (

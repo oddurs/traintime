@@ -109,8 +109,14 @@ export class NetworkIndex {
     return this.station(id)?.name ?? id;
   }
 
+  /** The emblem colour: what a bullet is printed in. */
   routeColor(route: string): string {
     return this.net.routes[route]?.color ?? PALETTE["--route-unknown"];
+  }
+
+  /** What this service's line is drawn in on the map's black ground. */
+  routeLineColor(route: string): string {
+    return this.net.routes[route]?.lineColor ?? this.routeColor(route);
   }
 
   /**

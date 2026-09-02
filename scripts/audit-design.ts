@@ -353,9 +353,78 @@ lines.forEach((raw, i) => {
   }
 }
 
+/**
+ * Every bullet's character can actually be read on its own ground.
+ *
+ * The MTA's inks are chosen for ink on paper, where a bullet sits in a field of white and its
+ * colour reads as colour. On black the light ones are bright discs, and white on the L's grey is
+ * 2.4 to 1 — a mark with nothing legible on it. The ink is the agency's except where measurement
+ * says otherwise, and this is the measurement.
+ */
+{
+  const srgb = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const lum = (hex: string) => {
+    const n = parseInt(hex.slice(1), 16);
+    return 0.2126 * srgb(((n >> 16) & 255) / 255) + 0.7152 * srgb(((n >> 8) & 255) / 255) + 0.0722 * srgb((n & 255) / 255);
+  };
+  const ratio = (a: string, b: string) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const trunks = readFileSync(join(process.cwd(), "src/lib/trunks.ts"), "utf8");
+  const pal = readFileSync(join(process.cwd(), "src/lib/palette.ts"), "utf8");
+  const colourOf = new Map<string, string>();
+  for (const m of pal.matchAll(/"(--[\w-]+)":\s*"(#[0-9a-fA-F]{6})"/g)) colourOf.set(m[1], m[2]);
+  const ink = { light: colourOf.get("--ink-light") ?? "#ffffff", dark: colourOf.get("--ink-dark") ?? "#000000" };
+  // Bold text on a coloured ground: 3:1 is the large-text floor, and 6 Avenue's white on orange
+  // sits at 2.98 — the most recognised pairing in the system, kept deliberately and named here.
+  const FLOOR = 2.95;
+  for (const m of trunks.matchAll(/(\w+):\s*\{\s*name:\s*"([^"]+)",\s*token:\s*"(--[\w-]+)"(?:,\s*lineToken:\s*"--[\w-]+")?,\s*ink:\s*"(light|dark)"/g)) {
+    const [, id, , token, which] = m;
+    const ground = colourOf.get(token);
+    if (!ground) continue;
+    const got = ratio(ground, ink[which as "light" | "dark"]);
+    const other = ratio(ground, ink[which === "light" ? "dark" : "light"]);
+    const line = trunks.slice(0, m.index).split("\n").length;
+    if (got >= FLOOR) continue;
+    findings.push({
+      line, kind: "contrast", file: "src/lib/trunks.ts",
+      text: `${id}: ${which} ink on ${ground}`,
+      detail: `${got.toFixed(2)}:1 — the other ink gives ${other.toFixed(2)}:1`,
+    });
+  }
+}
+
+/**
+ * The roundel's proportions, in TypeScript, against the same numbers in the stylesheet.
+ *
+ * A route bullet in the panel is drawn by CSS and a train marker on the map by an expression, so
+ * the ratio between a character and its diameter has to exist in both languages. It is declared
+ * once in src/lib/roundel.ts and mirrored as tokens; without this check the two drift and the same
+ * service reads as two different marks depending on where you look at it.
+ */
+{
+  const rel = "src/lib/roundel.ts";
+  let text = "";
+  try { text = readFileSync(join(process.cwd(), rel), "utf8"); } catch { text = ""; }
+  const spec = new Map<string, string>();
+  for (const m of text.matchAll(/^\s*(\w+):\s*([\d.]+),/gm)) spec.set(m[1], m[2]);
+  const dashed = (k: string) => k.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+  for (const [name, value] of spec) {
+    if (name === "capHeight") continue;
+    const token = tokens.get(`roundel-${dashed(name)}`);
+    const line = text.slice(0, text.indexOf(`${name}:`)).split("\n").length;
+    if (token === undefined) {
+      findings.push({ line, kind: "roundel", file: rel, text: `${name}: ${value}`, detail: `--roundel-${dashed(name)} is not a token` });
+    } else if (Number(token) !== Number(value)) {
+      findings.push({ line, kind: "roundel", file: rel, text: `${name}: ${value}`, detail: `the stylesheet says ${token}` });
+    }
+  }
+}
+
 const byKind = new Map<string, Finding[]>();
 for (const f of findings) (byKind.get(f.kind) ?? byKind.set(f.kind, []).get(f.kind)!).push(f);
-const order = ["duplicate", "colour", "raw-control", "palette", "unknown-class", "inline-style", "type", "tracking", "spacing", "radius", "motion", "tap-target"];
+const order = ["duplicate", "colour", "raw-control", "palette", "contrast", "roundel", "unknown-class", "inline-style", "type", "tracking", "spacing", "radius", "motion", "tap-target"];
 
 console.log(`design audit — ${tokens.size} tokens, ${cssClasses.size} classes, ${sources.length} components, ${findings.length} divergences\n`);
 for (const kind of order) {

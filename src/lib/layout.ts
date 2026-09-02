@@ -274,7 +274,9 @@ export class LineEngine {
     if (this.strokeCache) return this.strokeCache;
     const out: Stroke[] = [];
     for (const [route, runs] of Object.entries(this.net.routeRuns ?? {})) {
-      const colour = this.net.routes[route]?.color;
+      // The line takes the colour a line is drawn in, which on a black ground is not always the
+      // colour the emblem is printed in.
+      const colour = this.net.routes[route]?.lineColor ?? this.net.routes[route]?.color;
       if (!colour) continue;
       for (let r = 0; r < runs.length; r++) {
         const run = runs[r];

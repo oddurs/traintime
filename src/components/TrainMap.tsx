@@ -7,7 +7,9 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
 import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
-import { addRouteIcons, chevronId } from "@/lib/icons";
+import { addRouteIcons, chevronId, diamondId, DIAMOND_PX } from "@/lib/icons";
+import { isExpress, serviceLabel } from "@/lib/service";
+import { characterPx } from "@/lib/roundel";
 import { STALLED_S } from "@/lib/format";
 import { paint } from "@/lib/mapTheme";
 import { asset } from "@/lib/basePath";
@@ -300,7 +302,15 @@ export default function TrainMap(props: Props) {
         points.push({
           type: "Feature",
           properties: {
-            id: p.id, route: p.route, label: p.route.replace(/X$/, "").slice(0, 2),
+            id: p.id, route: p.route, label: serviceLabel(p.route).slice(0, 2),
+            // The emblem: which shape it is drawn in, and how big its character is relative to
+            // the marker. Both come from the same specification the panel's roundel is drawn from.
+            express: isExpress(p.route),
+            charRatio: characterPx(1, serviceLabel(p.route), isExpress(p.route)),
+            diamond: isExpress(p.route)
+              ? diamondId(p.route, p.phase === "unstarted" ? "parked"
+                : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain")
+              : "",
             color: r?.color ?? paint("--route-unknown"), textColor: r?.textColor ?? paint("--route-unknown-text"),
             ghost: p.phase === "unstarted" || !p.state.assigned || !!p.state.stale,
             // How long since the feed last revised anything about this train. A train the MTA has
@@ -478,6 +488,9 @@ export default function TrainMap(props: Props) {
       });
       map.addLayer({
         id: "trains", type: "circle", source: "trains",
+        // An express runs on the same corridor as its local and is a different service; the manual
+        // draws it as a diamond, so the map does too, in the layer below.
+        filter: ["!", ["get", "express"]],
         paint: {
           "circle-radius": [
             "interpolate", ["linear"], ["zoom"],
@@ -507,6 +520,31 @@ export default function TrainMap(props: Props) {
         },
       });
       map.addLayer({
+        /*
+         * The same marker, in the other shape. A circle layer carries its states in paint
+         * properties and an image cannot, so the three that change the drawing are baked as
+         * variants and chosen here; fading stays a paint property, as it does for the circles.
+         *
+         * `icon-size` scales the drawn image to the diameter the circle layer would have used, so
+         * an express and a local sit at the same size beside one another.
+         */
+        id: "train-express", type: "symbol", source: "trains",
+        filter: ["get", "express"],
+        layout: {
+          "icon-image": ["get", "diamond"],
+          "icon-size": [
+            "interpolate", ["linear"], ["zoom"],
+            10, ["/", ["case", [">", ["get", "stacked"], 1], 13, 11], DIAMOND_PX],
+            14, ["/", ["case", [">", ["get", "stacked"], 1], 24, 20], DIAMOND_PX],
+          ],
+          "icon-allow-overlap": true, "icon-ignore-placement": true,
+        },
+        paint: {
+          "icon-opacity": ["case", ["get", "ghost"], 0.4,
+            ["interpolate", ["linear"], ["get", "revised"], 600, 1, 2400, 0.45]],
+        },
+      });
+      map.addLayer({
         id: "train-stack", type: "symbol", source: "trains", minzoom: 12,
         filter: [">", ["get", "stacked"], 1],
         layout: {
@@ -526,7 +564,20 @@ export default function TrainMap(props: Props) {
         id: "train-labels", type: "symbol", source: "trains", minzoom: 11.5,
         layout: {
           "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 11.5, 8, 14, 11],
+          /*
+           * The character is a fraction of the marker's diameter — the same fraction the panel's
+           * roundel uses — rather than a curve tuned on its own. It was the second: a size that
+           * happened to look about right at one zoom and swam inside the marker at every other,
+           * and a different mark from the bullet standing for the same train in the panel.
+           *
+           * The diameter is repeated at each stop because a zoom interpolation has to be the
+           * outermost expression; MapLibre drops a layer that nests one.
+           */
+          "text-size": [
+            "interpolate", ["linear"], ["zoom"],
+            11.5, ["*", ["get", "charRatio"], ["case", [">", ["get", "stacked"], 1], 12, 10]],
+            14, ["*", ["get", "charRatio"], ["case", [">", ["get", "stacked"], 1], 22, 18]],
+          ],
           "text-allow-overlap": true, "text-ignore-placement": true,
         },
         paint: { "text-color": ["get", "textColor"], "text-opacity": ["case", ["get", "ghost"], 0.55, 1] },

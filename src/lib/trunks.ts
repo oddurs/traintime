@@ -16,9 +16,23 @@ import { PALETTE } from "./palette";
 export interface Trunk {
   /** The line's own name, as the MTA writes it. */
   name: string;
-  /** The token its colour is defined by. */
+  /** The token its emblem colour is defined by — the colour the MTA prints. */
   token: keyof typeof PALETTE;
-  /** Which of the two inks a bullet's character is set in on this ground. */
+  /**
+   * The token the *line* is drawn in, where a black ground needs a lighter one. An emblem is read
+   * at a centimetre across and a line at two pixels wide; only one of them can afford #0039a6.
+   */
+  lineToken?: keyof typeof PALETTE;
+  /**
+   * Which of the two inks the character is set in.
+   *
+   * The agency's own choice, except where measurement says it cannot be read. White on the L's
+   * #a7a9ac is 2.4 to 1 and on the G's #6cbe45 is 2.3 — on paper those bullets sit in a field of
+   * white and read as grey and green; on a black ground they are bright discs with nothing legible
+   * on them. Those three take black. Everything else keeps the ink the MTA prints, including white
+   * on the 6 Avenue orange at 3.0 to 1, which is at the floor and is the most recognised pairing
+   * in the system after the yellow.
+   */
   ink: "light" | "dark";
   /** The services that run on it, in the order the map bands them. */
   services: string[];
@@ -28,12 +42,12 @@ export const TRUNKS: Record<string, Trunk> = {
   "7av": { name: "Broadway–7 Avenue", token: "--trunk-7av", ink: "light", services: ["1", "2", "3"] },
   lexington: { name: "Lexington Avenue", token: "--trunk-lexington", ink: "light", services: ["4", "5", "6", "6X"] },
   flushing: { name: "Flushing", token: "--trunk-flushing", ink: "light", services: ["7", "7X"] },
-  "8av": { name: "8 Avenue", token: "--trunk-8av", ink: "light", services: ["A", "C", "E"] },
+  "8av": { name: "8 Avenue", token: "--trunk-8av", lineToken: "--line-8av", ink: "light", services: ["A", "C", "E"] },
   "6av": { name: "6 Avenue", token: "--trunk-6av", ink: "light", services: ["B", "D", "F", "FX", "M"] },
   broadway: { name: "Broadway", token: "--trunk-broadway", ink: "dark", services: ["N", "Q", "R", "W"] },
-  crosstown: { name: "Brooklyn–Queens Crosstown", token: "--trunk-crosstown", ink: "light", services: ["G"] },
+  crosstown: { name: "Brooklyn–Queens Crosstown", token: "--trunk-crosstown", ink: "dark", services: ["G"] },
   nassau: { name: "Nassau Street", token: "--trunk-nassau", ink: "light", services: ["J", "Z"] },
-  canarsie: { name: "14 Street–Canarsie", token: "--trunk-canarsie", ink: "light", services: ["L"] },
+  canarsie: { name: "14 Street–Canarsie", token: "--trunk-canarsie", ink: "dark", services: ["L"] },
   /**
    * The shuttles are their own line, not part of the Canarsie one.
    *
@@ -41,7 +55,7 @@ export const TRUNKS: Record<string, Trunk> = {
    * everything downstream of colour: zoomed out, the 42 St shuttle merged into the L, two services
    * that share no track and run in different boroughs.
    */
-  shuttle: { name: "Shuttles", token: "--trunk-shuttle", ink: "light", services: ["GS", "FS", "H"] },
+  shuttle: { name: "Shuttles", token: "--trunk-shuttle", ink: "dark", services: ["GS", "FS", "H"] },
   sir: { name: "Staten Island Railway", token: "--trunk-sir", ink: "light", services: ["SI"] },
 };
 
@@ -51,9 +65,16 @@ for (const [id, trunk] of Object.entries(TRUNKS)) for (const s of trunk.services
 /** The trunk a service runs on, if the system knows it. */
 export const trunkOf = (route: string) => OF_SERVICE.get(route);
 
-/** A service's colour and the ink its character is set in. */
-export function serviceColours(route: string): { color: string; textColor: string } {
+/** A service's emblem colour, the ink its character is set in, and the colour its line is drawn in. */
+export function serviceColours(route: string): { color: string; textColor: string; lineColor: string } {
   const t = trunkOf(route);
-  if (!t) return { color: PALETTE["--route-unknown"], textColor: PALETTE["--route-unknown-text"] };
-  return { color: PALETTE[t.trunk.token], textColor: t.trunk.ink === "dark" ? PALETTE["--ink-dark"] : PALETTE["--ink-light"] };
+  if (!t) {
+    const grey = PALETTE["--route-unknown"];
+    return { color: grey, textColor: PALETTE["--route-unknown-text"], lineColor: grey };
+  }
+  return {
+    color: PALETTE[t.trunk.token],
+    textColor: t.trunk.ink === "dark" ? PALETTE["--ink-dark"] : PALETTE["--ink-light"],
+    lineColor: PALETTE[t.trunk.lineToken ?? t.trunk.token],
+  };
 }

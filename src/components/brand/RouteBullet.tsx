@@ -2,17 +2,18 @@
 
 import type { NetworkIndex } from "@/lib/network";
 import { paint } from "@/lib/mapTheme";
+import { isExpress, serviceLabel } from "@/lib/service";
 
 /**
- * The roundel, to the proportions of the 1970 NYCTA Graphics Standards Manual: a true circle —
- * or a diamond for express — with the character optically centred and set in Helvetica Medium.
- * The character is always drawn, so colour is never the only cue.
+ * The roundel: a true circle, or a diamond for an express, with the character set bold and
+ * optically centred at a fixed fraction of the diameter. The character is always drawn, so colour
+ * is never the only cue.
  *
  * Size is a name, not a number. The four sizes are the four places a roundel appears: inline in a
  * sentence, beside a station's routes, leading a list row, and heading a view. Deriving the
- * character size from the diameter in CSS is what keeps all four the same drawing.
+ * character from the diameter is what keeps all four the same drawing — and what lets the train
+ * markers on the map be that drawing too, from the same numbers in src/lib/roundel.ts.
  */
-export const isExpress = (route: string) => route.endsWith("X");
 
 export type BulletSize = "sm" | "md" | "lg" | "xl";
 
@@ -28,7 +29,7 @@ interface Props {
 
 export default function RouteBullet({ index, route, size = "md", title, dim, onClick, children }: Props) {
   const r = index.net.routes[route];
-  const label = route.replace(/X$/, "");
+  const label = serviceLabel(route);
   const express = isExpress(route);
   const style: React.CSSProperties = {
     ["--bullet-size" as string]: `var(--bullet-${size})`,
