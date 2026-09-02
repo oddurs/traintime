@@ -186,14 +186,16 @@ export default function Panel(props: Props) {
                   const on = !visible || visible.has(id);
                   const alert = routeStatus(alerts, id);
                   return (
-                    <RouteBullet
-                      key={id} index={index} route={id} size="xl" dim={!on}
-                      title={`${index.net.routes[id].name}${counts[id] ? ` · ${counts[id]} running` : ""}${alert ? ` · ${alert.count} service alert${alert.count > 1 ? "s" : ""}` : ""} — click to toggle, shift-click to isolate`}
-                      onClick={(e) => onToggle(id, e.shiftKey)}
-                    >
-                      {counts[id] ? <span className="count">{counts[id]}</span> : null}
-                      {alert && <span className={`alert-pip ${alert.category}`} />}
-                    </RouteBullet>
+                    <span className={`route-toggle${on ? "" : " is-off"}`} key={id}>
+                      <RouteBullet
+                        index={index} route={id} size="xl" dim={!on}
+                        title={`${index.net.routes[id].name}${counts[id] ? ` · ${counts[id]} running` : ""}${alert ? ` · ${alert.count} service alert${alert.count > 1 ? "s" : ""}` : ""} — click to toggle, shift-click to isolate`}
+                        onClick={(e) => onToggle(id, e.shiftKey)}
+                      >
+                        {alert && <span className={`alert-pip ${alert.category}`} />}
+                      </RouteBullet>
+                      <em>{counts[id] || ""}</em>
+                    </span>
                   );
                 })}
               </div>

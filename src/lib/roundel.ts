@@ -9,30 +9,28 @@
  * The proportions are the MTA's own: the character is set in bold, optically centred, with a cap
  * height of about half the diameter. Helvetica's capitals are 0.717 of its point size, so a cap of
  * 0.50D wants a font size of about 0.70D. Two characters — GS, FS, SI — are set smaller to stay
- * inside the shape, and so is anything inside an express diamond, whose widest point across the
- * character's line is only 0.71 of the width of the circle it replaces.
+ * inside the shape.
+ *
+ * An express diamond carries exactly the same character. It looked as though it should need a
+ * smaller one, and it was drawn that way, which made a diamond service read as a lesser version
+ * of the circle beside it. It does not: the diamond is a square on its point inset 8% of the box,
+ * so it spans 1.19 times the width of the circle it replaces, and at the height a capital crosses
+ * it there is still 0.69D of room for a glyph 0.39D wide.
  *
  * The numbers live here and the stylesheet declares them as tokens; scripts/audit-design.ts checks
  * the two agree, so neither can drift.
  */
 export const ROUNDEL = {
-  /** Font size as a fraction of the diameter, for one character in a circle. */
-  circle: 0.7,
-  /** Two characters in a circle. */
-  circleWide: 0.5,
-  /** One character in an express diamond. */
-  diamond: 0.58,
-  /** Two characters in an express diamond. */
-  diamondWide: 0.44,
+  /** Font size as a fraction of the diameter, for one character. */
+  one: 0.7,
+  /** Two characters — GS, FS, SI — set smaller to stay inside the shape. */
+  two: 0.5,
   /** Helvetica's cap height, as a fraction of its point size — what "half the diameter" means. */
   capHeight: 0.717,
   weight: 700,
 } as const;
 
 /** The font size a character should be set at inside a bullet of this diameter. */
-export function characterPx(diameter: number, label: string, express: boolean): number {
-  const ratio = express
-    ? (label.length > 1 ? ROUNDEL.diamondWide : ROUNDEL.diamond)
-    : (label.length > 1 ? ROUNDEL.circleWide : ROUNDEL.circle);
-  return diameter * ratio;
+export function characterPx(diameter: number, label: string): number {
+  return diameter * (label.length > 1 ? ROUNDEL.two : ROUNDEL.one);
 }

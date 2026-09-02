@@ -306,7 +306,7 @@ export default function TrainMap(props: Props) {
             // The emblem: which shape it is drawn in, and how big its character is relative to
             // the marker. Both come from the same specification the panel's roundel is drawn from.
             express: isExpress(p.route),
-            charRatio: characterPx(1, serviceLabel(p.route), isExpress(p.route)),
+            charRatio: characterPx(1, serviceLabel(p.route)),
             diamond: isExpress(p.route)
               ? diamondId(p.route, p.phase === "unstarted" ? "parked"
                 : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain")

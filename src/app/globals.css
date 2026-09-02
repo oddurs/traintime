@@ -122,10 +122,8 @@
    * The proportions of a route bullet, mirrored from src/lib/roundel.ts so the map can draw the
    * same emblem the panel does. The character is set bold at these fractions of the diameter.
    */
-  --roundel-circle: 0.7;
-  --roundel-circle-wide: 0.5;
-  --roundel-diamond: 0.58;
-  --roundel-diamond-wide: 0.44;
+  --roundel-one: 0.7;
+  --roundel-two: 0.5;
   --roundel-weight: 700;
   /** How far down the character moves so its capital is centred rather than its em box. */
   --roundel-optical: 0.09em;
@@ -187,7 +185,7 @@
    * a view are the same drawing. Two characters, and anything inside an express diamond, sit
    * tighter to stay within the shape — the same style at a different ratio, not a different style.
    */
-  --roundel-ratio: var(--roundel-circle);
+  --roundel-ratio: var(--roundel-one);
   --t-roundel: var(--roundel-weight) calc(var(--bullet-size) * var(--roundel-ratio))/1 var(--font-signage);
   --tr-roundel: -0.01em;
 
@@ -228,7 +226,6 @@
   --icon-lg: 20px;
   --dot: 6px;
   --pip: 8px;
-  --badge: 14px;
   --bullet-sm: 16px;
   --bullet-md: 18px;
   --bullet-lg: 26px;
@@ -540,13 +537,8 @@ a { color: inherit; }
   font: var(--t-roundel); letter-spacing: var(--tr-roundel);
 }
 /* Two characters (GS, FS, SI) have to sit tighter to stay inside the shape. */
-.roundel.wide { --roundel-ratio: var(--roundel-circle-wide); }
-/*
- * A diamond is narrower than the circle it replaces at the height the character sits: a square on
- * its point has a width of 0.71D across its middle, so the same character would run over the edge.
- */
-.roundel.diamond { --roundel-ratio: var(--roundel-diamond); }
-.roundel.diamond.wide { --roundel-ratio: var(--roundel-diamond-wide); }
+.roundel.wide { --roundel-ratio: var(--roundel-two); }
+
 .roundel.diamond { background: none; }
 .roundel.diamond::before {
   /* The manual's express marker: a square on its point, the same optical area as the circle. */
@@ -568,24 +560,32 @@ button.roundel { cursor: pointer; transition: transform var(--fast) var(--ease);
 button.roundel:hover { transform: scale(1.08); }
 button.roundel:active { transform: scale(0.98); }
 /*
- * How many of this service are running, as a badge in the corner.
+ * A service alert, as a pip at the corner.
  *
- * It used to be sixteen pixels across and set two from the edge, which on a thirty-pixel bullet
- * put it past the centre: it covered a third of the emblem and its dark ring cut a notch out of
- * the circle. A round bullet leaves its bounding box corner almost empty, so the badge sits out
- * there instead and the mark underneath stays a mark.
+ * Set far enough out that its centre clears the circle: an eight-pixel dot at the very edge of a
+ * thirty-pixel bullet, ringed to separate a red pip from a red ground, was cutting a dark crescent
+ * out of the emblem. The ring is a hairline now and the dot sits outside the curve, touching it.
  */
-.roundel .count {
-  position: absolute; right: calc(var(--s1) * -1); bottom: calc(var(--s1) * -1); z-index: 2;
-  min-width: var(--badge); height: var(--badge); padding: 0 var(--s0);
-  border-radius: var(--r-pill); background: var(--surface-sunken); color: var(--label-2);
-  box-shadow: 0 0 0 1px var(--scrim);
-  font: var(--t-micro); letter-spacing: var(--tr-micro); display: grid; place-items: center; font-variant-numeric: tabular-nums;
-}
 .roundel .alert-pip {
-  position: absolute; top: -1px; right: -1px; width: var(--pip); height: var(--pip); z-index: 2;
-  border-radius: 50%; box-shadow: 0 0 0 var(--ring) var(--scrim);
+  position: absolute; top: calc(var(--s0) * -1); right: calc(var(--s0) * -1); z-index: 2;
+  width: var(--pip); height: var(--pip); border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--surface-sunken);
 }
+
+/*
+ * How many of this service are running, under the bullet rather than on it.
+ *
+ * A two-digit badge cannot sit in the corner of a round bullet without covering it: the circle's
+ * edge along the diagonal is only four pixels from the corner of its box, and the badge is
+ * eighteen wide. Every attempt at placing it took a bite out of the emblem. So the emblem stays an
+ * emblem and the number goes underneath, where it is also easier to read.
+ */
+.route-toggle { display: flex; flex-direction: column; align-items: center; gap: var(--s0); }
+.route-toggle em {
+  font: var(--t-micro); letter-spacing: var(--tr-micro); font-style: normal;
+  color: var(--label-3); font-variant-numeric: tabular-nums; min-height: var(--s3);
+}
+.route-toggle.is-off em { opacity: 0.35; }
 .alert-pip.delay { background: var(--red); }
 .alert-pip.planned, .alert-pip.info { background: var(--amber); }
 .roundel-blank { width: var(--bullet-lg); height: var(--bullet-lg); border-radius: 50%; background: var(--fill-2); flex: none; }

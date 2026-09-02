@@ -121,10 +121,9 @@ export default function DesignPage() {
           <div className="ds-cell">
             <div className="ds-row">
               <RouteBullet index={index} route="A" size="xl" dim />
-              <RouteBullet index={index} route="N" size="xl"><span className="count">33</span></RouteBullet>
               <RouteBullet index={index} route="F" size="xl"><span className="alert-pip delay" /></RouteBullet>
             </div>
-            <code>dim · count · alert</code>
+            <code>dim · alert</code>
           </div>
         </div>
       )}
