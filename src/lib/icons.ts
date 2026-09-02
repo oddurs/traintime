@@ -52,6 +52,14 @@ export const chevronId = (route: string) => `tt-chevron-${route}`;
 export type BulletState = "plain" | "hold" | "parked";
 export const bulletId = (route: string, state: BulletState) => `tt-bullet-${state}-${route}`;
 
+/*
+ * A bullet is never drawn larger than about twenty-four points, so a hundred-pixel texture for a
+ * hundred-unit box is already twice the resolution it can use. It was being rasterised at three
+ * times that — eighty-seven images at three hundred pixels square, eight million pixels of canvas
+ * work at start-up and a texture atlas to match, for markers a quarter of an inch across.
+ */
+const BULLET_RATIO = 1;
+
 function bullet(route: string, index: NetworkIndex, state: BulletState, ratio: number): ImageData | null {
   const express = isExpress(route);
   // The image is as big as the drawing: an express diamond reaches past the circle's box, and the
@@ -98,8 +106,8 @@ export function addRouteIcons(map: MapLibreMap, index: NetworkIndex) {
     for (const state of ["plain", "hold", "parked"] as BulletState[]) {
       const bid = bulletId(route, state);
       if (map.hasImage(bid)) continue;
-      const img = bullet(route, index, state, ratio);
-      if (img) map.addImage(bid, img, { pixelRatio: ratio });
+      const img = bullet(route, index, state, BULLET_RATIO);
+      if (img) map.addImage(bid, img, { pixelRatio: BULLET_RATIO });
     }
   }
 }

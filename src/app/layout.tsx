@@ -34,6 +34,18 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      <head>
+        {/*
+          * The board's half of the network, asked for before the JavaScript that asks for it.
+          *
+          * It is the last thing on the critical path and the only one a rider is actually waiting
+          * for: measured cold on a slow connection, the page became readable at 7.5 seconds and
+          * this file landed at 7.4 — the request had not been made until the bundle had downloaded,
+          * parsed and run. A preload starts it with everything else.
+          */}
+        <link rel="preload" as="fetch" type="application/json" crossOrigin="anonymous" href={`${BASE_PATH}/data/network-lite.json`} />
+        <link rel="preconnect" href="https://tiles.openfreemap.org" />
+      </head>
       <body>
         {children}
         <ServiceWorker />

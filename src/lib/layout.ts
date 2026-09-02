@@ -160,6 +160,7 @@ export class LineEngine {
   private cache = new Map<string, LonLat[]>();
   private bands = new Map<string, { colour: number[]; metric: number[] }>();
   private strokeCache: Stroke[] | null = null;
+  private platforms = new Map<string, LonLat | null>();
 
   constructor(private readonly net: Network) {}
 
@@ -355,14 +356,23 @@ export class LineEngine {
    * the track they belong to, which is one to two bands and plainly visible close in.
    */
   platformPoint(route: string, stopId: string): LonLat | undefined {
+    // Where a platform is does not change, and this is asked for every standing train on every
+    // frame: at three hundred of them it was a fifth of a second per second of animation, spent
+    // walking a route's whole segment list to arrive at the same answer as last time.
+    const memo = `${route}|${stopId}`;
+    const hit = this.platforms.get(memo);
+    if (hit !== undefined) return hit ?? undefined;
     const station = parentOf(stopId);
     for (const key of this.net.routeSegments[route] ?? []) {
       const [a, b] = key.split("-");
       if (a !== station && b !== station) continue;
       const laid = this.laid(route, key);
       if (!laid?.length) continue;
-      return a === station ? laid[0] : laid[laid.length - 1];
+      const at = a === station ? laid[0] : laid[laid.length - 1];
+      this.platforms.set(memo, at);
+      return at;
     }
+    this.platforms.set(memo, null);
     return undefined;
   }
 

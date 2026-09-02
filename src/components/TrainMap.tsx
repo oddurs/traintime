@@ -54,8 +54,28 @@ function fanned(p: TrainPosition, index: NetworkIndex, fan: { colour: number; me
 }
 
 const NYC: [number, number] = [-73.955, 40.735];
-/** Trains are re-uploaded to the GPU at this rate; motion is still integrated every frame. */
-const DRAW_HZ = 30;
+
+/*
+ * How often the trains are handed to the renderer, from how fast they are actually moving on
+ * screen.
+ *
+ * Motion is integrated every frame regardless; this is only how often the result is uploaded. It
+ * was a flat thirty a second at every zoom, and the renderer's own cost is proportional to it:
+ * parsing and tiling seven hundred features was taking more than half the main thread on a
+ * throttled machine. At city zoom a train covers a quarter of a pixel per second, so thirty
+ * uploads a second was a hundred and fifteen of them per pixel of movement.
+ *
+ * The rate now follows the movement: redraw about every 0.4 px a train travels, floored so the
+ * map still answers a feed update promptly and capped so it never asks for more than a frame.
+ */
+const TRAIN_SPEED = 15;
+const MOVE_PX = 0.4;
+const MIN_HZ = 4;
+const MAX_HZ = 30;
+const drawInterval = (zoom: number) => {
+  const pxPerSecond = TRAIN_SPEED / metresPerPixel(zoom);
+  return 1000 / Math.max(MIN_HZ, Math.min(MAX_HZ, pxPerSecond / MOVE_PX));
+};
 
 export interface View { lat: number; lon: number; zoom: number }
 
@@ -256,7 +276,7 @@ export default function TrainMap(props: Props) {
        * up afterwards — and the further you zoom the further they swim, because the same eleven
        * pixels is four hundred metres at city zoom and nothing at all at street level.
        */
-      if (!map.isMoving() && ts - lastDraw < 1000 / DRAW_HZ) return;
+      if (!map.isMoving() && ts - lastDraw < drawInterval(map.getZoom())) return;
       lastDraw = ts;
       const { visibleRoutes: vis, showRibbons: ribbons, selection: sel, highlight: hi, follow: fol } = live.current;
       const points: GeoJSON.Feature[] = [];
@@ -270,6 +290,24 @@ export default function TrainMap(props: Props) {
       const px = fanAt(zoom);
       const fan = { colour: px.colour * m, metric: px.metric * m };
       const lastBand = lastBandRef.current;
+      /*
+       * Only the trains the camera can see.
+       *
+       * Every train in the system was being turned into a feature and handed to the renderer
+       * thirty times a second, wherever the map happened to be looking. Parsing that took 55% of
+       * the main thread on a throttled machine — nine hundred features a tick, of which, zoomed
+       * into a neighbourhood, perhaps thirty were on screen.
+       *
+       * The margin is a full viewport on each side, so a train sliding in from off-screen is
+       * already there when it arrives rather than appearing at the edge. At city zoom the box
+       * holds everything and nothing is skipped, which is the right answer: at that zoom they
+       * genuinely are all visible.
+       */
+      const view = map.getBounds();
+      const padX = (view.getEast() - view.getWest());
+      const padY = (view.getNorth() - view.getSouth());
+      const west = view.getWest() - padX, east = view.getEast() + padX;
+      const south = view.getSouth() - padY, north = view.getNorth() + padY;
       /*
        * Trains standing still at the same place, counted rather than stacked.
        *
@@ -289,8 +327,10 @@ export default function TrainMap(props: Props) {
       const drawn = new Set<string>();
       for (const p of trains) {
         if (vis && !vis.has(p.route)) continue;
-        const r = idx.net.routes[p.route];
         const selected = sel.kind === "train" && sel.id === p.id;
+        // A selected train is drawn wherever it is: the panel is showing it, and its ribbon and
+        // highlight have to exist for the camera to be able to fly to it.
+        if (!selected && (p.lon < west || p.lon > east || p.lat < south || p.lat > north)) continue;
         const moving = p.phase === "moving" && p.speed > 0.6 && p.stalledFor < STALLED_S;
         const stackKey = p.phase === "moving" ? "" : `${p.route}|${p.state.nextStop}|${p.phase}`;
         const stacked = stackKey ? (stackAt.get(stackKey) ?? 1) : 1;
@@ -309,29 +349,23 @@ export default function TrainMap(props: Props) {
              */
             bullet: bulletId(p.route, p.phase === "unstarted" ? "parked"
               : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain"),
-            color: r?.color ?? paint("--route-unknown"),
             ghost: p.phase === "unstarted" || !p.state.assigned || !!p.state.stale,
             // How long since the feed last revised anything about this train. A train the MTA has
             // not touched in forty minutes was being drawn exactly like one revised nine seconds
             // ago, which is a claim about freshness we cannot support.
             revised: Math.max(0, Math.round(t - (p.state.updatedAt ?? t))),
-            // Amber means the train is not moving and we know why, or has not moved for minutes
-            // and we may not. Either way it is the thing to notice about it.
-            holding: p.motion === "holding" || p.stalledFor >= STALLED_S,
-            stalled: p.stalledFor >= STALLED_S,
             moving, bearing: Math.round(p.bearing),
             chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
-            // How many trains this marker stands for, and whether it is in service at all.
+            // How many trains this marker stands for. A train the viewer has selected is always
+            // drawn in its own right, so selecting one never makes it vanish under a pile.
             stacked: selected ? 1 : stacked,
-            parked: p.phase === "unstarted",
-            atPlatform: p.phase === "dwelling",
           },
           geometry: { type: "Point", coordinates: fanned(p, idx, fan, lastBand) },
         });
         if (p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
           bands.push({
             type: "Feature",
-            properties: { color: selected ? paint("--label") : (r?.color ?? paint("--route-unknown")) },
+            properties: { color: selected ? paint("--label") : idx.routeColor(p.route) },
             geometry: { type: "LineString", coordinates: p.ribbon },
           });
         }

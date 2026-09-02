@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FeedStatus, StateDelta, StateSnapshot, TrainState } from "./types";
 import type { NetworkIndex } from "./network";
-import { BrowserSource } from "./browserSource";
+import type { BrowserSource } from "./browserSource";
 import { POLLER_URL } from "./basePath";
 
 export type StreamMode = { kind: "live" } | { kind: "replay"; from: number; to: number; speed: number };
@@ -92,15 +92,29 @@ export function useTrainStream(mode: StreamMode, index: NetworkIndex | null) {
       };
     };
 
-    const connectBrowser = () => {
+    /*
+     * Tracking the whole system in this browser, when there is no poller to do it.
+     *
+     * Loaded only if that turns out to be the case. It brings a protobuf decoder, the tracker, the
+     * timing tables and the gradient-boosted model with it — a large fraction of the bundle for a
+     * path most visitors never take, and it was being downloaded, parsed and compiled by every one
+     * of them before the first train appeared.
+     */
+    const connectBrowser = async () => {
       if (!index) return; // in-browser tracking needs the network; retried when it lands
       setStatus((s) => ({ ...s, source: "browser", live: true, speed: 1, ended: false, error: "fetching feeds…", clockTs: 0, messages: 0 }));
-      local = new BrowserSource(index, (msg) => {
-        if (msg.kind === "timing") { setStatus((s) => ({ ...s, modelReady: msg.model })); return; }
-        if (msg.kind === "snapshot") applySnapshot(msg.data); else applyDelta(msg.data);
-        tick(msg.data.ts, true, "browser");
-      });
-      local.start().catch((e) => setStatus((s) => ({ ...s, connected: false, error: `in-browser tracking failed: ${e instanceof Error ? e.message : e}` })));
+      try {
+        const { BrowserSource } = await import("./browserSource");
+        if (cancelled) return;
+        local = new BrowserSource(index, (msg) => {
+          if (msg.kind === "timing") { setStatus((s) => ({ ...s, modelReady: msg.model })); return; }
+          if (msg.kind === "snapshot") applySnapshot(msg.data); else applyDelta(msg.data);
+          tick(msg.data.ts, true, "browser");
+        });
+        await local.start();
+      } catch (e) {
+        setStatus((s) => ({ ...s, connected: false, error: `in-browser tracking failed: ${e instanceof Error ? e.message : e}` }));
+      }
     };
 
     pollerAvailable().then((ok) => {
