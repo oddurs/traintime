@@ -3,18 +3,18 @@
 import type { NetworkIndex } from "@/lib/network";
 import { paint } from "@/lib/mapTheme";
 import { isExpress, serviceLabel } from "@/lib/service";
+import { BOX, CASING, FONT_STACK, FONT_WEIGHT, baseline, bulletBox, bulletOrigin, bulletPath, characterSize } from "@/lib/roundel";
 
 /**
- * The roundel: a true circle, or a diamond for an express, with the character set bold and
- * optically centred at a fixed fraction of the diameter. The character is always drawn, so colour
- * is never the only cue.
+ * The route bullet.
  *
- * Size is a name, not a number. The four sizes are the four places a roundel appears: inline in a
- * sentence, beside a station's routes, leading a list row, and heading a view. Deriving the
- * character from the diameter is what keeps all four the same drawing — and what lets the train
- * markers on the map be that drawing too, from the same numbers in src/lib/roundel.ts.
+ * Drawn from src/lib/roundel.ts, which is the same specification the map rasterises into its image
+ * atlas — the outline is literally the same path string. A bullet in the panel and the marker for
+ * that train on the map are one emblem, not two drawings that were meant to look alike.
+ *
+ * Size is a name, not a number. The four are the four places a bullet appears: inline in a
+ * sentence, beside a station's services, leading a list row, and heading a view.
  */
-
 export type BulletSize = "sm" | "md" | "lg" | "xl";
 
 interface Props {
@@ -24,6 +24,7 @@ interface Props {
   title?: string;
   dim?: boolean;
   onClick?: (e: React.MouseEvent) => void;
+  /** The alert pip, and anything else that sits at the bullet's corner. */
   children?: React.ReactNode;
 }
 
@@ -31,23 +32,37 @@ export default function RouteBullet({ index, route, size = "md", title, dim, onC
   const r = index.net.routes[route];
   const label = serviceLabel(route);
   const express = isExpress(route);
+  // An express diamond is drawn wider than the circle beside it so its character can be the same
+  // size; the element grows with the drawing rather than clipping it.
+  const box = bulletBox(express), o = bulletOrigin(express);
   const style: React.CSSProperties = {
     ["--bullet-size" as string]: `var(--bullet-${size})`,
-    ["--bullet-color" as string]: r?.color ?? paint("--route-unknown"),
-    color: r?.textColor ?? paint("--route-unknown-text"),
+    ["--bullet-scale" as string]: String(box / BOX),
   };
-  const cls = ["roundel", express && "diamond", label.length > 1 && "wide", dim && "is-dim"]
-    .filter(Boolean).join(" ");
   const Tag = onClick ? "button" : "span";
   return (
     <Tag
-      className={cls}
+      className={`roundel${dim ? " is-dim" : ""}`}
       style={style}
       title={title ?? r?.name ?? route}
       onClick={onClick}
       aria-label={`${label}${express ? " express" : ""} train`}
     >
-      <span className="roundel-label">{label}</span>
+      <svg viewBox={`${-o} ${-o} ${box} ${box}`} aria-hidden="true" focusable="false">
+        <path
+          d={bulletPath(express)}
+          fill={r?.color ?? paint("--route-unknown")}
+          stroke={paint("--map-casing")}
+          strokeWidth={CASING}
+        />
+        <text
+          x={BOX / 2} y={baseline(label)} textAnchor="middle"
+          fontFamily={FONT_STACK} fontWeight={FONT_WEIGHT} fontSize={characterSize(label)}
+          fill={r?.textColor ?? paint("--route-unknown-text")}
+        >
+          {label}
+        </text>
+      </svg>
       {children}
     </Tag>
   );

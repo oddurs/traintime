@@ -115,18 +115,6 @@
    * draws in the colour it is printed in.
    */
   --line-8av: #0053f3;
-
-  /*
-   * ---- The roundel. ----
-   *
-   * The proportions of a route bullet, mirrored from src/lib/roundel.ts so the map can draw the
-   * same emblem the panel does. The character is set bold at these fractions of the diameter.
-   */
-  --roundel-one: 0.7;
-  --roundel-two: 0.5;
-  --roundel-weight: 700;
-  /** How far down the character moves so its capital is centred rather than its em box. */
-  --roundel-optical: 0.09em;
   /* What a bullet's character is set in, and the only two inks the system uses. */
   --ink-light: #ffffff;
   --ink-dark: #000000;
@@ -179,15 +167,6 @@
   --tr-micro: 0.055em;
   --t-code: 400 calc(0.75rem * var(--type-scale))/1.55 var(--font-mono);
   --tr-code: 0em;
-  /*
-   * The roundel is the one type style whose size is a ratio rather than a step: the character is
-   * a fixed fraction of the diameter, so a 16px bullet in a search result and a 30px one heading
-   * a view are the same drawing. Two characters, and anything inside an express diamond, sit
-   * tighter to stay within the shape — the same style at a different ratio, not a different style.
-   */
-  --roundel-ratio: var(--roundel-one);
-  --t-roundel: var(--roundel-weight) calc(var(--bullet-size) * var(--roundel-ratio))/1 var(--font-signage);
-  --tr-roundel: -0.01em;
 
   /* ---- Radii, continuous rather than circular wherever the shape is large. ---- */
   --r-inner: 6px;
@@ -529,56 +508,48 @@ a { color: inherit; }
 .grabber { display: none; }
 
 /* ---- Route bullets ---- */
-.roundel {
-  position: relative; display: inline-grid; place-items: center; flex: none;
-  width: var(--bullet-size); height: var(--bullet-size);
-  background: var(--bullet-color); border-radius: 50%;
-  border: none; padding: 0; vertical-align: middle;
-  font: var(--t-roundel); letter-spacing: var(--tr-roundel);
-}
-/* Two characters (GS, FS, SI) have to sit tighter to stay inside the shape. */
-.roundel.wide { --roundel-ratio: var(--roundel-two); }
-
-.roundel.diamond { background: none; }
-.roundel.diamond::before {
-  /* The manual's express marker: a square on its point, the same optical area as the circle. */
-  content: ""; position: absolute; inset: 8%; background: var(--bullet-color);
-  transform: rotate(45deg); border-radius: 2px;
-}
-.roundel.is-dim { opacity: 0.28; }
 /*
- * Centre the capital, not the box it sits in.
- *
- * A line box is centred on the em square, and a capital sits in the upper part of that square —
- * Helvetica's cap top is 0.05em below the box top and its baseline 0.77em down, so the character's
- * optical centre is about a tenth of its own size above the middle. Left alone, every bullet in
- * the app had its number riding high, which is the first thing that reads as wrong about a mark
- * everyone already knows the shape of.
+ * The bullet itself is drawn in src/lib/roundel.ts and rendered as SVG — the shape, the character,
+ * the casing and the ink all come from there, because the map rasterises the same path into its
+ * image atlas and the two have to be one drawing. What is left here is how big it is and what
+ * hangs off its corner.
  */
-.roundel-label { position: relative; z-index: 1; transform: translateY(var(--roundel-optical)); }
+.roundel {
+  position: relative; display: inline-block; flex: none; vertical-align: middle;
+  /* An express diamond is drawn wider than the circle beside it, so its element is too. */
+  width: calc(var(--bullet-size) * var(--bullet-scale, 1));
+  height: calc(var(--bullet-size) * var(--bullet-scale, 1));
+  background: none; border: none; padding: 0; line-height: 0;
+}
+.roundel > svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.roundel.is-dim { opacity: 0.28; }
 button.roundel { cursor: pointer; transition: transform var(--fast) var(--ease); }
 button.roundel:hover { transform: scale(1.08); }
 button.roundel:active { transform: scale(0.98); }
+
 /*
  * A service alert, as a pip at the corner.
  *
- * Set far enough out that its centre clears the circle: an eight-pixel dot at the very edge of a
+ * Set far enough out that its centre clears the shape: an eight-pixel dot at the very edge of a
  * thirty-pixel bullet, ringed to separate a red pip from a red ground, was cutting a dark crescent
- * out of the emblem. The ring is a hairline now and the dot sits outside the curve, touching it.
+ * out of the emblem.
  */
 .roundel .alert-pip {
   position: absolute; top: calc(var(--s0) * -1); right: calc(var(--s0) * -1); z-index: 2;
   width: var(--pip); height: var(--pip); border-radius: 50%;
   box-shadow: 0 0 0 1px var(--surface-sunken);
 }
+.alert-pip.delay { background: var(--red); }
+.alert-pip.planned, .alert-pip.info { background: var(--amber); }
+.roundel-blank { width: var(--bullet-lg); height: var(--bullet-lg); border-radius: 50%; background: var(--fill-2); flex: none; }
 
 /*
  * How many of this service are running, under the bullet rather than on it.
  *
- * A two-digit badge cannot sit in the corner of a round bullet without covering it: the circle's
- * edge along the diagonal is only four pixels from the corner of its box, and the badge is
- * eighteen wide. Every attempt at placing it took a bite out of the emblem. So the emblem stays an
- * emblem and the number goes underneath, where it is also easier to read.
+ * A two-digit badge cannot sit in the corner of a round bullet without covering it: the shape's
+ * edge along the diagonal is four pixels from the corner of its box and the badge is eighteen
+ * wide. Every placement took a bite out of the emblem, so the emblem keeps its corner and the
+ * number goes underneath, where it is easier to read anyway.
  */
 .route-toggle { display: flex; flex-direction: column; align-items: center; gap: var(--s0); }
 .route-toggle em {
@@ -586,10 +557,6 @@ button.roundel:active { transform: scale(0.98); }
   color: var(--label-3); font-variant-numeric: tabular-nums; min-height: var(--s3);
 }
 .route-toggle.is-off em { opacity: 0.35; }
-.alert-pip.delay { background: var(--red); }
-.alert-pip.planned, .alert-pip.info { background: var(--amber); }
-.roundel-blank { width: var(--bullet-lg); height: var(--bullet-lg); border-radius: 50%; background: var(--fill-2); flex: none; }
-
 /* ---- A row of roundels: the services that call somewhere, or that you could change to ---- */
 .bullets { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--s1); min-width: 0; }
 .bullets em {

@@ -102,9 +102,12 @@ export default function DesignPage() {
 
       <h2>Roundels</h2>
       <p>
-        A circle for a local service and a diamond for an express, to the proportions of the 1970
-        manual: the character optically centred at about 58% of the diameter, set in Helvetica
-        Medium, and always drawn — colour is never the only cue. Size is a name, not a number.
+        A circle for a local service and a diamond for an express, drawn from one specification —
+        the same path, the same Helvetica, the same casing — and rendered two ways: as SVG here, and
+        rasterised into the map&rsquo;s image atlas for the trains. A bullet in the panel and the
+        marker for that train on the map are one emblem rather than two drawings meant to look
+        alike. The capital is centred on the shape rather than its em box, which is what stops a
+        numeral riding high. Size is a name, not a number.
       </p>
       {index && (
         <div className="ds-row">
@@ -113,7 +116,7 @@ export default function DesignPage() {
               <div className="ds-row">
                 <RouteBullet index={index} route="1" size={size} />
                 <RouteBullet index={index} route="6X" size={size} />
-                <RouteBullet index={index} route="GS" size={size} />
+                <RouteBullet index={index} route="SI" size={size} />
               </div>
               <code>{size}</code>
             </div>

@@ -7,9 +7,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
 import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
-import { addRouteIcons, chevronId, diamondId, DIAMOND_PX } from "@/lib/icons";
-import { isExpress, serviceLabel } from "@/lib/service";
-import { characterPx } from "@/lib/roundel";
+import { addRouteIcons, bulletId, chevronId } from "@/lib/icons";
+import { BOX } from "@/lib/roundel";
 import { STALLED_S } from "@/lib/format";
 import { paint } from "@/lib/mapTheme";
 import { asset } from "@/lib/basePath";
@@ -302,16 +301,15 @@ export default function TrainMap(props: Props) {
         points.push({
           type: "Feature",
           properties: {
-            id: p.id, route: p.route, label: serviceLabel(p.route).slice(0, 2),
-            // The emblem: which shape it is drawn in, and how big its character is relative to
-            // the marker. Both come from the same specification the panel's roundel is drawn from.
-            express: isExpress(p.route),
-            charRatio: characterPx(1, serviceLabel(p.route)),
-            diamond: isExpress(p.route)
-              ? diamondId(p.route, p.phase === "unstarted" ? "parked"
-                : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain")
-              : "",
-            color: r?.color ?? paint("--route-unknown"), textColor: r?.textColor ?? paint("--route-unknown-text"),
+            id: p.id, route: p.route,
+            /*
+             * The emblem, as an image: circle or diamond, its colour, its character, its casing —
+             * the same drawing the panel renders as SVG, from the same path. A train on the map is
+             * its own bullet rather than a coloured dot with a letter over it.
+             */
+            bullet: bulletId(p.route, p.phase === "unstarted" ? "parked"
+              : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain"),
+            color: r?.color ?? paint("--route-unknown"),
             ghost: p.phase === "unstarted" || !p.state.assigned || !!p.state.stale,
             // How long since the feed last revised anything about this train. A train the MTA has
             // not touched in forty minutes was being drawn exactly like one revised nine seconds
@@ -487,60 +485,32 @@ export default function TrainMap(props: Props) {
         paint: { "icon-opacity": ["case", ["get", "ghost"], 0.35, 0.95] },
       });
       map.addLayer({
-        id: "trains", type: "circle", source: "trains",
-        // An express runs on the same corridor as its local and is a different service; the manual
-        // draws it as a diamond, so the map does too, in the layer below.
-        filter: ["!", ["get", "express"]],
-        paint: {
-          "circle-radius": [
-            "interpolate", ["linear"], ["zoom"],
-            10, ["case", [">", ["get", "stacked"], 1], 5.5, 4.5],
-            14, ["case", [">", ["get", "stacked"], 1], 11, 9],
-          ],
-          // A train not yet in service is drawn as an outline: it is here, but it is not running,
-          // and a solid marker claims otherwise.
-          "circle-color": ["case", ["get", "parked"], paint("--map-station-fill"), ["get", "color"]],
-          // Full strength while the feed is still revising it; fading as the record goes quiet,
-          // down to a train we are still drawing but no longer vouching for.
-          "circle-opacity": ["case", ["get", "ghost"], 0.4,
-            ["interpolate", ["linear"], ["get", "revised"], 600, 1, 2400, 0.45]],
-          "circle-stroke-color": [
-            "case",
-            ["get", "holding"], paint("--map-hold"),
-            ["get", "parked"], ["get", "color"],
-            paint("--label"),
-          ],
-          // A zoom expression has to sit at the top level, so the per-feature choice goes inside it.
-          "circle-stroke-width": [
-            "interpolate", ["linear"], ["zoom"],
-            10, ["case", ["get", "holding"], 1.8, 1],
-            14, ["case", ["get", "holding"], 3, 2],
-          ],
-          "circle-stroke-opacity": ["case", ["get", "ghost"], 0.45, 1],
-        },
-      });
-      map.addLayer({
         /*
-         * The same marker, in the other shape. A circle layer carries its states in paint
-         * properties and an image cannot, so the three that change the drawing are baked as
-         * variants and chosen here; fading stays a paint property, as it does for the circles.
+         * A train is its own bullet.
          *
-         * `icon-size` scales the drawn image to the diameter the circle layer would have used, so
-         * an express and a local sit at the same size beside one another.
+         * This was a circle layer with a white ring and a separate label in the tile style's font,
+         * which is not the emblem the panel draws and not the one on any platform in the city.
+         * It is the same drawing now — the same path, the same Helvetica, the same colours, the
+         * same dark casing the lines have — rasterised from src/lib/roundel.ts into the image
+         * atlas. An express is a diamond here exactly as it is there.
+         *
+         * `icon-size` scales the hundred-unit drawing to the diameter the markers used to have, so
+         * nothing about the map's density changes; the mark inside it does.
          */
-        id: "train-express", type: "symbol", source: "trains",
-        filter: ["get", "express"],
+        id: "trains", type: "symbol", source: "trains",
         layout: {
-          "icon-image": ["get", "diamond"],
+          "icon-image": ["get", "bullet"],
           "icon-size": [
             "interpolate", ["linear"], ["zoom"],
-            10, ["/", ["case", [">", ["get", "stacked"], 1], 13, 11], DIAMOND_PX],
-            14, ["/", ["case", [">", ["get", "stacked"], 1], 24, 20], DIAMOND_PX],
+            10, ["/", ["case", [">", ["get", "stacked"], 1], 13, 11], BOX],
+            14, ["/", ["case", [">", ["get", "stacked"], 1], 24, 20], BOX],
           ],
           "icon-allow-overlap": true, "icon-ignore-placement": true,
         },
         paint: {
-          "icon-opacity": ["case", ["get", "ghost"], 0.4,
+          // Full strength while the feed is still revising it; fading as the record goes quiet,
+          // down to a train we are still drawing but no longer vouching for.
+          "icon-opacity": ["case", ["get", "ghost"], 0.45,
             ["interpolate", ["linear"], ["get", "revised"], 600, 1, 2400, 0.45]],
         },
       });
@@ -559,28 +529,6 @@ export default function TrainMap(props: Props) {
           "text-color": paint("--label"),
           "text-halo-color": paint("--map-halo"), "text-halo-width": 1.4,
         },
-      });
-      map.addLayer({
-        id: "train-labels", type: "symbol", source: "trains", minzoom: 11.5,
-        layout: {
-          "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"],
-          /*
-           * The character is a fraction of the marker's diameter — the same fraction the panel's
-           * roundel uses — rather than a curve tuned on its own. It was the second: a size that
-           * happened to look about right at one zoom and swam inside the marker at every other,
-           * and a different mark from the bullet standing for the same train in the panel.
-           *
-           * The diameter is repeated at each stop because a zoom interpolation has to be the
-           * outermost expression; MapLibre drops a layer that nests one.
-           */
-          "text-size": [
-            "interpolate", ["linear"], ["zoom"],
-            11.5, ["*", ["get", "charRatio"], ["case", [">", ["get", "stacked"], 1], 12, 10]],
-            14, ["*", ["get", "charRatio"], ["case", [">", ["get", "stacked"], 1], 22, 18]],
-          ],
-          "text-allow-overlap": true, "text-ignore-placement": true,
-        },
-        paint: { "text-color": ["get", "textColor"], "text-opacity": ["case", ["get", "ghost"], 0.55, 1] },
       });
 
       const cursor = (on: boolean) => () => (map.getCanvas().style.cursor = on ? "pointer" : "");

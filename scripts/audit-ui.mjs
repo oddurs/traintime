@@ -3,13 +3,20 @@
  * console error, unhandled rejection, failed request and broken assertion along the way.
  */
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 const BIN = "/Users/oddurs/Library/Caches/ms-playwright/chromium-1234/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
 const BASE = process.argv[2] ?? "http://localhost:7117";
 const MOBILE = process.env.MOBILE === "1";
 const port = 9000 + Math.floor(Math.random() * 900);
+/* A throwaway browser profile, in a temp directory and deleted afterwards. These used to be
+   written into the repository and left there: 721 MB of them, which is what filled the disk. */
+const PROFILE = mkdtempSync(join(tmpdir(), "tt-audit-"));
+process.on("exit", () => { try { rmSync(PROFILE, { recursive: true, force: true }); } catch {} });
 const chrome = spawn(BIN, ["--headless=new","--no-sandbox","--use-gl=angle","--use-angle=swiftshader","--enable-unsafe-swiftshader",
   "--ignore-gpu-blocklist","--hide-scrollbars",`--window-size=${MOBILE?390:1500},${MOBILE?844:950}`,`--remote-debugging-port=${port}`,
-  "--user-data-dir="+process.cwd()+"/audit-profile/"+Date.now(),"--no-first-run","about:blank"],{stdio:["ignore","ignore","ignore"]});
+  "--user-data-dir="+PROFILE,"--no-first-run","about:blank"],{stdio:["ignore","ignore","ignore"]});
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 let t; for(let i=0;i<60;i++){try{const l=await (await fetch(`http://127.0.0.1:${port}/json`)).json();t=l.find(x=>x.type==="page");if(t)break}catch{} await sleep(200)}
 const ws=new WebSocket(t.webSocketDebuggerUrl); await new Promise(r=>ws.onopen=r);
@@ -115,7 +122,7 @@ await step("map click on empty space", async()=>{
 const hasHandle = (await evalJs(`typeof window.__tt !== "undefined" && !!window.__tt.map`)).value === true;
 await step("deep zoom render", async()=>{ if(!hasHandle) return "skipped (no debug handle in a production build)";
   await evalJs(`__tt.map.jumpTo({center:[-73.9880,40.7580],zoom:16.5})`); await sleep(6000);
-  const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length, labels:__tt.map.queryRenderedFeatures({layers:["train-labels"]}).length, lines:__tt.map.queryRenderedFeatures({layers:[0,1,2,3,4].map(z=>"routes-line-"+z)}).length})`); return r.value??r.error;});
+  const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length, lines:__tt.map.queryRenderedFeatures({layers:[0,1,2,3,4,5,6,7,8].map(z=>"routes-line-"+z)}).length})`); return r.value??r.error;});
 await step("zoom out to whole system", async()=>{ if(!hasHandle) return "skipped (no debug handle in a production build)";
   await evalJs(`__tt.map.jumpTo({center:[-73.94,40.71],zoom:9.8})`); await sleep(5000);
   const r=await evalJs(`JSON.stringify({trains:__tt.map.queryRenderedFeatures({layers:["trains"]}).length})`); return r.value??r.error;});

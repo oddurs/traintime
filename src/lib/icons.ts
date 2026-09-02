@@ -1,7 +1,8 @@
 import { paint } from "./mapTheme";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import type { NetworkIndex } from "./network";
-import { isExpress } from "./service";
+import { isExpress, serviceLabel } from "./service";
+import { BOX, CASING, FONT_STACK, FONT_WEIGHT, baseline, bulletBox, bulletOrigin, bulletPath, characterSize } from "./roundel";
 
 /**
  * A chevron per route, drawn once into the map's image atlas. The chevron sits in the upper
@@ -38,49 +39,53 @@ function chevron(color: string, ratio: number): ImageData | null {
 export const chevronId = (route: string) => `tt-chevron-${route}`;
 
 /**
- * The express diamond, drawn once per service and per state.
+ * The route bullet, rasterised into the map's image atlas.
  *
- * A circle layer cannot be a diamond, and without one an express train and a local one were the
- * same mark on the map: a 6X drew as a "6" in a circle, exactly like a 6, and nothing said which
- * you were looking at. The panel has drawn them apart since the beginning — the manual's own
- * distinction — so the map does too.
+ * The same path string the panel renders as SVG, filled and stroked on a canvas with the same
+ * font at the same size and the same baseline. The marker for a 6 train on the map is not a
+ * facsimile of the bullet in the panel, it is the bullet.
  *
- * A circle layer carries its states in paint properties; an image cannot, so the three that
- * change the drawing rather than its opacity are baked as variants. Fading — a train the feed has
- * gone quiet about — stays a paint property and applies to all of them.
+ * A circle layer carries its states in paint properties and an image cannot, so the three that
+ * change the drawing are baked as variants and chosen per feature. Fading — a train the feed has
+ * gone quiet about — stays a paint property, where it applies to all of them.
  */
-export type Diamond = "plain" | "hold" | "parked";
-export const diamondId = (route: string, state: Diamond) => `tt-diamond-${state}-${route}`;
+export type BulletState = "plain" | "hold" | "parked";
+export const bulletId = (route: string, state: BulletState) => `tt-bullet-${state}-${route}`;
 
-/** The logical size the diamond images are drawn at; the layer scales from here. */
-export const DIAMOND_PX = 26;
-
-function diamond(color: string, state: Diamond, ratio: number): ImageData | null {
+function bullet(route: string, index: NetworkIndex, state: BulletState, ratio: number): ImageData | null {
+  const express = isExpress(route);
+  // The image is as big as the drawing: an express diamond reaches past the circle's box, and the
+  // map scales by the image's own size, so the character comes out the same on both.
+  const box = bulletBox(express), o = bulletOrigin(express);
   const c = document.createElement("canvas");
-  c.width = c.height = DIAMOND_PX * ratio;
+  c.width = c.height = Math.round(box * ratio);
   const g = c.getContext("2d");
   if (!g) return null;
   g.scale(ratio, ratio);
-  const m = DIAMOND_PX / 2;
-  const ring = state === "hold" ? 3 : 2;
-  // Inset by the ring so the stroke lands inside the image rather than being clipped by it.
-  const r = m - ring / 2 - 0.5;
-  g.beginPath();
-  g.moveTo(m, m - r);
-  g.lineTo(m + r, m);
-  g.lineTo(m, m + r);
-  g.lineTo(m - r, m);
-  g.closePath();
-  g.fillStyle = state === "parked" ? paint("--map-station-fill") : color;
-  g.fill();
+  g.translate(o, o);
+
+  const colour = index.routeColor(route);
+  const label = serviceLabel(route);
+  // A held train is ringed amber, and one not yet in service is drawn hollow: it is here, but it
+  // is not running, and a solid bullet claims otherwise.
+  const ring = state === "hold" ? CASING * 2.4 : CASING;
+  const path = new Path2D(bulletPath(express, ring / 2));
+  g.fillStyle = state === "parked" ? paint("--map-station-fill") : colour;
+  g.fill(path);
   g.lineWidth = ring;
   g.lineJoin = "round";
-  g.strokeStyle = state === "hold" ? paint("--map-hold") : state === "parked" ? color : paint("--label");
-  g.stroke();
+  g.strokeStyle = state === "hold" ? paint("--map-hold") : state === "parked" ? colour : paint("--map-casing");
+  g.stroke(path);
+
+  g.fillStyle = state === "parked" ? colour : index.net.routes[route]?.textColor ?? paint("--route-unknown-text");
+  g.font = `${FONT_WEIGHT} ${characterSize(label)}px ${FONT_STACK}`;
+  g.textAlign = "center";
+  g.textBaseline = "alphabetic";
+  g.fillText(label, BOX / 2, baseline(label));
   return g.getImageData(0, 0, c.width, c.height);
 }
 
-/** Register a chevron per route, and a diamond per express service; safe to call more than once. */
+/** Register a chevron and a bullet per service, in each state; safe to call more than once. */
 export function addRouteIcons(map: MapLibreMap, index: NetworkIndex) {
   const ratio = Math.min(3, Math.max(2, Math.round((globalThis.devicePixelRatio || 1) * SCALE)));
   for (const route of Object.keys(index.net.routes)) {
@@ -90,12 +95,11 @@ export function addRouteIcons(map: MapLibreMap, index: NetworkIndex) {
       const img = chevron(index.routeLineColor(route), ratio);
       if (img) map.addImage(id, img, { pixelRatio: ratio });
     }
-    if (!isExpress(route)) continue;
-    for (const state of ["plain", "hold", "parked"] as Diamond[]) {
-      const did = diamondId(route, state);
-      if (map.hasImage(did)) continue;
-      const img = diamond(index.routeColor(route), state, ratio);
-      if (img) map.addImage(did, img, { pixelRatio: ratio });
+    for (const state of ["plain", "hold", "parked"] as BulletState[]) {
+      const bid = bulletId(route, state);
+      if (map.hasImage(bid)) continue;
+      const img = bullet(route, index, state, ratio);
+      if (img) map.addImage(bid, img, { pixelRatio: ratio });
     }
   }
 }

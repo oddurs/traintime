@@ -8,8 +8,8 @@
  * Usage: node scripts/audit-a11y.mjs [http://localhost:7117]
  */
 import { spawn } from "node:child_process";
-import { existsSync, globSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, globSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 /** Wherever Chrome happens to live: a developer's machine, or a CI runner. */
 function findChrome() {
@@ -27,9 +27,13 @@ const BIN = findChrome();
 if (!BIN) { console.log("accessibility — no browser available; skipping"); process.exit(0); }
 const BASE = process.argv[2] ?? "http://localhost:7117";
 const port = 9000 + Math.floor(Math.random() * 900);
+/* A throwaway browser profile, in a temp directory and deleted afterwards. These used to be
+   written into the repository and left there: 721 MB of them, which is what filled the disk. */
+const PROFILE = mkdtempSync(join(tmpdir(), "tt-audit-"));
+process.on("exit", () => { try { rmSync(PROFILE, { recursive: true, force: true }); } catch {} });
 const chrome = spawn(BIN, ["--headless=new","--no-sandbox","--use-gl=angle","--use-angle=swiftshader","--enable-unsafe-swiftshader",
   "--hide-scrollbars","--window-size=1400,900",`--remote-debugging-port=${port}`,
-  "--user-data-dir="+process.cwd()+"/audit-profile/a11y"+Date.now(),"--no-first-run","about:blank"],{stdio:["ignore","ignore","ignore"]});
+  "--user-data-dir="+PROFILE,"--no-first-run","about:blank"],{stdio:["ignore","ignore","ignore"]});
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 let t; for(let i=0;i<60;i++){try{const l=await (await fetch(`http://127.0.0.1:${port}/json`)).json();t=l.find(x=>x.type==="page");if(t)break}catch{} await sleep(200)}
 const ws=new WebSocket(t.webSocketDebuggerUrl); await new Promise(r=>ws.onopen=r);
