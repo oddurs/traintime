@@ -9,7 +9,7 @@ import { useReducedMotion, useTicker } from "@/lib/hooks";
 import { arrivalsAt } from "@/lib/arrivals";
 import { directionLabel, fmtMin } from "@/lib/format";
 import { asset, BASE_PATH } from "@/lib/basePath";
-import RouteBullet from "@/components/RouteBullet";
+import { RouteBullet } from "@/components/brand";
 
 const TrainMap = dynamic(() => import("@/components/TrainMap"), { ssr: false });
 

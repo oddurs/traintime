@@ -5,7 +5,7 @@ import type { Alert } from "@/lib/alerts";
 import type { NetworkIndex } from "@/lib/network";
 import { splitBullets } from "@/lib/format";
 import { Button, Disclosure, List, Row } from "./ui";
-import RouteBullet from "./RouteBullet";
+import { RouteBullet } from "./brand";
 
 interface Props {
   index: NetworkIndex;

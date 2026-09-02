@@ -6,7 +6,7 @@ import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
 import { etaProvenance, fmtIn, holdReason, kmh, provenance } from "@/lib/format";
 import { Button, Callout, Card, IconButton, List, Meter, Notice, Row } from "./ui";
-import RouteBullet from "./RouteBullet";
+import { BulletGroup, RouteBullet } from "./brand";
 import AlertList from "./AlertList";
 import { betterConnection } from "@/lib/connection";
 
@@ -93,12 +93,7 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
               <b>{nextName}</b>
               {nextIn !== null && <span className="next-eta">{fmtIn(nextIn)}</span>}
             </div>
-            {changes.length > 0 && (
-              <div className="next-changes">
-                <span>change for</span>
-                {changes.slice(0, 8).map((r) => <RouteBullet key={r} index={index} route={r} size="md" />)}
-              </div>
-            )}
+            {changes.length > 0 && <BulletGroup index={index} routes={changes} size="md" limit={8} lead="change for" />}
           </div>
         </Card>
       )}

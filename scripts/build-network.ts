@@ -16,6 +16,7 @@
  * Usage: npx tsx scripts/build-network.ts [--zip path/to/gtfs_subway.zip]
  */
 import AdmZip from "adm-zip";
+import { serviceColours, trunkOf } from "../src/lib/trunks";
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -177,16 +178,32 @@ async function main() {
   let feedVersion = "";
   for (const r of rows(read("feed_info.txt"))) feedVersion = r.feed_version ?? "";
 
-  // routes
+  /*
+   * Routes, coloured by the trunk line they run on rather than by whatever hue the feed attaches
+   * to the letter.
+   *
+   * The two mostly agree, and where they do not the feed is the one that is wrong about the
+   * system: it gives the L and all three shuttles a single grey, which made them one line to
+   * everything downstream of colour — zoomed out, the 42 St shuttle merged into the L, two
+   * services sharing no track in different boroughs. A colour is a statement about the network,
+   * so it comes from the table that describes the network.
+   */
   const routes: Record<string, { id: string; name: string; color: string; textColor: string; sortOrder: number }> = {};
+  const unTrunked: string[] = [];
   for (const r of rows(read("routes.txt"))) {
+    const trunk = trunkOf(r.route_id);
+    if (!trunk) unTrunked.push(r.route_id);
     routes[r.route_id] = {
       id: r.route_id,
       name: r.route_long_name,
-      color: "#" + (r.route_color || "808183"),
-      textColor: "#" + (r.route_text_color || "FFFFFF"),
+      ...serviceColours(r.route_id),
       sortOrder: Number(r.route_sort_order || 999),
     };
+  }
+  if (unTrunked.length) {
+    console.error(`  every service needs a trunk line to belong to; these have none: ${unTrunked.join(", ")}`);
+    console.error("  add them to src/lib/trunks.ts");
+    process.exit(1);
   }
 
   // stops -> parent stations

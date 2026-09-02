@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NetworkIndex } from "../src/lib/network";
 import { canonicalRoute } from "../src/lib/feed";
-import { isExpress } from "../src/components/RouteBullet";
+import { isExpress } from "../src/components/brand/RouteBullet";
 import type { Network } from "../src/lib/types";
 
 const net = new NetworkIndex(JSON.parse(readFileSync(join(process.cwd(), "public/data/network.json"), "utf8")) as Network);

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
 import { searchStations } from "@/lib/arrivals";
 import { Button, Field, Row } from "./ui";
-import RouteBullet from "./RouteBullet";
+import { BulletGroup } from "./brand";
 
 interface Props {
   index: NetworkIndex;
@@ -97,10 +97,10 @@ export default function SearchBox({ index, onPick, onNearby, nearby, locating }:
               onClick={() => pick(r)}
               title={r.name}
               trailing={
-                <span className="res-routes">
-                  {r.routes.slice(0, 6).map((rt) => <RouteBullet key={rt} index={index} route={rt} size="sm" />)}
-                  {r.meters !== undefined && <em>{r.meters < 1000 ? `${Math.round(r.meters)} m` : `${(r.meters / 1000).toFixed(1)} km`}</em>}
-                </span>
+                <BulletGroup
+                  index={index} routes={r.routes} size="sm" limit={6}
+                  trailing={r.meters !== undefined ? <em>{r.meters < 1000 ? `${Math.round(r.meters)} m` : `${(r.meters / 1000).toFixed(1)} km`}</em> : undefined}
+                />
               }
             />
           ))}

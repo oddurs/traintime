@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
 import type { LineHealth as Health, TrainTimeClient } from "@/lib/client";
 import { Meter } from "./ui";
-import RouteBullet from "./RouteBullet";
+import { RouteBullet } from "./brand";
 
 interface Props {
   index: NetworkIndex;

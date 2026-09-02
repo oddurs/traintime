@@ -6,8 +6,7 @@ import type { NetworkIndex } from "@/lib/network";
 import type { SavedPlace } from "@/lib/places";
 import { arrivalsAt } from "@/lib/arrivals";
 import { List, Row, Section } from "./ui";
-import RouteBullet from "./RouteBullet";
-import Countdown from "./Countdown";
+import { Countdown, RouteBullet } from "./brand";
 
 interface Props {
   index: NetworkIndex;

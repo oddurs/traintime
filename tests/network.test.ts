@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NetworkIndex, fanAt, bandOffsetExpression, TRACK_M, metresPerPixel } from "../src/lib/network";
 import { distM } from "../src/lib/geo";
+import { TRUNKS, serviceColours } from "../src/lib/trunks";
 import type { LonLat, Network } from "../src/lib/types";
 
 const net = JSON.parse(readFileSync(join(process.cwd(), "public/data/network.json"), "utf8")) as Network;
@@ -223,6 +224,29 @@ test("every service in a corridor gets its own band, and no two share one", () =
     }
   }
   assert.ok(shared > 200, `expected many shared corridors, got ${shared}`);
+});
+
+test("every service belongs to exactly one trunk line, and takes its colour from it", () => {
+  // The network is organised by trunk, not by service, so a colour is a statement about the
+  // network and has to come from the table that describes one. The feed's own colours disagree:
+  // it hands the L and all three shuttles a single grey, which made the 42 St shuttle merge into
+  // the L when you zoomed out — two services sharing no track, in different boroughs.
+  const seen = new Map<string, string>();
+  for (const [id, trunk] of Object.entries(TRUNKS)) {
+    for (const service of trunk.services) {
+      assert.ok(!seen.has(service), `${service} is on both the ${seen.get(service)} and ${id} trunks`);
+      seen.set(service, id);
+    }
+  }
+  for (const route of Object.keys(net.routes)) {
+    assert.ok(seen.has(route), `${route} runs on no trunk line — add it to src/lib/trunks.ts`);
+    const { color, textColor } = serviceColours(route);
+    assert.equal(net.routes[route].color, color, `${route} is not drawn in its trunk's colour`);
+    assert.equal(net.routes[route].textColor, textColor, `${route}'s character is not set in its trunk's ink`);
+  }
+  // And the trunks are actually distinguishable from one another.
+  const colours = new Set(Object.values(TRUNKS).map((t) => t.token));
+  assert.equal(colours.size, Object.keys(TRUNKS).length, "two trunk lines share a colour");
 });
 
 test("the weave has a consistent over-and-under", () => {

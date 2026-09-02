@@ -10,8 +10,7 @@ import { STALLED_S } from "@/lib/format";
 import { directionLabel, fmtClock } from "@/lib/format";
 import { walkSeconds } from "@/lib/places";
 import { IconButton, List, Row } from "./ui";
-import RouteBullet from "./RouteBullet";
-import Countdown from "./Countdown";
+import { BulletGroup, Countdown, DirectionHeading, RouteBullet, StationName } from "./brand";
 import AlertList from "./AlertList";
 import DestinationPicker from "./DestinationPicker";
 
@@ -117,7 +116,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
       <p className="sr-only" aria-live="polite" aria-atomic="true">{spokenNext}</p>
       <header className="board-head">
         <div>
-          <h2>{name}</h2>
+          <StationName>{name}</StationName>
           {distance !== undefined && (
             <div className="board-sub near">
               {distance < 1000 ? `${Math.round(distance)} m away` : `${(distance / 1000).toFixed(1)} km away`}
@@ -125,9 +124,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
             </div>
           )}
           {stale !== undefined && <div className="board-sub stale">last seen {Math.round(stale)} s ago · reconnecting</div>}
-          <div className="board-routes">
-            {routes.map((r) => <RouteBullet key={r} index={index} route={r} size="md" />)}
-          </div>
+          <BulletGroup index={index} routes={routes} size="md" />
         </div>
         <div className="board-actions">
           {onToggleSave && (
@@ -161,8 +158,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         const leaving = g.arrivals.length > 0 && g.arrivals.every((a) => a.departing);
         return (
           <div className="board-group" key={g.direction}>
-            <h3>{leaving ? "Departures" : directionLabel(g.direction)}</h3>
-            <span className="board-toward">toward {g.label}</span>
+            <DirectionHeading direction={leaving ? "Departures" : directionLabel(g.direction)} toward={g.label} />
             <List leading>
               {g.arrivals.map((a) => {
                 const secs = a.eta - now;

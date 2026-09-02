@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
 import { searchStations } from "@/lib/arrivals";
 import { Button, Field, IconButton, Row } from "./ui";
-import RouteBullet from "./RouteBullet";
+import { BulletGroup } from "./brand";
 
 interface Props {
   index: NetworkIndex;
@@ -60,11 +60,7 @@ export default function DestinationPicker({ index, destination, onChange }: Prop
               key={r.id}
               onClick={() => choose(r.id)}
               title={r.name}
-              trailing={
-                <span className="res-routes">
-                  {r.routes.slice(0, 5).map((rt) => <RouteBullet key={rt} index={index} route={rt} size="sm" />)}
-                </span>
-              }
+              trailing={<BulletGroup index={index} routes={r.routes} size="sm" limit={5} />}
             />
           ))}
         </ul>

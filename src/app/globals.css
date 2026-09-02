@@ -81,11 +81,33 @@
   --route-unknown: #808183;
   --route-unknown-text: #ffffff;
 
-  /* ---- The MTA's own palette, for the legend's samples of what the map draws. ---- */
-  --mta-red: #ee352e;
-  --mta-blue: #0039a6;
-  --mta-orange: #ff6319;
-  --mta-grey: #6a6a75;
+  /*
+   * ---- The trunk lines. ----
+   *
+   * The New York subway is not organised by service, it is organised by trunk line: the 1, 2 and
+   * 3 are three services on one red Broadway-7 Avenue trunk, and that is why they share a colour
+   * on every map the MTA has printed since 1979. So the colours are named for the lines rather
+   * than the services, and a service is coloured by the trunk it runs on — which is the same
+   * order the map draws them in when you are too far away to tell them apart.
+   *
+   * These are the feed's own hues rather than the printed manual's, which are tuned for white
+   * paper; src/lib/trunks.ts says which services run on each, and the design audit checks that
+   * every service the feed publishes has a trunk to belong to.
+   */
+  --trunk-8av: #0062cf;
+  --trunk-6av: #eb6800;
+  --trunk-crosstown: #799534;
+  --trunk-nassau: #8e5c33;
+  --trunk-canarsie: #7c858c;
+  --trunk-shuttle: #4e555c;
+  --trunk-broadway: #f6bc26;
+  --trunk-7av: #d82233;
+  --trunk-lexington: #009952;
+  --trunk-flushing: #9a38a1;
+  --trunk-sir: #08179c;
+  /* What a bullet's character is set in, and the only two inks the system uses. */
+  --ink-light: #ffffff;
+  --ink-dark: #000000;
 
   /*
    * ---- Type: two voices. ----
@@ -519,13 +541,47 @@ button.roundel:active { transform: scale(0.98); }
 .alert-pip.delay { background: var(--red); }
 .alert-pip.planned, .alert-pip.info { background: var(--amber); }
 .roundel-blank { width: var(--bullet-lg); height: var(--bullet-lg); border-radius: 50%; background: var(--fill-2); flex: none; }
+
+/* ---- A row of roundels: the services that call somewhere, or that you could change to ---- */
+.bullets { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--s1); min-width: 0; }
+.bullets em {
+  font-style: normal; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption);
+  margin-right: var(--s1); font-variant-numeric: tabular-nums;
+}
+
+/* ---- How a line is running, in the agency's own four words ---- */
+.svc { display: inline-flex; align-items: center; gap: var(--s2); font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); }
+.svc-pip { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--label-3); }
+.svc--good .svc-pip { background: var(--green); }
+.svc--delay .svc-pip { background: var(--red); }
+.svc--planned .svc-pip { background: var(--amber); }
+.svc--info .svc-pip { background: var(--label-3); }
+.svc--delay { color: var(--red); }
+
+/* ---- Which way, and where to ---- */
+.dir { display: flex; flex-direction: column; }
+.dir h3 { margin: 0 0 var(--s0); font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
+.dir-toward { font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); margin-bottom: var(--s2); }
+
+/* ---- A station's name, set the way a platform sign sets it ---- */
+.station-name { margin: 0; font: var(--t-title); letter-spacing: var(--tr-title); color: var(--label); }
+
+/* ---- A trunk line: its colour, its name, the services on it ---- */
+.stripe {
+  display: flex; align-items: center; gap: var(--s3); min-height: var(--tap);
+  background: var(--fill); border-radius: var(--r-card); padding: var(--s2) var(--s3) var(--s2) 0;
+  overflow: hidden;
+}
+/* The line itself, at the width the map draws it: the specimen is the thing, not a sample of it. */
+.stripe-bar { width: var(--s2); align-self: stretch; background: var(--stripe-color); flex: none; }
+.stripe-name { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label); flex: 1; min-width: 0; }
+.stripe-services { flex: none; }
+
 .routes { display: flex; flex-direction: column; gap: var(--s2); }
 .group { display: flex; flex-wrap: wrap; gap: var(--s2); }
 
 /* ---- Search ---- */
 .res-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--t-body); letter-spacing: var(--tr-body); }
-.res-routes { display: flex; align-items: center; gap: var(--s1); flex: none; }
-.res-routes em { font-style: normal; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); margin-left: var(--s1); font-variant-numeric: tabular-nums; }
 .popover li button.is-active { background: var(--fill-2); }
 .popover-empty { padding: var(--s3); color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); }
 
@@ -534,12 +590,12 @@ button.roundel:active { transform: scale(0.98); }
 .legend-rows { display: flex; flex-direction: column; gap: var(--s2); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .legend-row { display: flex; align-items: center; gap: var(--s2); }
 .swatch { width: var(--icon); height: var(--icon); flex: none; border-radius: 50%; display: inline-block; }
-.swatch.dot { background: var(--mta-red); box-shadow: 0 0 0 2px var(--label); }
-.swatch.chev { border-radius: 0; background: var(--mta-blue); clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%); }
+.swatch.dot { background: var(--trunk-7av); box-shadow: 0 0 0 2px var(--label); }
+.swatch.chev { border-radius: 0; background: var(--trunk-8av); clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%); }
 .swatch.glow { background: radial-gradient(circle, var(--glow), transparent 70%); }
-.swatch.hold { background: var(--mta-orange); box-shadow: 0 0 0 2px var(--amber); }
-.swatch.ghost { background: var(--mta-grey); opacity: 0.5; box-shadow: 0 0 0 2px var(--edge-strong); }
-.swatch.stalefade { background: var(--mta-red); opacity: 0.45; }
+.swatch.hold { background: var(--trunk-6av); box-shadow: 0 0 0 2px var(--amber); }
+.swatch.ghost { background: var(--trunk-canarsie); opacity: 0.5; box-shadow: 0 0 0 2px var(--edge-strong); }
+.swatch.stalefade { background: var(--trunk-7av); opacity: 0.45; }
 
 /* ---- Alerts ---- */
 .alerts { display: flex; flex-direction: column; gap: var(--s2); }
@@ -566,15 +622,12 @@ button.roundel:active { transform: scale(0.98); }
 
 .board { display: flex; flex-direction: column; gap: var(--s5); }
 .board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
-.board-head h2 { margin: 0 0 var(--s2); font: var(--t-title); letter-spacing: var(--tr-title); }
-.board-routes { display: flex; gap: var(--s1); flex-wrap: wrap; }
+.board-head .station-name { margin-bottom: var(--s2); }
 .board-sub { font: var(--t-caption); letter-spacing: var(--tr-caption); margin: calc(var(--s1) * -1) 0 var(--s2); }
 .board-sub.near { color: var(--green); }
 .board-sub.stale { color: var(--amber); }
 .board-actions { display: flex; gap: var(--s1); flex: none; }
 .board-group + .board-group { margin-top: var(--s2); }
-.board-group h3 { margin: 0 0 var(--s0); font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
-.board-toward { display: block; font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); margin-bottom: var(--s2); }
 
 /* ===========================================================================
    One train
@@ -599,7 +652,7 @@ button.roundel:active { transform: scale(0.98); }
 .next-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
 .next-row b { font: var(--t-title); letter-spacing: var(--tr-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .next-eta { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); flex: none; font-variant-numeric: tabular-nums; }
-.next-changes { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); margin-top: var(--s1); }
+.next-stop .bullets { margin-top: var(--s1); }
 
 /* The one thing a countdown clock cannot tell you, so it is allowed to look like an answer. */
 .swap {
@@ -671,6 +724,38 @@ button.roundel:active { transform: scale(0.98); }
 .doc .back { display: inline-block; margin-bottom: var(--s5); color: var(--label-3); text-decoration: none; font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .doc .back:hover { color: var(--label); }
 .doc .stale { color: var(--amber); }
+
+/* ===========================================================================
+   The component library, drawn — /design
+   =========================================================================== */
+
+.ds h2 { margin: var(--s6) 0 var(--s2); }
+/* A section's own heading is not a page heading, however it is marked up. */
+.ds .sect-title { margin: 0; }
+.ds .sect { margin: var(--s4) 0; }
+.ds code { font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label-3); background: none; padding: 0; }
+.ds-stack { display: flex; flex-direction: column; gap: var(--s2); }
+.ds-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.ds-row--wide { gap: var(--s4); }
+.ds-cell { display: flex; flex-direction: column; align-items: center; gap: var(--s2); }
+/* A panel's own ground, so a control is judged against the surface it will live on. */
+.ds-panel {
+  display: flex; flex-direction: column; gap: var(--s4);
+  background: var(--surface-solid); border-radius: var(--r-panel); padding: var(--s4);
+  box-shadow: inset 0 0 0 var(--hairline) var(--edge);
+}
+.ds-swatches { display: flex; flex-wrap: wrap; gap: var(--s3); }
+.ds-swatch { display: flex; flex-direction: column; gap: var(--s1); }
+.ds-chip { display: block; width: var(--s8); height: var(--s6); border-radius: var(--r-inner); background: var(--ds-fill); box-shadow: inset 0 0 0 var(--hairline) var(--edge); }
+/* A label is judged as ink, not as a field of colour: a tall thin bar reads the way text does. */
+.ds-chip--tall { height: var(--s5); }
+.ds-type { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+/* The sample is set in whichever step it is showing, handed in by name. */
+.ds-type b { font: var(--t-sample); letter-spacing: var(--tr-sample); font-weight: inherit; }
+.ds-type em { font-style: normal; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.ds-space { display: flex; align-items: center; gap: var(--s3); }
+.ds-space i { display: block; width: var(--ds-size); height: var(--s3); background: var(--accent); border-radius: 2px; }
+.ds-radius { display: block; width: var(--s7); height: var(--s7); background: var(--fill-2); border-radius: var(--ds-radius); }
 
 /* ===========================================================================
    Embed

@@ -85,6 +85,10 @@ npm run dev             # site on :7117, poller on :7118`}</pre>
       </p>
 
       <p className="muted">
+        The interface is built from a published set of tokens and components — the trunk colours,
+        the roundels, the controls — drawn at <a href={`${BASE_PATH}/design/`}>/design</a>.
+      </p>
+      <p className="muted">
         Source and licence: <a href="https://github.com/oddurs/traintime">github.com/oddurs/traintime</a>.
         Data © MTA, used under their open data terms.
       </p>

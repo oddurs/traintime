@@ -246,7 +246,10 @@ for (const rel of sources) {
 
     // Inline styles. A width driven by live data is fine; a size or a colour is a token.
     for (const m of line.matchAll(/style=\{\{([^}]*)\}/g)) {
-      for (const d of m[1].matchAll(/(\[?["']?[\w-]+)["']?\]?\s*:/g)) {
+      // A computed key carries its cast — `["--x" as string]:` — and reading the property name off
+      // the end of that finds "string", which is not a property anyone set.
+      const body = m[1].replace(/\s+as\s+[\w.<>|[\]]+/g, "");
+      for (const d of body.matchAll(/(\[?["']?[\w-]+)["']?\]?\s*:/g)) {
         const prop = d[1].replace(/^\[?["']?/, "");
         if (INLINE_OK.test(prop)) continue;
         findings.push({ line: n, kind: "inline-style", file: rel, text: line.trim().slice(0, 70), detail: `${prop} belongs in the stylesheet` });

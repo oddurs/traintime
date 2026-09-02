@@ -11,12 +11,13 @@ import { fmtAgo, fmtClockSec } from "@/lib/format";
 import { useStoredFlag } from "@/lib/hooks";
 import { BASE_PATH, POLLER_URL } from "@/lib/basePath";
 import { reportClientFailures } from "@/lib/clientHealth";
+import { TRUNKS } from "@/lib/trunks";
 import { Button, Chip, Notice, Section, Switch } from "./ui";
 import Sheet from "./Sheet";
 import SearchBox from "./SearchBox";
 import StationBoard from "./StationBoard";
 import TrainDetail from "./TrainDetail";
-import RouteBullet from "./RouteBullet";
+import { RouteBullet } from "./brand";
 import AlertList from "./AlertList";
 import Legend from "./Legend";
 import SavedPlaces from "./SavedPlaces";
@@ -56,11 +57,14 @@ interface Props {
   isSaved: (id: string) => boolean;
 }
 
-// Display grouping by trunk line, roughly following the official map.
-const GROUPS: string[][] = [
-  ["1", "2", "3"], ["4", "5", "6", "6X"], ["7", "7X"], ["A", "C", "E"], ["B", "D", "F", "FX", "M"],
-  ["N", "Q", "R", "W"], ["G"], ["J", "Z"], ["L"], ["GS", "FS", "H", "SI"],
-];
+/*
+ * The services, grouped the way the map is: by trunk line.
+ *
+ * This used to be its own list, which agreed with the trunk table until it did not — it had the
+ * Staten Island Railway filed under the shuttles, which is two boroughs and a ferry away from
+ * being true. There is one description of how the network is organised and this reads it.
+ */
+const GROUPS: string[][] = Object.values(TRUNKS).map((t) => t.services);
 
 /** The feed is late enough that the countdown should no longer be taken at face value. */
 const FEED_STALE_S = 60;
