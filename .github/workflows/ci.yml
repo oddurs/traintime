@@ -15,6 +15,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # `npm ci` validates every optional branch the lock claims, and npm only descends into the
+      # ones it could install on the machine doing the resolving. A lock written on macOS omits
+      # @img/sharp-wasm32's @emnapi/* deps, and this step fails with "Missing ... from lock file".
+      # So regenerate the lock on Linux, not in place:
+      #   docker run --rm -v "$PWD":/w -w /w node:22 npm install --package-lock-only
+      # That resolve is a superset — it keeps the darwin branches too, so local `npm ci` still works.
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
