@@ -45,6 +45,16 @@ async function pollerAvailable(): Promise<boolean> {
  */
 export function useTrainStream(mode: StreamMode, index: NetworkIndex | null) {
   const statesRef = useRef(new Map<string, TrainState>());
+  /*
+   * The network, where the effect below can read it without depending on it.
+   *
+   * It used to be a dependency, and the index arrives after the stream is already running: the
+   * effect tore down a working EventSource and built another, so every visit probed /health twice
+   * and threw away the first full snapshot the poller had just sent it. Only in-browser tracking
+   * needs the index at all, and that path waits for it below.
+   */
+  const indexRef = useRef(index);
+  useEffect(() => { indexRef.current = index; }, [index]);
   const [trains, setTrains] = useState<TrainState[]>([]);
   const [feeds, setFeeds] = useState<FeedStatus[]>([]);
   const [status, setStatus] = useState<StreamStatus>({
@@ -101,7 +111,11 @@ export function useTrainStream(mode: StreamMode, index: NetworkIndex | null) {
      * of them before the first train appeared.
      */
     const connectBrowser = async () => {
-      if (!index) return; // in-browser tracking needs the network; retried when it lands
+      // In-browser tracking is built from the network, so it waits for it rather than the whole
+      // stream being rebuilt when it lands.
+      while (!cancelled && !indexRef.current) await new Promise((r) => setTimeout(r, 100));
+      const index = indexRef.current;
+      if (cancelled || !index) return;
       setStatus((s) => ({ ...s, source: "browser", live: true, speed: 1, ended: false, error: "fetching feeds…", clockTs: 0, messages: 0 }));
       try {
         const { BrowserSource } = await import("./browserSource");
@@ -128,7 +142,7 @@ export function useTrainStream(mode: StreamMode, index: NetworkIndex | null) {
       es?.close();
       local?.stop();
     };
-  }, [modeKey, index]);
+  }, [modeKey]);
 
   /** Current simulation time in epoch seconds. */
   const clock = () => {

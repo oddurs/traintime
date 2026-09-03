@@ -23,21 +23,30 @@ const TrainMap = dynamic(() => import("@/components/TrainMap"), { ssr: false });
  * The map engine is 936 KB — three quarters of everything the app downloads — and although it is
  * already code-split, rendering it on the first pass puts its request in the same queue as the
  * ones the panel needs. Measured cold on a slow connection, nothing a rider could read appeared
- * for 32 seconds. Waiting a frame costs nothing anyone can perceive and lets the board come first,
- * which is the thing somebody standing on a platform actually opened the app for.
+ * for 32 seconds. Waiting costs nothing anyone can perceive and lets the board come first, which
+ * is the thing somebody standing on a platform actually opened the app for.
+ *
+ * The wait starts when the board's own half of the network has landed, not when this component
+ * mounts. Timed from mount, the idle deadline was counting down through the very work it was
+ * meant to stay out of the way of, and the map's geometry went on the wire about a second after
+ * the board could have spared the bandwidth. Idle is the right signal; it was just being asked
+ * too early.
  */
-function useDeferredMap(): boolean {
-  const [ready, setReady] = useState(false);
+function useDeferredMap(ready: boolean): boolean {
+  const [go, setGo] = useState(false);
   useEffect(() => {
+    if (!ready) return;
     const w = window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
-    if (w.requestIdleCallback) { const h = w.requestIdleCallback(() => setReady(true), { timeout: 1500 }); return () => cancelIdleCallback(h); }
-    const h = setTimeout(() => setReady(true), 120);
+    if (w.requestIdleCallback) { const h = w.requestIdleCallback(() => setGo(true), { timeout: 1500 }); return () => cancelIdleCallback(h); }
+    const h = setTimeout(() => setGo(true), 120);
     return () => clearTimeout(h);
-  }, []);
-  return ready;
+  }, [ready]);
+  return go;
 }
 
 const ALERTS_EVERY = 120_000;
+/** How long alerts will wait for the map before loading anyway. */
+const ALERTS_LATEST = 12_000;
 
 function App({ index }: { index: NetworkIndex | null }) {
   const [mode, setMode] = useState<StreamMode>({ kind: "live" });
@@ -79,23 +88,47 @@ function App({ index }: { index: NetworkIndex | null }) {
 
   const byId = useMemo(() => new Map(trains.map((t) => [t.id, t])), [trains]);
 
+  const mapReady = useDeferredMap(index !== null);
+  /*
+   * The map's half: the geometry, fetched once the board is up. Two thirds of the network file is
+   * polylines and the band layout derived from them, and none of it is needed to tell somebody
+   * when their train is coming.
+   */
+  const [mapIndex, setMapIndex] = useState<NetworkIndex | null>(null);
+  useEffect(() => {
+    if (!mapReady || mapIndex) return;
+    fetch(asset("/data/network.json"))
+      .then((r) => r.json())
+      .then((n: Network) => setMapIndex(new NetworkIndex(n)))
+      .catch(() => {});
+  }, [mapReady, mapIndex]);
+
   /*
    * Service alerts, refreshed slowly — they change on the order of minutes.
    *
-   * Held back until the network index has arrived. The alert feed is 82 KB and the index is what
-   * every board is drawn from; on a slow connection the two were competing for the same link and
-   * the countdown a rider opened the app for was waiting behind a list of planned weekend
-   * closures. Measured cold on a slow 4G connection, that was 13.6 seconds before anything
-   * readable appeared.
+   * Held back until everything a rider came for has arrived. The alert feed is 83 KB, which is a
+   * quarter of what the whole app downloads, and on a slow connection the link is the constraint:
+   * whatever is on it is delaying whatever is behind it. It used to load with the board and put
+   * the countdown 13.6 seconds away; loaded with the map it did the same to the geometry, holding
+   * the map off the screen for the length of its own download.
+   *
+   * So it goes last, after the map has what it needs — with a deadline, because a list of planned
+   * closures should not be hostage to a map that failed to load at all.
    */
   useEffect(() => {
     if (!index) return;
     const ctl = new AbortController();
-    const load = () => fetchAlerts(ctl.signal).then(setAlerts).catch(() => {});
-    load();
-    const id = setInterval(load, ALERTS_EVERY);
-    return () => { ctl.abort(); clearInterval(id); };
-  }, [index]);
+    let id: ReturnType<typeof setInterval> | undefined;
+    const start = () => {
+      if (ctl.signal.aborted || id !== undefined) return;
+      const load = () => fetchAlerts(ctl.signal).then(setAlerts).catch(() => {});
+      load();
+      id = setInterval(load, ALERTS_EVERY);
+    };
+    if (mapIndex) start();
+    const late = setTimeout(start, ALERTS_LATEST);
+    return () => { ctl.abort(); clearTimeout(late); if (id !== undefined) clearInterval(id); };
+  }, [index, mapIndex]);
 
   // Every view is a link.
   useEffect(() => {
@@ -211,21 +244,6 @@ function App({ index }: { index: NetworkIndex | null }) {
     }
     return ids;
   }, [selection, trains]);
-
-  const mapReady = useDeferredMap();
-  /*
-   * The map's half: the geometry, fetched once the board is up. Two thirds of the network file is
-   * polylines and the band layout derived from them, and none of it is needed to tell somebody
-   * when their train is coming.
-   */
-  const [mapIndex, setMapIndex] = useState<NetworkIndex | null>(null);
-  useEffect(() => {
-    if (!mapReady || mapIndex) return;
-    fetch(asset("/data/network.json"))
-      .then((r) => r.json())
-      .then((n: Network) => setMapIndex(new NetworkIndex(n)))
-      .catch(() => {});
-  }, [mapReady, mapIndex]);
 
   return (
     <main className="app">
