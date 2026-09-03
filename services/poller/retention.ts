@@ -4,6 +4,7 @@
  * are what the timing tables are learned from, so they are kept far longer. Many small Parquet
  * files also make every read slower, so old ones are merged into daily files.
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { DuckDBConnection } from "@duckdb/node-api";
@@ -29,6 +30,16 @@ export interface RetentionPolicy {
    * events are never touched by this: they are small, and they are what the models learn from.
    */
   budgetBytes: number;
+  /**
+   * How much room to leave on the volume, whatever the budget says.
+   *
+   * A budget is a promise about this directory and says nothing about the disk it sits on. Three
+   * days of ticks is two gigabytes, which is within budget and entirely correct — and on a laptop
+   * that is nearly full it is still two gigabytes that something else needed. Recording a city's
+   * trains is worth less than the machine continuing to work, so when the volume runs low the
+   * oldest ticks go regardless of their age or the budget.
+   */
+  freeFloorBytes: number;
 }
 
 export const DEFAULT_POLICY: RetentionPolicy = {
@@ -37,6 +48,7 @@ export const DEFAULT_POLICY: RetentionPolicy = {
   obsDays: Number(process.env.OBS_RETENTION_DAYS ?? 30),
   compactAfterHours: 2,
   budgetBytes: Number(process.env.DISK_BUDGET_BYTES ?? 3_000_000_000),
+  freeFloorBytes: Number(process.env.DISK_FREE_FLOOR_BYTES ?? 2_000_000_000),
 };
 
 const DAY_MS = 86_400_000;
@@ -148,14 +160,41 @@ export function prune(policy: RetentionPolicy = DEFAULT_POLICY): Record<string, 
  * Drop the oldest raw ticks until total storage is back under budget. Ticks are the bulk and the
  * least valuable once events have been derived from them, so they are the right thing to give up.
  */
+/**
+ * How much room is left on the volume this directory lives on, in bytes.
+ *
+ * `statfs` is not in node:fs, and shelling out to `df` for a number that is only ever compared
+ * with a threshold is not worth the process. Absent an answer the caller is told nothing is
+ * known, and falls back to the budget alone.
+ */
+export function freeSpace(dir: string = REC_DIR): number | null {
+  try {
+    const out = execFileSync("df", ["-k", dir], { encoding: "utf8", timeout: 2000 });
+    const line = out.trim().split("\n").pop() ?? "";
+    const kb = Number(line.split(/\s+/)[3]);
+    return Number.isFinite(kb) ? kb * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+
 export function enforceBudget(
   policy: RetentionPolicy = DEFAULT_POLICY,
   /** Overridable so this can be exercised against a scratch directory. */
-  opts: { ticksDir?: string; totalBytes?: number } = {},
-): { removed: number; freedBytes: number } {
+  opts: { ticksDir?: string; totalBytes?: number; freeBytes?: number | null } = {},
+): { removed: number; freedBytes: number; reason?: "budget" | "disk" } {
   const dir = opts.ticksDir ?? join(REC_DIR, "ticks");
   let bytes = opts.totalBytes ?? diskUsage().bytes;
-  if (bytes <= policy.budgetBytes) return { removed: 0, freedBytes: 0 };
+  const free = opts.freeBytes !== undefined ? opts.freeBytes : freeSpace();
+  // Two ceilings: what this directory promised to stay under, and what the volume can still spare.
+  // Whichever bites, the remedy is the same and the oldest ticks go first.
+  const overBudget = bytes > policy.budgetBytes;
+  const lowOnDisk = free !== null && free < policy.freeFloorBytes;
+  if (!overBudget && !lowOnDisk) return { removed: 0, freedBytes: 0 };
+  // When the disk is the problem, free enough to clear the floor rather than the whole budget.
+  const target = lowOnDisk && free !== null
+    ? Math.max(0, bytes - (policy.freeFloorBytes - free))
+    : policy.budgetBytes;
   if (!existsSync(dir)) return { removed: 0, freedBytes: 0 };
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".parquet"))
@@ -165,10 +204,10 @@ export function enforceBudget(
   // Always leave the most recent file: replay of the last few minutes is worth more than the
   // last few megabytes, and an empty ticks directory would break the replay endpoint.
   for (const file of files.slice(0, -1)) {
-    if (bytes <= policy.budgetBytes) break;
+    if (bytes <= target) break;
     try { unlinkSync(file.full); removed++; freed += file.size; bytes -= file.size; } catch {}
   }
-  return { removed, freedBytes: freed };
+  return { removed, freedBytes: freed, reason: lowOnDisk ? "disk" : "budget" };
 }
 
 /**

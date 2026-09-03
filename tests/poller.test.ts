@@ -78,10 +78,34 @@ test("retention: the budget drops the oldest ticks and never the newest", () => 
   for (const day of ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]) {
     writeFileSync(join(dir, `daily-${day}.parquet`), big);
   }
-  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 450_000 };
-  const res = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000 });
+  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 450_000, freeFloorBytes: 0 };
+  const res = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000, freeBytes: null });
   const left = readdirSync(dir).sort();
   assert.ok(res.removed >= 2, `expected the oldest files to go, dropped ${res.removed}`);
   assert.ok(left.includes("daily-2026-08-31.parquet"), "the newest tick file must survive");
   assert.ok(!left.includes("daily-2026-08-28.parquet"), "the oldest must go first");
+});
+
+test("retention: a full volume overrides the budget", () => {
+  // Three days of ticks is two gigabytes, which is inside the budget and entirely correct — and on
+  // a laptop that is nearly full it is still two gigabytes that something else needed. Recording a
+  // city's trains is worth less than the machine continuing to work.
+  const dir = mkdtempSync(join(tmpdir(), "tt-ticks-"));
+  const big = Buffer.alloc(200_000, 1);
+  for (const day of ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]) {
+    writeFileSync(join(dir, `daily-${day}.parquet`), big);
+  }
+  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 10_000_000, freeFloorBytes: 1_000_000 };
+
+  // Comfortably inside the budget and plenty of room: nothing is touched.
+  const idle = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000, freeBytes: 5_000_000 });
+  assert.equal(idle.removed, 0, "nothing should go while there is room");
+
+  // Same budget, but the volume is down to a quarter of the floor: the oldest go until it clears,
+  // or until only the newest is left — replaying the last few minutes is worth more than the last
+  // few megabytes, and an empty directory would break the replay endpoint outright.
+  const squeezed = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000, freeBytes: 250_000 });
+  assert.equal(squeezed.reason, "disk", "the disk should be the reason, not the budget");
+  assert.equal(squeezed.freedBytes, 600_000, "everything but the newest should go");
+  assert.deepEqual(readdirSync(dir), ["daily-2026-08-31.parquet"], "the newest tick file must still survive");
 });
