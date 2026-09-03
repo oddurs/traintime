@@ -55,7 +55,14 @@ export class NetworkIndex {
   }
 
   /** Diagnostics: how often we had to guess a train's track instead of knowing it. */
-  readonly stats = { paths: 0, chained: 0, straightFallback: 0 };
+  /**
+   * What it took to answer "where is this train".
+   *
+   * `untraceable` is a pair the route graph cannot walk between; `straightFallback` is the subset
+   * of those where even the approach to the next platform was unavailable and a line had to be
+   * invented. They were one counter, which reported the first number and was read as the second.
+   */
+  readonly stats = { paths: 0, chained: 0, untraceable: 0, straightFallback: 0 };
 
   /** How the network is drawn: bands, the fan, and the geometry that follows from them. */
   readonly lines: LineEngine;
@@ -69,7 +76,7 @@ export class NetworkIndex {
   /** Where a train of this service stands at this platform, on its own band. */
   platformPoint(route: string, stopId: string) { return this.lines.platformPoint(route, stopId); }
   /** The signed band a train is riding, in the frame the drawn line is offset in. */
-  lateralBand(route: string, prevDir: string, nextDir: string) { return this.lines.lateralBand(route, prevDir, nextDir); }
+  lateralBand(route: string, prevDir: string, nextDir: string, along?: number) { return this.lines.lateralBand(route, prevDir, nextDir, along); }
   constructor(public readonly net: Network) {
     this.lines = new LineEngine(net);
     for (const m of Object.values(net.prevOf)) {
@@ -214,8 +221,10 @@ export class NetworkIndex {
        * approach to that platform instead. It is on its own line, at a place it will really be,
        * and the countdown beside it is unaffected.
        */
-      this.stats.straightFallback++;
-      path = this.approachTo(route, nextDir) ?? this.straightLine(pa, pb);
+      this.stats.untraceable++;
+      const approach = this.approachTo(route, nextDir);
+      if (!approach) this.stats.straightFallback++;
+      path = approach ?? this.straightLine(pa, pb);
     }
     this.pathCache.set(key, path);
     return path;

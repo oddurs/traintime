@@ -31,6 +31,7 @@
  */
 import type { LonLat, Network } from "./types";
 import { distM, offsetPolylineRamped } from "./geo";
+import { trunkOf } from "./trunks";
 
 const parentOf = (id: string) => id.replace(/[NS]$/, "");
 
@@ -161,6 +162,7 @@ export class LineEngine {
   private bands = new Map<string, { colour: number[]; metric: number[] }>();
   private strokeCache: Stroke[] | null = null;
   private platforms = new Map<string, LonLat | null>();
+  private stands = new Map<string, string>();
 
   constructor(private readonly net: Network) {}
 
@@ -171,13 +173,77 @@ export class LineEngine {
    * relative to the direction it is *travelling*. Those are the same side only when the two
    * agree, so the sign is resolved here once and both read the identical number.
    */
-  lateralBand(route: string, prevDir: string, nextDir: string): { cb: number; mb: number } | undefined {
+  lateralBand(route: string, prevDir: string, nextDir: string, along?: number): { cb: number; mb: number } | undefined {
     const a = parentOf(prevDir), b = parentOf(nextDir);
     const key = a < b ? `${a}-${b}` : `${b}-${a}`;
-    const parts = this.net.bandParts?.[key]?.[route];
+    const parts = this.net.bandParts?.[key]?.[this.standIn(route, key)];
     if (!parts) return undefined;
     const side = (this.net.segDir?.[key] ?? 1) * (a < b ? 1 : -1);
+
+    /*
+     * Where along the stretch, because the band is not the same all the way down it.
+     *
+     * A service changing band sweeps across the junction rather than stepping, and the line is
+     * drawn that way — the offset eases from one band to the next over a hundred and thirty
+     * metres. A train was placed at the stretch's *middle* band for the whole of its length, so
+     * through the sweep it cut the corner while its own line went round: nineteen pixels off the
+     * track it is running on, at the exact place the map is hardest to read.
+     *
+     * The line's own profile is read here instead. `along` is how far into the stretch the train
+     * is, in the direction it is travelling.
+     */
+    if (along !== undefined) {
+      const ramp = this.bandsAlong(route, key);
+      if (ramp) {
+        const n = ramp.metric.length;
+        // The profile is stored in the stretch's own point order; a train travelling the other way
+        // reads it backwards.
+        const t = Math.max(0, Math.min(1, a < b ? along : 1 - along));
+        const at = t * (n - 1);
+        const i = Math.min(n - 2, Math.floor(at));
+        const f = n > 1 ? at - i : 0;
+        const cb = ramp.colour[i] + (ramp.colour[i + 1] - ramp.colour[i]) * f;
+        const mb = ramp.metric[i] + (ramp.metric[i + 1] - ramp.metric[i]) * f;
+        return { cb: cb * side, mb: mb * side };
+      }
+    }
     return { cb: parts[0] * side, mb: parts[1] * side };
+  }
+
+  /**
+   * Which service's band to ride, when this one has none here.
+   *
+   * The feed runs services off their own schedule — a C extended past 168 St onto the A's track,
+   * an R terminating at Forest Hills on the E and F's. The track is there and the train is really
+   * on it; what is missing is a band, because the band ordering was built from the timetable and
+   * the timetable does not know about this trip. Falling back to zero put those trains on the
+   * centreline of the corridor, running between the lines rather than on one — about one moving
+   * train in twenty.
+   *
+   * So it borrows: the service on this stretch from its own trunk line if there is one — a C
+   * takes the A's band, which is the track it is actually sharing — and otherwise the nearest by
+   * the MTA's own ordering, which groups services by trunk and puts locals beside their expresses.
+   */
+  private standIn(route: string, key: string): string {
+    const memo = `${route}|${key}`;
+    const hit = this.stands.get(memo);
+    if (hit !== undefined) return hit;
+    let pick = route;
+    const here = this.net.segmentSlots?.[key];
+    if (here && !here[route]) {
+      const mine = trunkOf(route)?.id;
+      const order = (r: string) => this.net.routes[r]?.sortOrder ?? 999;
+      let best: string | undefined;
+      let bestCost = Infinity;
+      for (const other of Object.keys(here)) {
+        const sameTrunk = mine !== undefined && trunkOf(other)?.id === mine;
+        const cost = (sameTrunk ? 0 : 1000) + Math.abs(order(other) - order(route));
+        if (cost < bestCost) { bestCost = cost; best = other; }
+      }
+      if (best) pick = best;
+    }
+    this.stands.set(memo, pick);
+    return pick;
   }
 
   /**
@@ -192,8 +258,9 @@ export class LineEngine {
     if (!pts) return undefined;
     let out = this.cache.get(`${route}|${key}`);
     if (!out) {
-      const band = this.net.segmentSlots[key]?.[route]?.[0] ?? 0;
-      const [u, v] = this.net.laneEnds?.[key]?.[route] ?? [band, band];
+      const rides = this.standIn(route, key);
+      const band = this.net.segmentSlots[key]?.[rides]?.[0] ?? 0;
+      const [u, v] = this.net.laneEnds?.[key]?.[rides] ?? [band, band];
       // The band is measured in the corridor's own direction; this stretch's points may be stored
       // the other way round, in which case the whole offset flips with them.
       const m = TRACK_M * (this.net.segDir?.[key] ?? 1);
@@ -234,10 +301,11 @@ export class LineEngine {
         return mid;
       });
 
-    const metricMid = this.net.segmentSlots[key]?.[route]?.[0] ?? 0;
-    const [ms, me] = this.net.laneEnds?.[key]?.[route] ?? [metricMid, metricMid];
-    const colourMid = this.net.bandParts?.[key]?.[route]?.[0] ?? 0;
-    const [cs, ce] = this.net.colourEnds?.[key]?.[route] ?? [colourMid, colourMid];
+    const rides = this.standIn(route, key);
+    const metricMid = this.net.segmentSlots[key]?.[rides]?.[0] ?? 0;
+    const [ms, me] = this.net.laneEnds?.[key]?.[rides] ?? [metricMid, metricMid];
+    const colourMid = this.net.bandParts?.[key]?.[rides]?.[0] ?? 0;
+    const [cs, ce] = this.net.colourEnds?.[key]?.[rides] ?? [colourMid, colourMid];
     const out = { metric: profile(metricMid, ms, me), colour: profile(colourMid, cs, ce) };
     this.bands.set(`${route}|${key}`, out);
     return out;

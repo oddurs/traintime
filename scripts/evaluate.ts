@@ -81,7 +81,7 @@ async function main() {
   let reversals = 0, jumps = 0, coldPlacements = 0, steps = 0, maxSpeed = 0, maxAccel = 0, arrivals = 0;
   const turnRates: number[] = [];
   let turnRateMax = 0;
-  let duplicateTrainIds = 0, maxConcurrent = 0, offPattern = 0, movingScored = 0;
+  let duplicateTrainIds = 0, maxConcurrent = 0, offPattern = 0, movingScored = 0, betweenLines = 0;
   const offByRoute = new Map<string, number>();
   const offExamples: string[] = [];
   const offSeen = new Set<string>();
@@ -89,7 +89,7 @@ async function main() {
     const key = a < b ? `${a}-${b}` : `${b}-${a}`;
     return (net.net.routeSegments[route] ?? []).includes(key);
   };
-  const prevBearing = new Map<string, number>();
+  const prevBearing = new Map<string, { bearing: number; at: number }>();
   const pending = new Map<string, { obsTs: number; predicted: number; adjusted: number; sigma: number }[]>();
   /** What the app actually displayed: the state's own eta for its next stop, scored on arrival. */
   const shown = new Map<string, { at: number; eta: number; sigma: number }[]>();
@@ -201,13 +201,20 @@ async function main() {
       if (t >= scoreFrom) {
         for (const p of stepped) {
           const was = prevBearing.get(p.id);
-          // How fast the marker's heading swings: a snap at a polyline vertex shows up here.
-          if (was !== undefined && p.phase === "moving" && p.speed > 1) {
-            const swing = Math.abs(((p.bearing - was + 540) % 360) - 180);
+          /*
+           * How fast the marker's heading swings: a snap at a polyline vertex shows up here.
+           *
+           * Only across consecutive seconds. A train that leaves the feed and comes back is drawn
+           * afresh, pointing wherever it is now pointing, and comparing that with where it pointed
+           * before it vanished measures nothing anyone can see — it was reporting swings of 173
+           * degrees a second for markers that had not been on the map in between.
+           */
+          if (was !== undefined && t - was.at <= 2 && p.phase === "moving" && p.speed > 1) {
+            const swing = Math.abs(((p.bearing - was.bearing + 540) % 360) - 180) / Math.max(1, t - was.at);
             turnRates.push(swing);
             if (swing > turnRateMax) turnRateMax = swing;
           }
-          prevBearing.set(p.id, p.bearing);
+          prevBearing.set(p.id, { bearing: p.bearing, at: t });
         }
         // A train should only ever be drawn between two stops its own route actually serves.
         for (const st of states) {
@@ -218,6 +225,20 @@ async function main() {
           if (!routeHasPair(st.route, a, b)) {
             offPattern++;
             offByRoute.set(st.route, (offByRoute.get(st.route) ?? 0) + 1);
+            /*
+             * Running off the timetable is the feed's business and happens all day; what matters
+             * is whether we still draw the train on a line. A service with no band on a stretch it
+             * shares used to be put on the corridor's centreline, between its neighbours.
+             */
+            const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+            const carries = Object.keys(net.net.segmentSlots[key] ?? {});
+            if (carries.length > 1) {
+              const band = net.lateralBand(st.route, st.prevStop, st.nextStop);
+              const side = net.net.segDir?.[key] ?? 1;
+              const onALine = band && carries.some((r) =>
+                net.net.bandParts[key]![r]![0] * side === band.cb && net.net.bandParts[key]![r]![1] * side === band.mb);
+              if (!onALine) betweenLines++;
+            }
             if (debug && offExamples.length < 12 && !offSeen.has(`${st.route}|${a}-${b}`)) {
               offSeen.add(`${st.route}|${a}-${b}`);
               offExamples.push(`${st.route} ${net.stationName(a)} -> ${net.stationName(b)} inferred=${!!st.prevInferred} trip=${st.id.slice(0, 22)}`);
@@ -276,6 +297,8 @@ async function main() {
       turnRateP99: q(turnRates, 0.99), turnRateMax,
       duplicateTrainIds, maxConcurrent,
       offPattern, movingScored, offPatternShare: movingScored ? offPattern / movingScored : 0,
+      betweenLines, betweenLinesShare: movingScored ? betweenLines / movingScored : 0,
+      untraceableShare: net.stats.paths ? net.stats.untraceable / net.stats.paths : 0,
       straightFallbackShare: net.stats.paths ? net.stats.straightFallback / net.stats.paths : 0,
       chainedShare: net.stats.paths ? net.stats.chained / net.stats.paths : 0,
     },
@@ -311,10 +334,12 @@ async function main() {
   console.log(`| max speed / accel | ${f1(maxSpeed)} m/s · ${f1(maxAccel)} m/s² |`);
   console.log(`| heading swing p99 / max | ${f1(report.motion.turnRateP99)}°/s · ${f1(report.motion.turnRateMax)}°/s |`);
   console.log(`| duplicate train ids | ${duplicateTrainIds} |`);
-  console.log(`| drawn off their own route | ${pct(report.motion.offPatternShare)} of moving trains |`);
+  console.log(`| running off their timetable | ${pct(report.motion.offPatternShare)} of moving trains |`);
+  console.log(`| drawn between lines rather than on one | ${pct(report.motion.betweenLinesShare)} of moving trains |`);
   if (offByRoute.size) console.log(`  off-route by service: ${[...offByRoute.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([r, n]) => `${r}:${n}`).join(" ")}`);
   for (const e of offExamples) console.log(`  ${e}`);
-  console.log(`| track unknown (straight-line) | ${pct(report.motion.straightFallbackShare)} of segments |`);
+  console.log(`| no path through the route graph | ${pct(report.motion.untraceableShare)} of lookups |`);
+  console.log(`| drawn on an invented line | ${pct(report.motion.straightFallbackShare)} of lookups |`);
   console.log(`\n| horizon | n | MTA MAE | MTA bias | ours MAE | ours bias | 1σ coverage |\n|---|---|---|---|---|---|---|`);
   for (const b of buckets) {
     const e = report.eta[b];

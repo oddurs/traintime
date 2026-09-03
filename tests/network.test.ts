@@ -249,6 +249,33 @@ test("every service belongs to exactly one trunk line, and takes its colour from
   assert.equal(colours.size, Object.keys(TRUNKS).length, "two trunk lines share a colour");
 });
 
+test("a train running off its timetable still rides a real line", () => {
+  // The feed runs services off their own schedule — a C extended past 168 St onto the A's track,
+  // an R terminating at Forest Hills on the E and F's. The track is there and the train is really
+  // on it; what is missing is a band, because the ordering was built from a timetable that does
+  // not know about the trip. That put about one moving train in twenty on the centreline of its
+  // corridor, running between the lines rather than on one.
+  let checked = 0;
+  for (const [key, slots] of Object.entries(net.segmentSlots)) {
+    const carries = Object.keys(slots);
+    if (carries.length < 2) continue;
+    const [u, v] = key.split("-");
+    for (const route of Object.keys(net.routes)) {
+      if (slots[route]) continue;
+      const band = idx.lateralBand(route, `${u}N`, `${v}N`);
+      assert.ok(band, `${route} gets no band at all on ${key}`);
+      // Whatever it borrowed has to be a band one of this stretch's own services actually uses.
+      const side = (net.segDir?.[key] ?? 1);
+      const matches = carries.some((r) =>
+        net.bandParts[key]![r]![0] * side === band!.cb && net.bandParts[key]![r]![1] * side === band!.mb);
+      assert.ok(matches, `${route} on ${key} rides cb ${band!.cb} mb ${band!.mb}, which is no service's band there`);
+      checked++;
+      if (checked > 4000) return;
+    }
+  }
+  assert.ok(checked > 500, `expected plenty of off-timetable pairs to check, got ${checked}`);
+});
+
 test("the weave has a consistent over-and-under", () => {
   // Bands further right always pass over bands further left, so a pair never weaves one way in
   // one place and the other way somewhere else.

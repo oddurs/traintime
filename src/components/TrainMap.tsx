@@ -41,7 +41,10 @@ const fanScale = { current: 1 };
  */
 function fanned(p: TrainPosition, index: NetworkIndex, fan: { colour: number; metric: number }, last: Map<string, [number, number]>): LonLat {
   const prev = p.state.prevStop, next = p.state.nextStop;
-  const live = prev && next ? index.lateralBand(p.route, prev, next) : undefined;
+  // How far into the stretch it is, so it reads the band its line has *here* rather than the one
+  // the stretch has on average.
+  const along = p.length > 0 ? p.s / p.length : undefined;
+  const live = prev && next ? index.lateralBand(p.route, prev, next, along) : undefined;
   if (live) last.set(p.id, [live.cb, live.mb]);
   const band = live ? [live.cb, live.mb] : last.get(p.id);
   if (!band) return [p.lon, p.lat];

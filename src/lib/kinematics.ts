@@ -2,6 +2,9 @@ import type { LonLat, Motion, TrainPosition, TrainState } from "./types";
 import { NetworkIndex, parentOf } from "./network";
 import { alongPath, headingAt, lerpBearing, slicePath, type Path } from "./geo";
 
+/** The fastest the marker may turn, in degrees per second. */
+const MAX_TURN_PER_S = 60;
+
 export interface KinematicsOptions {
   /** m/s² */
   accel: number;
@@ -36,6 +39,16 @@ interface Body {
   stalled?: number;
   /** Smoothed compass heading, so the marker sweeps through curves instead of snapping. */
   heading: number;
+  /**
+   * The heading actually drawn, which is the one that is rate-limited.
+   *
+   * Limiting the turn inside `steer` only covers trains that are being steered. A body is also
+   * *replaced* — when a service is put on a stretch it was not on a moment ago, or its previous
+   * stop changes non-contiguously — and the replacement inherits a heading from wherever the train
+   * used to be pointing. Measured over four hours of replay the arrow could still swing 173
+   * degrees in a second that way. The limit belongs at the point the number leaves the engine.
+   */
+  shown?: number;
 }
 
 /**
@@ -71,7 +84,7 @@ export class Kinematics {
     const onLine = this.net.platformPoint(st.route, stop);
     const p: LonLat = onLine ?? (s ? [s.lon, s.lat] : [0, 0]);
     const prev = this.bodies.get(st.id);
-    return { key: `at:${parentOf(stop)}`, path: { pts: [p], cum: [0], length: 0 }, L: 0, vMax: 0, s: 0, v: 0, motion: "stopped", heading: prev?.heading ?? 0 };
+    return { key: `at:${parentOf(stop)}`, path: { pts: [p], cum: [0], length: 0 }, L: 0, vMax: 0, s: 0, v: 0, motion: "stopped", heading: prev?.heading ?? 0, shown: prev?.shown };
   }
 
   private stepOne(st: TrainState, byId: Map<string, TrainState>, now: number, dt: number): TrainPosition | undefined {
@@ -80,7 +93,7 @@ export class Kinematics {
     if (st.phase === "unstarted" || (st.phase === "dwelling" && (!body || parentOf(this.keyNext(body.key)) !== parentOf(st.nextStop)))) {
       body = this.stationBody(st, st.nextStop);
       this.bodies.set(st.id, body);
-      return this.emit(st, body, now);
+      return this.emit(st, body, now, dt);
     }
 
     if (st.phase === "dwelling") {
@@ -88,14 +101,14 @@ export class Kinematics {
       body!.motion = body!.s < body!.L - 1 ? "braking" : "stopped";
       this.integrate(body!, body!.s < body!.L - 1 ? Math.min(body!.vMax, Math.sqrt(2 * this.opts.brake * (body!.L - body!.s))) : 0, dt);
       this.steer(body!, dt);
-      return this.emit(st, body!, now);
+      return this.emit(st, body!, now, dt);
     }
 
     // moving
     if (!st.prevStop) {
       body = this.stationBody(st, st.nextStop);
       this.bodies.set(st.id, body);
-      return this.emit(st, body, now);
+      return this.emit(st, body, now, dt);
     }
     const key = `${st.prevStop}>${st.nextStop}`;
     if (!body || body.key !== key) {
@@ -104,7 +117,9 @@ export class Kinematics {
       const runTime = st.runTime ?? Math.max(60, L / 12);
       const vMax = Math.min(this.opts.vMaxAbs, Math.max(6, (1.35 * L) / runTime));
       const departed = body && (body.key === `at:${parentOf(st.prevStop)}` || parentOf(this.keyNext(body.key)) === parentOf(st.prevStop));
-      const fresh: Body = { key, path, L, vMax, s: 0, v: 0, motion: "accelerating", heading: body?.heading ?? headingAt(path, 0) };
+      // The drawn heading carries across a replacement too, or the arrow snaps to wherever the
+      // new body happens to point the moment it is created.
+      const fresh: Body = { key, path, L, vMax, s: 0, v: 0, motion: "accelerating", heading: body?.heading ?? headingAt(path, 0), shown: body?.shown };
       if (!departed) {
         // First sight mid-segment: replay the controller from departure to now so the
         // placement is consistent with how the train would have been animated.
@@ -137,7 +152,7 @@ export class Kinematics {
       const moved = body.s - before;
       body.stalled = moved < 0.5 * dt ? (body.stalled ?? 0) + dt : 0;
     } else body.stalled = 0;
-    return this.emit(st, body, now);
+    return this.emit(st, body, now, dt);
   }
 
   private keyNext(key: string): string {
@@ -217,14 +232,25 @@ export class Kinematics {
   }
 
   /**
-   * Turn the marker toward the track's heading. The target is measured across a window of the
-   * path, and the turn itself is rate-limited, so a vertex or a correction cannot snap the arrow.
+   * Turn the marker toward the track's heading.
+   *
+   * The target is measured across a window of the path, and the turn is eased toward it — but
+   * easing is not a limit. A step of a quarter of a second covers 58% of the remaining angle, so a
+   * target that jumps 180 degrees swings the arrow 105 of them at once: measured over four hours
+   * of replay, the worst was 175 degrees per second. That happens at the two dozen corners the
+   * published shapes still turn more than 12 degrees at, which no railway does and no train can
+   * follow. The turn is now actually rate-limited, as this comment has always claimed.
    */
   private steer(b: Body, dt: number) {
     if (b.L === 0) return;
     const target = headingAt(b.path, b.s);
     const k = 1 - Math.exp(-dt * 3.5);
-    b.heading = lerpBearing(b.heading, target, k);
+    const eased = lerpBearing(b.heading, target, k);
+    // A train at speed on a hundred-metre curve turns about nine degrees a second; this leaves
+    // room for a correction to catch up without letting the arrow spin.
+    const cap = MAX_TURN_PER_S * dt;
+    const delta = ((eased - b.heading + 540) % 360) - 180;
+    b.heading = (b.heading + Math.max(-cap, Math.min(cap, delta)) + 360) % 360;
   }
 
   private integrate(b: Body, target: number, dt: number) {
@@ -240,8 +266,17 @@ export class Kinematics {
     else b.motion = "cruising";
   }
 
-  private emit(st: TrainState, b: Body, now: number): TrainPosition {
+  private emit(st: TrainState, b: Body, now: number, dt = 1): TrainPosition {
     const { p } = alongPath(b.path, b.s);
+    // Whatever produced the heading — a turn, or a body replaced under the train — the arrow may
+    // only move so fast. A train at speed on a hundred-metre curve turns about nine degrees a
+    // second; this leaves room to catch up without letting the arrow spin.
+    if (b.shown === undefined) b.shown = b.heading;
+    else {
+      const cap = MAX_TURN_PER_S * Math.max(0.001, dt);
+      const delta = ((b.heading - b.shown + 540) % 360) - 180;
+      b.shown = (b.shown + Math.max(-cap, Math.min(cap, delta)) + 360) % 360;
+    }
     let ribbon: LonLat[] | undefined;
     if (st.phase === "moving" && b.L > 0 && st.sigma > 0) {
       const spread = Math.min(b.L, Math.max(b.v, 2) * st.sigma);
@@ -249,7 +284,7 @@ export class Kinematics {
     }
     void now;
     return {
-      id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing: b.heading,
+      id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing: b.shown ?? b.heading,
       speed: b.v, phase: st.phase, motion: b.motion, s: b.s, length: b.L, stalledFor: b.stalled ?? 0, ribbon, state: st,
     };
   }

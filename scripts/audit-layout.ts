@@ -278,6 +278,39 @@ for (const s of strokes.slice(0, 120)) {
 }
 if (worstOff > 0.01) fail("trains on their track", `a moving train is drawn ${worstOff.toFixed(2)} m off its own line`);
 
+/*
+ * And on screen, not only in the data.
+ *
+ * The geometry agreeing is half the answer: a train's drawn position is that geometry plus the
+ * band it is fanned by, and the line's is that same geometry plus the band *it* is fanned by. Those
+ * were different numbers wherever a service changes band, because the line's offset eases across
+ * the junction and the train's did not — it took the stretch's middle band for the whole of its
+ * length and cut the corner while its own line went round. Nineteen pixels, at the one place on
+ * the map where knowing which line a train is on matters most.
+ */
+{
+  const Z = 15, f = fanAt(Z);
+  let worstPx = 0, at = "";
+  for (const [route, keys] of Object.entries(net.routeSegments)) {
+    for (const key of keys) {
+      const [u, v] = key.split("-");
+      const line = idx.lineSegmentBands(route, u, v);
+      if (!line) continue;
+      const side = net.segDir?.[key] ?? 1;
+      for (let i = 0; i < line.metric.length; i++) {
+        const along = line.metric.length > 1 ? i / (line.metric.length - 1) : 0;
+        const train = idx.lateralBand(route, `${u}N`, `${v}N`, along);
+        if (!train) continue;
+        const px = Math.abs((train.cb - line.colour[i] * side) * f.colour + (train.mb - line.metric[i] * side) * f.metric);
+        if (px > worstPx) { worstPx = px; at = `${route} on ${net.stations[u]?.name ?? u}–${net.stations[v]?.name ?? v}`; }
+      }
+    }
+  }
+  notes.push(`a train sits within ${worstPx.toFixed(2)} px of its own line, everywhere`);
+  // Half a pixel is under a quarter of the line's own width: closer than anything can show.
+  if (worstPx > 0.5) fail("trains on their track", `a train is drawn ${worstPx.toFixed(1)} px off its own line (${at})`);
+}
+
 const offCentre = (() => {
   for (const [key, slots] of Object.entries(net.segmentSlots)) {
     for (const [route, [band]] of Object.entries(slots)) {
