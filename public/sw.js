@@ -1,8 +1,23 @@
 /**
  * traintime service worker: keeps the app shell available offline and instant on repeat visits.
  * Live data is never cached — a stale train is worse than no train.
+ *
+ * The cache name carries the build. It used to be a hard-coded "traintime-v1", which meant the
+ * `activate` handler below — whose whole job is to delete caches that are not the current one —
+ * never deleted anything, for any deploy, ever. Two things followed from that, and both of them
+ * looked like the map being broken rather than like a cache:
+ *
+ *  - network.json was cached first and never revisited. Its URL does not change between builds, so
+ *    a browser that cached it kept that copy for good. The band layout the map is drawn from lives
+ *    in that file and has gained fields since — a browser holding the file from 30 August drew the
+ *    whole subway as 207 strokes on one centreline instead of 2950 in their own lanes.
+ *  - the shell entries kept their old chunk URLs. Those chunks are removed by the next deploy, so
+ *    a document served from cache could reference files that now 404 and the app would not boot.
+ *
+ * Stamped per build, `activate` clears both. Everything below is now either genuinely immutable
+ * under its URL or revalidated in the background.
  */
-const CACHE = "traintime-v1";
+const CACHE = "traintime-__BUILD__";
 const SCOPE = new URL(self.registration.scope).pathname;
 
 self.addEventListener("install", (e) => {
@@ -17,9 +32,24 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-const isShell = (url) => url.pathname.startsWith(`${SCOPE}_next/static/`) || url.pathname.endsWith("/data/network.json")
+/** Hashed build assets: the URL changes when the contents do, so the cache can be trusted. */
+const isImmutable = (url) => url.pathname.startsWith(`${SCOPE}_next/static/`);
+
+/**
+ * Files whose URL stays the same while their contents change with a deploy: the network the map is
+ * drawn from, the timing tables, the feed schema, the map engine's worker. Served from cache for
+ * speed and replaced in the background, so a deploy reaches a returning visitor on their next load
+ * rather than never.
+ */
+const isData = (url) => url.pathname.endsWith("/data/network.json")
+  || url.pathname.endsWith("/data/network-lite.json")
   || url.pathname.endsWith("/data/timing.json") || url.pathname.endsWith("/data/nyct-subway.proto")
   || url.pathname.endsWith("/maplibre/maplibre-gl-worker.mjs");
+
+const store = (request, res) => {
+  if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(request, copy)); }
+  return res;
+};
 
 self.addEventListener("fetch", (e) => {
   const { request } = e;
@@ -28,15 +58,18 @@ self.addEventListener("fetch", (e) => {
   if (url.origin !== self.location.origin) return;      // MTA feeds and map tiles: always live
   if (url.pathname.includes("/api/")) return;           // poller: always live
 
-  // Hashed build assets and the static network never change under a URL: cache first.
-  if (isShell(url)) {
+  if (isImmutable(url)) {
+    e.respondWith(caches.match(request).then((hit) => hit ?? fetch(request).then((res) => store(request, res))));
+    return;
+  }
+
+  // Stale while revalidate: answer from cache at once, and fetch a fresh copy for next time.
+  if (isData(url)) {
     e.respondWith(
-      caches.match(request).then((hit) =>
-        hit ?? fetch(request).then((res) => {
-          if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(request, copy)); }
-          return res;
-        }),
-      ),
+      caches.match(request).then((hit) => {
+        const live = fetch(request).then((res) => store(request, res)).catch(() => hit);
+        return hit ?? live;
+      }),
     );
     return;
   }
@@ -45,7 +78,7 @@ self.addEventListener("fetch", (e) => {
   if (request.mode === "navigate") {
     e.respondWith(
       fetch(request)
-        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(request, copy)); return res; })
+        .then((res) => store(request, res))
         .catch(() => caches.match(request).then((hit) => hit ?? caches.match(SCOPE))),
     );
   }

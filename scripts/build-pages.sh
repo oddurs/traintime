@@ -30,4 +30,17 @@ mv src/app/api .api-aside
 rm -rf out
 npx next build
 touch out/.nojekyll
+
+# Stamp the service worker's cache name with this build.
+#
+# Without it the name is a constant, and the worker's activate handler — which deletes every cache
+# that is not the current one — has nothing to delete, for any deploy, ever. That is how a browser
+# ends up holding a network.json from a week ago and drawing the subway on one centreline. The
+# stamp is the hash of the built assets, so an identical build keeps its cache and any real change
+# retires the old one.
+build_id=$(find out/_next/static -type f -exec shasum {} + 2>/dev/null | shasum | cut -c1-12)
+if [ -z "$build_id" ]; then echo "could not hash the build for the service worker" >&2; exit 1; fi
+if ! grep -q "__BUILD__" out/sw.js; then echo "out/sw.js has no __BUILD__ placeholder to stamp" >&2; exit 1; fi
+sed -i.bak "s/__BUILD__/${build_id}/" out/sw.js && rm -f out/sw.js.bak
+echo "service worker cache: traintime-${build_id}"
 echo "static site in ./out (base path ${NEXT_PUBLIC_BASE_PATH})"
