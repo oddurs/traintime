@@ -858,6 +858,71 @@ async function main() {
     }
   }
 
+  /**
+   * Two services easing into the same band at the same station.
+   *
+   * Each service eases to the mean of its own bands either side of a station, and two of them can
+   * independently arrive at the same mean. At DeKalb Av the D comes off the bridge on band -0.5
+   * beside the B on -1.5, then the D carries on down Fourth Av while the B turns for Brighton:
+   * each averages its own two stretches, both get -1, and the two are drawn exactly on top of one
+   * another at the station — nought pixels apart at the junction the map most needs to be legible.
+   * They are not swapping sides, which the ordering clause would have caught; they are branching,
+   * and the blend does not know the two means belong to different services.
+   *
+   * So the ends are pushed back apart afterwards, each toward the band it actually holds on the
+   * corridor they share. That only ever shortens a ramp — it cannot introduce a crossing, because
+   * the pair is separated in the order their bands already have on that corridor.
+   *
+   * Only the metric reading is touched. Above zoom 14.2 the colour term has faded to nothing and
+   * the metric one carries the whole separation, so that is the axis that decides whether two
+   * lines are distinguishable; below it, services sharing a trunk colour are *meant* to converge,
+   * and pushing their colour ends apart would break the single line a trunk draws when far away.
+   */
+  const MIN_END_GAP = 0.75;
+  const stationsOfKey = (k: string) => k.split("-");
+  const endShift = new Map<string, number>();
+  const shiftOf = (station: string, route: string) => endShift.get(`${station}|${route}`) ?? 0;
+  // Every station where two services share a corridor, and the corridors they share there.
+  const sharedAt = new Map<string, string[]>();
+  for (const key of Object.keys(segments)) {
+    if (Object.keys(segmentSlots[key] ?? {}).length < 2) continue;
+    for (const st of stationsOfKey(key)) (sharedAt.get(st) ?? sharedAt.set(st, []).get(st)!).push(key);
+  }
+  for (const [station, keys] of [...sharedAt].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    // Relaxation rather than one pass: a service can share two corridors at one station, so
+    // separating it from one neighbour can bring it up against another.
+    for (let iter = 0; iter < 24; iter++) {
+      let moved = false;
+      for (const key of [...keys].sort()) {
+        const here = segmentSlots[key] ?? {};
+        const end = laneEnds[key] ?? {};
+        const at = (r: string) => (station === stationsOfKey(key)[0] ? end[r]?.[0] : end[r]?.[1]) ?? 0;
+        const rs = Object.keys(here).filter((r) => end[r]).sort((x, y) => (here[x]?.[0] ?? 0) - (here[y]?.[0] ?? 0));
+        for (let i = 0; i + 1 < rs.length; i++) {
+          const lo = rs[i], hi = rs[i + 1];
+          // Their order on this corridor is the authority: `hi` holds the larger band here, so it
+          // must still end above `lo`. A negative gap is the pair having crossed, which this
+          // undoes for the same reason it opens a small one.
+          const gap = (at(hi) + shiftOf(station, hi)) - (at(lo) + shiftOf(station, lo));
+          if (gap >= MIN_END_GAP - 1e-9) continue;
+          const push = (MIN_END_GAP - gap) / 2;
+          endShift.set(`${station}|${hi}`, shiftOf(station, hi) + push);
+          endShift.set(`${station}|${lo}`, shiftOf(station, lo) - push);
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+  }
+  // Applied per station and route rather than per stretch, so both sides of a join move together
+  // and the two ends still close on exactly the same number.
+  for (const [key, byRoute] of Object.entries(laneEnds)) {
+    const [u, v] = stationsOfKey(key);
+    for (const [route, ends] of Object.entries(byRoute)) {
+      byRoute[route] = [ends[0] + shiftOf(u, route), ends[1] + shiftOf(v, route)];
+    }
+  }
+
   // Group the stations, and name each complex after whichever of its stations serves the most
   // routes — that is the name on the street.
   const groups = new Map<string, string[]>();

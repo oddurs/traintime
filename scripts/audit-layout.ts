@@ -261,6 +261,52 @@ for (let z = 9.1; z <= 21; z += 0.05) {
 }
 if (bend > 1.5) fail("proportioned", `the curve bends ${bend.toFixed(2)} px per band within a twentieth of a zoom level`);
 
+// ---- two services are never drawn on top of each other --------------------
+/**
+ * Two services sharing a corridor, measured where they are actually drawn.
+ *
+ * The bands in the middle of a stretch have always been a clean eleven pixels apart; the place
+ * they were not was the ends. A service eases into the mean of its own bands either side of a
+ * station, and two services can arrive at the same mean independently — at DeKalb Av the D and
+ * the B branch in different directions and both averaged to the same band, so the two were drawn
+ * exactly on top of one another at the junction. Nothing else here could see it: they had not
+ * crossed, so the ordering clause was satisfied, and each curve was smooth on its own.
+ *
+ * Measured above the reveal, because that is where the claim is that these are separate lines.
+ * Below zoom 14.2 services sharing a trunk colour are deliberately converging onto one line, and
+ * asking them to stay apart there would contradict the clause above.
+ */
+let closest = Infinity;
+let closestAt = "";
+for (const [key, byRoute] of Object.entries(net.bandParts ?? {})) {
+  const rs = Object.keys(byRoute as Record<string, number[]>);
+  if (rs.length < 2) continue;
+  const [u, v] = key.split("-");
+  const profiles = new Map<string, { colour: number[]; metric: number[] }>();
+  for (const r of rs) {
+    const p = idx.lineSegmentBands(r, u, v);
+    if (p) profiles.set(r, { colour: p.colour, metric: p.metric });
+  }
+  const names = [...profiles.keys()];
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const A = profiles.get(names[i])!, B = profiles.get(names[j])!;
+      const n = Math.min(A.colour.length, B.colour.length);
+      for (let k = 0; k < n; k++) {
+        const dcb = A.colour[k] - B.colour[k], dmb = A.metric[k] - B.metric[k];
+        for (let z = 14.5; z <= 18; z += 0.5) {
+          const px = Math.abs(apart(z, dcb, dmb));
+          if (px < closest) { closest = px; closestAt = `${names[i]}/${names[j]} at ${key} (zoom ${z})`; }
+        }
+      }
+    }
+  }
+}
+notes.push(`closest two services ever come: ${closest.toFixed(1)} px (${closestAt})`);
+// A line and its casing are about six pixels wide, so under four the two are touching. This is
+// measured at the ends as well as the middle, which is the whole point of it.
+if (closest < 4) fail("apart everywhere", `two services are drawn ${closest.toFixed(1)} px apart — ${closestAt}`);
+
 // ---- trains on their own track -------------------------------------------
 const NOW = 1_788_000_000;
 const kin = new Kinematics(idx);

@@ -13,6 +13,11 @@
  *    whole feature sideways in pixels, so two strokes can meet exactly in the geometry and still
  *    be drawn a finger's width apart, which is what a line looks like when it stops dead in the
  *    middle of the map instead of carrying on.
+ *  - **Apart everywhere.** Two services sharing a corridor are never drawn on top of each other,
+ *    at the ends of a stretch as well as the middle. Each eases into the mean of its own bands
+ *    either side of a station, and two services branching in different directions can arrive at
+ *    the same mean independently — the D and the B did exactly that at DeKalb Av, and were drawn
+ *    in the same place at the junction without ever crossing, so nothing else noticed.
  *  - **Intertwined.** Where bands cross, one passes over: bands further right always draw above
  *    bands further left, so a pair never weaves one way here and the other way there.
  *  - **Proportioned.** Two lines sit the same distance apart on screen at every zoom, because the
