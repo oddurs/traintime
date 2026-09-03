@@ -81,6 +81,16 @@ export class Timing {
   /** Current weather, set by whoever is running the model; absent simply skips that level. */
   weather?: WeatherBand;
 
+  /**
+   * Scratch space for the model's inputs.
+   *
+   * `adjustEta` runs about a dozen times per train per update — ten thousand times a tick across
+   * the system — and each call was building a record, a closure and an array purely to hand the
+   * same thirteen numbers to the same function. They live here instead and are overwritten.
+   */
+  private readonly feats: Record<string, number> = {};
+  private vector: number[] = [];
+
   constructor(
     private readonly net: NetworkIndex,
     public tables: TimingTables | null = null,
@@ -165,22 +175,26 @@ export class Timing {
       const seg = c.prev ? `${c.prev}>${c.next}` : undefined;
       const rt = c.prev ? this.runTime(c.prev, c.next, c.hour) : NaN;
       const elapsed = c.departedAt !== undefined ? c.now - c.departedAt : NaN;
-      const feats: Record<string, number> = {
-        horizon,
-        hour: c.hour,
-        dow: c.dow,
-        route: gbmCode(this.model, "route", c.route),
-        segment: gbmCode(this.model, "segment", seg),
-        direction: gbmCode(this.model, "direction", c.next.slice(-1)),
-        table_median: res?.median ?? NaN,
-        table_sigma: res?.p68 ?? NaN,
-        run_p50: rt,
-        elapsed,
-        elapsed_frac: Number.isFinite(rt) && Number.isFinite(elapsed) ? elapsed / rt : NaN,
-        // Whether the run has begun at all. The single strongest split at the far horizon.
-        not_started: c.prev === undefined ? 1 : 0,
-      };
-      const x = this.model.features.map((f) => feats[f] ?? NaN);
+      // Built into a scratch object and a scratch vector that live for the class rather than the
+      // call: this runs a dozen times per train per update, and every one of them was allocating a
+      // record, a closure and an array for the collector to take away again.
+      const feats = this.feats;
+      feats.horizon = horizon;
+      feats.hour = c.hour;
+      feats.dow = c.dow;
+      feats.route = gbmCode(this.model, "route", c.route);
+      feats.segment = gbmCode(this.model, "segment", seg);
+      feats.direction = gbmCode(this.model, "direction", c.next.slice(-1));
+      feats.table_median = res?.median ?? NaN;
+      feats.table_sigma = res?.p68 ?? NaN;
+      feats.run_p50 = rt;
+      feats.elapsed = elapsed;
+      feats.elapsed_frac = Number.isFinite(rt) && Number.isFinite(elapsed) ? elapsed / rt : NaN;
+      // Whether the run has begun at all. The single strongest split at the far horizon.
+      feats.not_started = c.prev === undefined ? 1 : 0;
+      const names = this.model.features;
+      const x = this.vector.length === names.length ? this.vector : (this.vector = new Array(names.length));
+      for (let i = 0; i < names.length; i++) { const v = feats[names[i]]; x[i] = v === undefined ? NaN : v; }
       delta = gbmPredict(this.model, x);
       // The tables' spread describes their own estimate, not the model's; use the model's own
       // measured error so stated confidence matches observed coverage.
