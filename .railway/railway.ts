@@ -38,6 +38,11 @@ const WATCH = [
   "services/**",
   "src/**",
   "public/**",
+  // The site build *is* a script: build-pages.sh sets the export up, moves the API routes aside
+  // and stamps the service worker. A change to it was not a change to the site as far as this
+  // list was concerned, and a deploy carrying one was skipped with "no changes detected in watch
+  // paths" — which reads exactly like a successful deploy until you check what is live.
+  "scripts/**",
   "Dockerfile",
   "Dockerfile.site",
   "package.json",
