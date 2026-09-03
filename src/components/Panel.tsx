@@ -10,7 +10,7 @@ import { TrainTimeClient } from "@/lib/client";
 import { fmtAgo, fmtClockSec } from "@/lib/format";
 import { useStoredFlag } from "@/lib/hooks";
 import { BASE_PATH, POLLER_URL } from "@/lib/basePath";
-import { reportClientFailures } from "@/lib/clientHealth";
+import { markTiming, reportClientFailures } from "@/lib/clientHealth";
 import { TRUNKS } from "@/lib/trunks";
 import { Button, Chip, Notice, Section, Switch } from "./ui";
 import Sheet from "./Sheet";
@@ -79,6 +79,10 @@ export default function Panel(props: Props) {
   // Tell the poller when this browser fails, so /health can see the half of the system that does
   // not run on our own machine.
   useEffect(() => reportClientFailures(POLLER_URL), []);
+  // The panel is the first thing on screen a rider can read — a search field and a train count —
+  // and it is not rendered until the network index has arrived, so its first paint is the moment
+  // the app stopped being a loading screen.
+  useEffect(() => markTiming("readable"), []);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};

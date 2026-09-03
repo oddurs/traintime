@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import type { GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { markTiming } from "@/lib/clientHealth";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
 import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
@@ -243,7 +244,7 @@ export default function TrainMap(props: Props) {
     }
     if (!minimal) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
 
-    map.once("style.load", () => { readyRef.current = true; });
+    map.once("style.load", () => { readyRef.current = true; markTiming("map"); });
     map.on("dragstart", () => { if (live.current.follow) live.current.onFollowEnd(); });
     map.on("moveend", () => {
       if (!onView) return;

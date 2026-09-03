@@ -23,3 +23,28 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ path: strin
     return Response.json({ error: `poller offline (${e instanceof Error ? e.message : e})` }, { status: 503 });
   }
 }
+
+/**
+ * The same proxy for the two things a browser posts: what went wrong, and how long it took.
+ *
+ * The deployed site is a static export served by a plain file server, so it has no proxy at all —
+ * there NEXT_PUBLIC_POLLER_URL points the browser straight at the poller, which sends CORS headers
+ * for exactly this. That left `next dev` as the one place these reports could not be delivered:
+ * they arrived here and got a 405, so the beacon could never be tried locally, which is how it
+ * would have stayed broken without anybody noticing.
+ */
+export async function POST(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
+  const { path } = await ctx.params;
+  // Small and bounded, like the endpoints behind it: these carry a short message or a handful of
+  // numbers, and nothing here should become a way to push a large body at the poller.
+  const body = (await req.text()).slice(0, 4096);
+  try {
+    const upstream = await fetch(`${POLLER}/${path.join("/")}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body, signal: req.signal,
+    });
+    return new Response(upstream.body, { status: upstream.status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  } catch (e) {
+    if (req.signal.aborted) return new Response(null, { status: 499 });
+    return Response.json({ error: `poller offline (${e instanceof Error ? e.message : e})` }, { status: 503 });
+  }
+}

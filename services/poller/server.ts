@@ -10,6 +10,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { REC_DIR, TABLES, parquetGlob } from "./recorder";
 import { calendarRow } from "../../src/lib/calendar";
+import { Rum, parseSample } from "./rum";
 
 /** FROM-clause over a recorded table on disk plus the in-memory buffer, skipping an empty glob. */
 function source(table: (typeof TABLES)[number], cols: string): string {
@@ -34,6 +35,11 @@ export interface ServerDeps {
   flush: () => Promise<Record<string, number>>;
 }
 
+/** What /health says about browsers before any browser has said anything — or before a server. */
+export function emptyClientReport() {
+  return { lastHour: 0, recent: [] as string[], timing: new Rum().report(0) };
+}
+
 type SseClient = ServerResponse;
 
 function sse(res: ServerResponse) {
@@ -49,6 +55,21 @@ function sse(res: ServerResponse) {
 
 function send(res: ServerResponse, event: string, data: unknown) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/**
+ * Read a posted body, up to a limit, and never fail.
+ *
+ * The two endpoints a browser can post to are unauthenticated and reachable by anyone, so the
+ * cap is on bytes read rather than on a Content-Length nobody has to tell the truth about.
+ */
+function readBody(req: IncomingMessage, limit = 4096): Promise<string> {
+  return new Promise((resolve) => {
+    let n = 0; const parts: string[] = [];
+    req.on("data", (c: Buffer) => { n += c.length; if (n < limit) parts.push(c.toString("utf8")); });
+    req.on("end", () => resolve(parts.join("")));
+    req.on("error", () => resolve(""));
+  });
 }
 
 function json(res: ServerResponse, body: unknown, status = 200) {
@@ -89,11 +110,21 @@ export class PollerServer {
    */
   private clientErrors: { at: number; msg: string }[] = [];
 
-  /** Errors reported by browsers in the last hour, for /health. */
+  /**
+   * How the page performed in the browsers it was opened in. See rum.ts for why percentiles and
+   * why they are bounded.
+   */
+  private rum = new Rum();
+
+  /** What browsers reported in the last hour — what went wrong, and how slow it was. */
   clientErrorReport() {
-    const cutoff = Math.floor(Date.now() / 1000) - 3600;
-    this.clientErrors = this.clientErrors.filter((e) => e.at > cutoff);
-    return { lastHour: this.clientErrors.length, recent: this.clientErrors.slice(-3).map((e) => e.msg) };
+    const now = Math.floor(Date.now() / 1000);
+    this.clientErrors = this.clientErrors.filter((e) => e.at > now - 3600);
+    return {
+      lastHour: this.clientErrors.length,
+      recent: this.clientErrors.slice(-3).map((e) => e.msg),
+      timing: this.rum.report(now),
+    };
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse) {
@@ -114,12 +145,7 @@ export class PollerServer {
         if (req.method !== "POST") return json(res, { error: "post only" }, 405);
         // Bounded hard: this is an unauthenticated endpoint on the public internet, so it takes a
         // short message and nothing else, and forgets the oldest once it has enough to be useful.
-        const body = await new Promise<string>((resolve) => {
-          let n = 0; const parts: string[] = [];
-          req.on("data", (c: Buffer) => { n += c.length; if (n < 4096) parts.push(c.toString("utf8")); });
-          req.on("end", () => resolve(parts.join("")));
-          req.on("error", () => resolve(""));
-        });
+        const body = await readBody(req);
         try {
           const { message } = JSON.parse(body || "{}") as { message?: unknown };
           const msg = String(message ?? "").slice(0, 200);
@@ -128,6 +154,17 @@ export class PollerServer {
             if (this.clientErrors.length > 200) this.clientErrors.shift();
           }
         } catch { /* a malformed report is not worth a 500 */ }
+        return json(res, { ok: true });
+      }
+      case "/client-timing": {
+        if (req.method !== "POST") return json(res, { error: "post only" }, 405);
+        // Same discipline as the line above: bounded body, every field optional and validated in
+        // rum.ts, and a malformed report answered with ok rather than a 500 — a browser that
+        // cannot measure itself properly should not learn that it can make us return errors.
+        try {
+          const sample = parseSample(JSON.parse((await readBody(req)) || "{}"), now);
+          if (sample) this.rum.add(sample);
+        } catch { /* as above */ }
         return json(res, { ok: true });
       }
       case "/health": {

@@ -15,7 +15,7 @@ import { Timing } from "../../src/lib/timing";
 import { Tracker } from "../../src/lib/tracker";
 import { FEEDS, fetchFeed, loadDecoder, makeTick } from "./feeds";
 import { Recorder, DATA_DIR } from "./recorder";
-import { PollerServer } from "./server";
+import { PollerServer, emptyClientReport } from "./server";
 import { FeedMonitor } from "./health";
 import { ContextRecorder } from "./context";
 import { cleanTemp, compact, diskUsage, enforceBudget, prune } from "./retention";
@@ -110,9 +110,10 @@ async function main() {
           // Whether tonight's retrain can actually happen, known now rather than at 03:20.
           canRetrain: modelReady,
         },
-        // What browsers say went wrong. Without this the only half of the system we could see
-        // was the half running on our own machine.
-        clients: live.server?.clientErrorReport() ?? { lastHour: 0, recent: [] },
+        // What browsers say went wrong, and how long the page took them. Without this the only
+        // half of the system we could see was the half running on our own machine — and the only
+        // performance number we had came from one scripted browser on one developer's machine.
+        clients: live.server?.clientErrorReport() ?? emptyClientReport(),
         // Correctness the deployed system reports about itself, rather than waiting to be asked.
         invariants: (() => {
           const states = tracker.states(now);
