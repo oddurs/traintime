@@ -12,6 +12,12 @@ import { defineRailway, preserve, project, service, volume } from "railway/iac";
  * poller, one for the site — so the two differ by an environment variable rather than by a file.
  * Secrets and URLs stay in Railway; `preserve()` says "this variable exists, do not manage its
  * value from here".
+ *
+ * Plan and apply with the CLI — `railway config plan` — and not with `npx railway`. The IaC engine
+ * moved into the CLI at 5.42.1; the `railway` npm package stops at 3.11.0 and answers that command
+ * with "upgrade the CLI", which is confusing when the installed CLI is already newer. It is kept as
+ * a devDependency for one reason: the `railway/iac` types below, which are what make this file
+ * worth typechecking. Everything that talks to Railway goes through the CLI.
  */
 
 /*
