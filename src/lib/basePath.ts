@@ -1,4 +1,4 @@
-/** Base path of the deployed site ("" locally, "/traintime" on GitHub Pages). */
+/** Base path of the deployed site — empty, unless it is served from a subdirectory. */
 export const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 export const asset = (path: string) => `${BASE_PATH}${path}`;
 

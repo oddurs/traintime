@@ -80,7 +80,7 @@ export default function Embed() {
           ))}
         </div>
       )}
-      <a className="embed-brand" href={`${BASE_PATH}/`} target="_blank" rel="noreferrer">traintime</a>
+      <a className="embed-brand" href={`${BASE_PATH}/`} target="_blank" rel="noreferrer">bound</a>
     </main>
   );
 }

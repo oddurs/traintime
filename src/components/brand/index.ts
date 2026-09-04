@@ -7,6 +7,7 @@
  * other. The split is the whole design argument: signage where the subject is the railway,
  * interface where the subject is the application.
  */
+export { default as BoundMark } from "./BoundMark";
 export { default as RouteBullet, type BulletSize } from "./RouteBullet";
 export { isExpress, serviceLabel } from "@/lib/service";
 export { default as BulletGroup } from "./BulletGroup";

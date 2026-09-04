@@ -3,14 +3,15 @@ import { CHROME_COLOR } from "@/lib/palette";
 import ServiceWorker from "@/components/ServiceWorker";
 import { BASE_PATH } from "@/lib/basePath";
 import "./globals.css";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
-const title = "traintime — NYC subway, live";
+const title = `${BRAND_NAME} — ${BRAND_TAGLINE}`;
 const description = "Every New York City subway train, moving on a map, simulated from the MTA's realtime feeds and measured against what the trains actually did.";
 
 export const metadata: Metadata = {
-  title: { default: title, template: "%s · traintime" },
+  title: { default: title, template: `%s · ${BRAND_NAME}` },
   description,
-  applicationName: "traintime",
+  applicationName: BRAND_NAME,
   metadataBase: new URL("https://traintime-site-production.up.railway.app"),
   icons: {
     icon: [
@@ -19,8 +20,8 @@ export const metadata: Metadata = {
     ],
     apple: `${BASE_PATH}/apple-icon.png`,
   },
-  appleWebApp: { capable: true, title: "traintime", statusBarStyle: "black-translucent" },
-  openGraph: { title, description, type: "website", siteName: "traintime" },
+  appleWebApp: { capable: true, title: BRAND_NAME, statusBarStyle: "black-translucent" },
+  openGraph: { title, description, type: "website", siteName: BRAND_NAME },
   twitter: { card: "summary_large_image", title, description },
 };
 

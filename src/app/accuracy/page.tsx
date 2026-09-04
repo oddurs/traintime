@@ -4,8 +4,8 @@ import type { Metadata } from "next";
 import { BASE_PATH } from "@/lib/basePath";
 
 export const metadata: Metadata = {
-  title: "How accurate is traintime?",
-  description: "Measured error of traintime's simulated NYC subway positions, against the arrivals the MTA's own feed reported.",
+  title: "How accurate is bound?",
+  description: "Measured error of bound's simulated NYC subway positions, against the arrivals the MTA's own feed reported.",
 };
 
 interface Accuracy {
@@ -44,9 +44,9 @@ export default function AccuracyPage() {
     <div className="doc">
       <a className="back" href={`${BASE_PATH}/`}>← back to the map</a>
       <header>
-        <h1>How accurate is traintime?</h1>
+        <h1>How accurate is bound?</h1>
         <p>
-          The MTA does not publish where its trains are. traintime works out each position from predicted
+          The MTA does not publish where its trains are. bound works out each position from predicted
           arrival times and a coarse vehicle status, so the honest question is: how wrong is it? These
           numbers come from replaying recorded feed data through the very same code the map runs, and
           scoring it against the arrival timestamps the MTA later reported. Nothing here is hand-picked —
@@ -74,7 +74,7 @@ export default function AccuracyPage() {
                 <th>time until arrival</th>
                 <th className="num">samples</th>
                 <th className="num">MTA error</th>
-                <th className="num">traintime error</th>
+                <th className="num">bound error</th>
                 <th className="num">within our ±1σ</th>
               </tr>
             </thead>
@@ -92,7 +92,7 @@ export default function AccuracyPage() {
           </table>
           <p>
             Error is the mean absolute difference from the real arrival. The last column is calibration: when
-            traintime says &ldquo;3 minutes, give or take 20 seconds&rdquo;, how often the truth lands inside that
+            bound says &ldquo;3 minutes, give or take 20 seconds&rdquo;, how often the truth lands inside that
             range. A perfectly calibrated 1σ would sit at 68%.
           </p>
 
@@ -140,7 +140,7 @@ export default function AccuracyPage() {
 
           <h3>Caveats worth knowing</h3>
           <ul>
-            <li>Departures are only reported on the numbered lines and the L. On the lettered lines traintime models them, so those trains leave a platform on an estimate.</li>
+            <li>Departures are only reported on the numbered lines and the L. On the lettered lines bound models them, so those trains leave a platform on an estimate.</li>
             <li>A train first seen mid-run has no history, so its previous stop is inferred; the map says so when you open it.</li>
             <li>Data reaches us a median of {s1(a.dataLatencyS.median)} after the event it describes, so even a perfect model is that far behind reality.</li>
             <li>These figures come from one window ({day(a.window.from)} to {day(a.window.to)}) and will shift with more recording.</li>

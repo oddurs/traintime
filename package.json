@@ -30,7 +30,8 @@
     "audit:weight": "node scripts/audit-weight.mjs --serve",
     "build:site": "NEXT_PUBLIC_BASE_PATH= bash scripts/build-pages.sh",
     "site": "tsx services/site/index.ts",
-    "audit:layout": "tsx scripts/audit-layout.ts"
+    "audit:layout": "tsx scripts/audit-layout.ts",
+    "build:icons": "tsx scripts/build-icons.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",
@@ -62,5 +63,10 @@
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "browserslist": [
+    "last 2 versions",
+    "not dead",
+    "not op_mini all"
+  ]
 }

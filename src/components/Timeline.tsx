@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StreamMode } from "@/lib/useTrainStream";
-import { TrainTimeClient, type DensityBucket, type Recordings } from "@/lib/client";
+import { BoundClient, type DensityBucket, type Recordings } from "@/lib/client";
 import { fmtClock } from "@/lib/format";
 import { Button, Select } from "./ui";
 
 interface Props {
-  client: TrainTimeClient;
+  client: BoundClient;
   mode: StreamMode;
   onMode: (m: StreamMode) => void;
   /** Simulation clock, for drawing the playhead during a replay. */
@@ -83,7 +83,7 @@ export default function Timeline({ client, mode, onMode, now, live }: Props) {
       const url = URL.createObjectURL(new Blob(chunks, { type: mime }));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `traintime-${new Date(cursor * 1000).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.webm`;
+      a.download = `bound-${new Date(cursor * 1000).toISOString().slice(0, 16).replace(/[:T]/g, "-")}.webm`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
       setRecording(false);

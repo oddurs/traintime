@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
-import type { LineHealth as Health, TrainTimeClient } from "@/lib/client";
+import type { LineHealth as Health, BoundClient } from "@/lib/client";
 import { Meter } from "./ui";
 import { RouteBullet } from "./brand";
 
 interface Props {
   index: NetworkIndex;
-  client: TrainTimeClient;
+  client: BoundClient;
   onSolo: (route: string) => void;
 }
 

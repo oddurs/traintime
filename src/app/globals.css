@@ -1,5 +1,5 @@
 /*
- * traintime — the visual system.
+ * bound — the visual system.
  *
  * Two systems meet here, and they are kept apart on purpose rather than averaged into a third.
  *
@@ -476,7 +476,7 @@ a { color: inherit; }
   container: panel / inline-size;
 }
 @supports (backdrop-filter: blur(1px)) {
-  .panel { background: var(--mat-regular); backdrop-filter: var(--blur-regular); -webkit-backdrop-filter: var(--blur-regular); }
+  .panel { background: var(--mat-regular); backdrop-filter: var(--blur-regular); }
 }
 
 .panel-head { padding: var(--s4) var(--s4) var(--s3); flex: none; position: relative; }
@@ -514,6 +514,26 @@ a { color: inherit; }
  * image atlas and the two have to be one drawing. What is left here is how big it is and what
  * hangs off its corner.
  */
+/* --- the brand -------------------------------------------------------------
+ *
+ * bound's mark is a bullet in the system's own alphabet — see src/lib/brand.ts. It sits at the
+ * head of the panel, at the size of a row's leading bullet rather than a logo's, because in this
+ * interface the brand is one more mark on a map full of them.
+ */
+.brandlink { text-decoration: none; display: inline-flex; }
+.brandmark { display: inline-flex; align-items: center; gap: var(--s2); }
+.brandmark-bullet { display: block; flex: none; width: var(--brandmark-size); height: var(--brandmark-size); }
+.brandmark-bullet > svg { display: block; width: 100%; height: 100%; }
+.brandmark-word {
+  font: var(--t-title);
+  letter-spacing: var(--tr-title);
+  color: var(--label);
+}
+/* The bullet is set to the cap height of the word beside it, so the two sit on one line. */
+.brandmark.is-sm { --brandmark-size: var(--bullet-md); }
+.brandmark.is-sm .brandmark-word { font: var(--t-headline); letter-spacing: var(--tr-headline); }
+.brandmark.is-md { --brandmark-size: var(--bullet-lg); }
+
 .roundel {
   position: relative; display: inline-block; flex: none; vertical-align: middle;
   /* An express diamond is drawn wider than the circle beside it, so its element is too. */
@@ -782,7 +802,7 @@ button.roundel:active { transform: scale(0.98); }
   border-radius: var(--r-card); box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge); padding: var(--s3) var(--s4);
 }
 @supports (backdrop-filter: blur(1px)) {
-  .embed-card { background: var(--mat-regular); backdrop-filter: var(--blur-regular); -webkit-backdrop-filter: var(--blur-regular); }
+  .embed-card { background: var(--mat-regular); backdrop-filter: var(--blur-regular); }
 }
 .embed-card h2 { margin: 0 0 var(--s3); font: var(--t-headline); letter-spacing: var(--tr-headline); }
 .embed-group + .embed-group { margin-top: var(--s3); }
@@ -820,7 +840,7 @@ button.roundel:active { transform: scale(0.98); }
     padding-bottom: env(safe-area-inset-bottom);
   }
   @supports (backdrop-filter: blur(1px)) {
-    .panel.sheet { background: var(--mat-thick); backdrop-filter: var(--blur-thick); -webkit-backdrop-filter: var(--blur-thick); }
+    .panel.sheet { background: var(--mat-thick); backdrop-filter: var(--blur-thick); }
   }
   .panel.sheet.peek { height: auto; }
   .panel.sheet.half { height: var(--sheet-half); }

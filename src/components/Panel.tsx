@@ -6,7 +6,7 @@ import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
 import { routeStatus } from "@/lib/alerts";
 import type { StreamMode, StreamStatus } from "@/lib/useTrainStream";
-import { TrainTimeClient } from "@/lib/client";
+import { BoundClient } from "@/lib/client";
 import { fmtAgo, fmtClockSec } from "@/lib/format";
 import { useStoredFlag } from "@/lib/hooks";
 import { BASE_PATH, POLLER_URL } from "@/lib/basePath";
@@ -17,7 +17,8 @@ import Sheet from "./Sheet";
 import SearchBox from "./SearchBox";
 import StationBoard from "./StationBoard";
 import TrainDetail from "./TrainDetail";
-import { RouteBullet } from "./brand";
+import { BoundMark, RouteBullet } from "./brand";
+import { BRAND_NAME } from "@/lib/brand";
 import AlertList from "./AlertList";
 import Legend from "./Legend";
 import SavedPlaces from "./SavedPlaces";
@@ -75,7 +76,7 @@ export default function Panel(props: Props) {
     nearby, onNearby, locating, distance, destination, onDestination, places, onToggleSave, isSaved } = props;
   const [legendDismissed, setLegendDismissed] = useStoredFlag("tt.legend.dismissed", false);
   const [showHistory, setShowHistory] = useState(false);
-  const client = useMemo(() => new TrainTimeClient(POLLER_URL), []);
+  const client = useMemo(() => new BoundClient(POLLER_URL), []);
   // Tell the poller when this browser fails, so /health can see the half of the system that does
   // not run on our own machine.
   useEffect(() => reportClientFailures(POLLER_URL), []);
@@ -97,21 +98,48 @@ export default function Panel(props: Props) {
   const delayAlerts = useMemo(() => (alerts?.all ?? []).filter((a) => a.category === "delay"), [alerts]);
   const selectedTrain = selection.kind === "train" ? byId.get(selection.id) : undefined;
 
+  /*
+   * The head of the panel, in the order Apple Maps puts things.
+   *
+   * The search field is the first thing, and it is pinned: it used to be the first child of the
+   * scrolling body, so opening a station scrolled the way to look one up off the top of the sheet.
+   * Above it sits the mark and nothing else — no title bar, because the panel is the application
+   * and does not need to say so.
+   *
+   * The running count moved to the foot. It is telemetry: interesting, and not what someone opened
+   * the app to find out. What stays here is trouble — a feed that is down, a stream that has
+   * dropped — because chrome should be quiet while things are working and speak up when they are
+   * not, which is the whole difference between a status bar and an alert.
+   */
   const header = (
     <header className="panel-head">
       <div className="title-row">
-        <h1><a href={`${BASE_PATH}/`} aria-label="traintime home">traintime</a></h1>
+        {/* Still the page's heading, even though it is drawn as a mark: the name is the h1. */}
+        <h1>
+          <a className="brandlink" href={`${BASE_PATH}/`} aria-label={`${BRAND_NAME} home`}>
+            <BoundMark size="sm" />
+          </a>
+        </h1>
         <Chip tone={status.live ? "live" : "replay"}>{status.live ? "Live" : `Replay ${status.speed}×`}</Chip>
       </div>
-      <div className="status">
-        <Notice tone={healthy ? "ok" : "bad"}>
-          {status.connected || trains.length
-            ? `${shown === trains.length ? trains.length : `${shown} / ${trains.length}`} trains`
-            : (status.error ?? "connecting…")}
-          {status.live && age !== null ? ` · feed ${age < 3 ? "just now" : `${age}s ago`}` : ""}
-          {!status.live && status.clockTs ? ` · ${fmtClockSec(now)}${status.ended ? " · ended" : ""}` : ""}
-        </Notice>
-      </div>
+      <SearchBox
+        index={index}
+        onPick={(id) => onSelect({ kind: "station", id })}
+        onNearby={onNearby}
+        nearby={nearby}
+        locating={locating}
+      />
+      {!healthy && (
+        <div className="status">
+          <Notice tone="bad">
+            {status.connected || trains.length
+              ? `${shown === trains.length ? trains.length : `${shown} / ${trains.length}`} trains`
+              : (status.error ?? "connecting…")}
+            {status.live && age !== null ? ` · feed ${age < 3 ? "just now" : `${age}s ago`}` : ""}
+            {!status.live && status.clockTs ? ` · ${fmtClockSec(now)}${status.ended ? " · ended" : ""}` : ""}
+          </Notice>
+        </div>
+      )}
       {feedsDown.length > 0 && (
         <div className="status">
           <Notice tone="warn">feed down: {feedsDown.map((f) => f.id.replace("gtfs-", "")).join(", ")}</Notice>
@@ -123,6 +151,7 @@ export default function Panel(props: Props) {
   const footer = (
     <footer className="panel-foot">
       <span className="hint">
+        {healthy ? `${shown === trains.length ? trains.length : `${shown} / ${trains.length}`} trains · ` : ""}
         {status.source === "browser"
           ? `tracking in this browser · timing learned offline${status.modelReady ? " + model" : ""}`
           : status.source === "poller"
@@ -140,14 +169,6 @@ export default function Panel(props: Props) {
       header={header}
       footer={footer}
     >
-      <SearchBox
-        index={index}
-        onPick={(id) => onSelect({ kind: "station", id })}
-        onNearby={onNearby}
-        nearby={nearby}
-        locating={locating}
-      />
-
       {selection.kind === "station" && (
         <StationBoard
           index={index} station={selection.id} trains={trains} now={now} alerts={alerts}

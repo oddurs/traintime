@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { BASE_PATH } from "@/lib/basePath";
 
 export const metadata: Metadata = {
-  title: "traintime API",
+  title: "bound API",
   description: "Live and recorded NYC subway train state over JSON and server-sent events.",
 };
 
@@ -11,7 +11,7 @@ export default function ApiDocs() {
     <div className="doc">
       <a className="back" href={`${BASE_PATH}/`}>← back to the map</a>
       <header>
-        <h1>traintime API</h1>
+        <h1>bound API</h1>
         <p>
           The poller serves everything the map uses: the live state of every train, a stream of changes,
           and a replay of any recorded window. Responses are JSON; streams are server-sent events. CORS is
@@ -63,9 +63,9 @@ export default function ApiDocs() {
 
       <h2>Client</h2>
       <p>The site&rsquo;s own typed client is <code>src/lib/client.ts</code>:</p>
-      <pre>{`import { TrainTimeClient } from "@/lib/client";
+      <pre>{`import { BoundClient } from "@/lib/client";
 
-const tt = new TrainTimeClient("https://your-poller.example.com");
+const tt = new BoundClient("https://your-poller.example.com");
 
 const { trains } = await tt.state();
 

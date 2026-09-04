@@ -1,7 +1,7 @@
 /**
- * Typed client for the traintime poller API — the same calls the site itself makes.
+ * Typed client for the bound poller API — the same calls the site itself makes.
  *
- *   const tt = new TrainTimeClient("http://localhost:7118");
+ *   const tt = new BoundClient("http://localhost:7118");
  *   const stop = tt.stream((msg) => console.log(msg.kind, msg.data.trains.length));
  */
 import type { StateDelta, StateSnapshot } from "./types";
@@ -28,7 +28,7 @@ export interface LineHealth {
 }
 export type StreamMessage = { kind: "snapshot"; data: StateSnapshot } | { kind: "delta"; data: StateDelta } | { kind: "end" };
 
-export class TrainTimeClient {
+export class BoundClient {
   constructor(private readonly base = "/api/poller") {}
 
   private async json<T>(path: string, signal?: AbortSignal): Promise<T> {

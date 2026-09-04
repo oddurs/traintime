@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { CHROME_COLOR } from "@/lib/palette";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
@@ -7,8 +8,8 @@ export const dynamic = "force-static";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "traintime — NYC subway, live",
-    short_name: "traintime",
+    name: `${BRAND_NAME} — ${BRAND_TAGLINE}`,
+    short_name: BRAND_NAME,
     description: "Every New York City subway train, moving on a map, simulated from the MTA's realtime feeds.",
     start_url: `${BASE}/`,
     scope: `${BASE}/`,
