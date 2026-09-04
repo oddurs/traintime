@@ -233,6 +233,10 @@ for (const rel of sources) {
     if (rel !== PALETTE_SOURCE) {
       for (const c of line.matchAll(/["'`]#[0-9a-fA-F]{3,8}["'`]|["'`]rgba?\([^)]*\)["'`]/g)) {
         if (/rgba?\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)/.test(c[0])) continue;
+        // An SVG mask is a stencil: its luminance says what survives, so its black and white are
+        // arithmetic rather than design. Allowed only where they are named as such, so a real
+        // colour cannot arrive under the same cover without saying out loud that it is a stencil.
+        if (/\bSTENCIL_[A-Z]+\s*=/.test(line)) continue;
         findings.push({ line: n, kind: "colour", file: rel, text: line.trim().slice(0, 70), detail: `${c[0]} should come from the token layer` });
       }
     }

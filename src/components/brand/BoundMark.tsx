@@ -1,7 +1,6 @@
 "use client";
 
 import { PALETTE } from "@/lib/palette";
-import { BOX } from "@/lib/roundel";
 import { BRAND_NAME, brandMarkSvg } from "@/lib/brand";
 
 interface Props {
@@ -13,15 +12,16 @@ interface Props {
 /**
  * bound.
  *
- * The mark is a bullet from the same path the map draws trains with, inverted — white ground, dark
- * character — so it reads as part of the system without being any line in it. See src/lib/brand.ts
- * for why that is the play, and scripts/build-icons.ts for the app icons cut from the same drawing.
+ * A disc with the character set past its diameter, so the bar of the B breaks through the top and
+ * the bottom of the circle — the device the MTA's own logo is built on, where the type bursts out
+ * and the ring is left open. See src/lib/brand.ts, and scripts/build-icons.ts for the app icons
+ * cut from the same drawing.
  *
  * The wordmark is set in the signage face, lowercase, because the name is a word the subway uses
  * rather than a company: a train is Manhattan-bound long before anybody builds an app about it.
  */
 export default function BoundMark({ wordmark = true, size = "md" }: Props) {
-  const svg = brandMarkSvg(PALETTE["--ink-light"], PALETTE["--ink-dark"], BOX);
+  const svg = brandMarkSvg(PALETTE["--ink-light"]);
   return (
     <span className={`brandmark is-${size}`}>
       <span className="brandmark-bullet" aria-hidden dangerouslySetInnerHTML={{ __html: svg }} />

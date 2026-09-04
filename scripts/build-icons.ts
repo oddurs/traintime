@@ -14,10 +14,9 @@ import { join } from "node:path";
 import { brandIconSvg, brandMarkSvg } from "../src/lib/brand";
 
 const OUT = join(import.meta.dirname, "..", "public");
-/** The map's own ground, the bullet, and the character on it. */
+/** The map's own ground, and the disc the character is cut out of. */
 const TILE = "#0a0a0a";
 const GROUND = "#ffffff";
-const INK = "#0a0a0a";
 
 const png = async (svg: string, px: number, name: string) => {
   await sharp(Buffer.from(svg), { density: 384 }).resize(px, px).png({ compressionLevel: 9 }).toFile(join(OUT, name));
@@ -28,10 +27,10 @@ async function main() {
   // One drawing at four sizes. The bullet already sits inside the safe zone, so the maskable and
   // Apple variants are the same image rather than a second design that has to be kept in step.
   for (const [px, name] of [[192, "icon-192.png"], [512, "icon-512.png"], [512, "icon-maskable.png"], [180, "apple-icon.png"]] as const) {
-    await png(brandIconSvg(TILE, GROUND, INK, px), px, name);
+    await png(brandIconSvg(TILE, GROUND, px), px, name);
   }
   // The mark itself, for anything that can take a vector.
-  writeFileSync(join(OUT, "mark.svg"), brandMarkSvg(GROUND, INK));
+  writeFileSync(join(OUT, "mark.svg"), brandMarkSvg(GROUND));
   console.log("  mark.svg");
 }
 
