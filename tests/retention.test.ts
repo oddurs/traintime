@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -66,4 +66,39 @@ test("compaction merges without losing rows, and repeating it changes nothing", 
   assert.equal(await countRows(dir), before, "merging a second time must be a no-op, not a doubling");
 
   conn.closeSync(); db.closeSync();
+});
+
+/**
+ * The budget is stated over the whole directory but can only be met by deleting ticks. So the
+ * question that matters is what it does when the tables it cannot touch have grown past the budget
+ * on their own — which the defaults used to reach on their own within a year.
+ */
+test("a budget the untouchable tables have already broken is reported, not silently chased", async () => {
+  const { enforceBudget } = await import("../services/poller/retention");
+  const dir = mkdtempSync(join(tmpdir(), "tt-budget-"));
+  const day = (n: number) => join(dir, `2026-08-${String(n).padStart(2, "0")}.parquet`);
+  for (let i = 1; i <= 4; i++) writeFileSync(day(i), Buffer.alloc(100_000));
+
+  const policy = {
+    ticksDays: 3, eventsDays: 365, obsDays: 14, compactAfterHours: 2,
+    budgetBytes: 1_000_000, freeFloorBytes: 0,
+  };
+
+  // Events and observations alone are over budget: ticks cannot get the total back under it.
+  const stuck = enforceBudget(policy, { ticksDir: dir, totalBytes: 1_900_000, tickBytes: 400_000, freeBytes: null });
+  assert.equal(stuck.unreachableBytes, 500_000, "the shortfall the caller has to hear about");
+  // It still frees what it can — but it does not pretend the number was met.
+  assert.ok(stuck.removed > 0);
+  // And it never takes the last file: replay of the last few minutes outlives the last few bytes.
+  assert.ok(existsSync(day(4)));
+
+  // The ordinary case says nothing about a shortfall, because there is none.
+  for (let i = 1; i <= 4; i++) if (!existsSync(day(i))) writeFileSync(day(i), Buffer.alloc(100_000));
+  const fine = enforceBudget(policy, { ticksDir: dir, totalBytes: 1_200_000, tickBytes: 400_000, freeBytes: null });
+  assert.equal(fine.unreachableBytes, undefined);
+  assert.equal(fine.reason, "budget");
+
+  // Under budget and with room on the volume, nothing is touched at all.
+  const idle = enforceBudget(policy, { ticksDir: dir, totalBytes: 500_000, tickBytes: 200_000, freeBytes: null });
+  assert.deepEqual(idle, { removed: 0, freedBytes: 0 });
 });

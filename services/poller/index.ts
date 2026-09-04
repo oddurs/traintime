@@ -102,7 +102,9 @@ async function main() {
         uptimeS: now - startedAt,
         now, clock: tracker.clock, trains: tracker.size,
         feeds: { ...feeds, detail: monitor.snapshot(now) },
-        recorder: { ...recorder.counts, disk, summarised: rollupStatus() },
+        // `retention` carries the last maintenance pass, so a budget that cannot be met is visible
+        // to whatever is watching /health rather than only to whoever is reading the logs.
+        recorder: { ...recorder.counts, disk, summarised: rollupStatus(), retention: lastMaintenance?.budget ?? null },
         context: context.status(),
         timing: {
           learned: timing.isLearned, model: !!timing.model,
@@ -194,6 +196,12 @@ async function main() {
       if (rolled.days.length) console.log(`[maintenance] summarised ${rolled.days.join(", ")} into ${rolled.cells} cells`);
       if (Object.keys(pruned).length || Object.keys(compacted).length || budget.removed) {
         console.log(`[maintenance] pruned ${JSON.stringify(pruned)} compacted ${JSON.stringify(compacted)} budget ${JSON.stringify(budget)} disk ${(diskUsage().bytes / 1e6).toFixed(0)} MB`);
+      }
+      // A budget that cannot be met by deleting ticks is a configuration problem, not housekeeping:
+      // it will delete the whole tick archive on every pass and still be over. Say so every time.
+      if (budget.unreachableBytes) {
+        console.warn(`[maintenance] budget unreachable: the tables that cannot be evicted are ` +
+          `${(budget.unreachableBytes / 1e6).toFixed(0)} MB past it — raise DISK_BUDGET_BYTES or shorten a retention window`);
       }
     } catch (e) {
       console.error("[maintenance] failed:", e instanceof Error ? e.message : e);

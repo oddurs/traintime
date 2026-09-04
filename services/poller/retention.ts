@@ -42,13 +42,39 @@ export interface RetentionPolicy {
   freeFloorBytes: number;
 }
 
+/*
+ * What the windows cost, measured rather than guessed: ticks 820 MB/day, observations 33, events
+ * 6.5, trips 0.3. The defaults have to add up to something the volume can hold, because a policy
+ * that asks for more than exists does not degrade gracefully — it deletes the one table it is
+ * allowed to delete, for ever, without meeting the number it is deleting for.
+ *
+ *   events   365 days   2.37 GB   what every model learns from, and the cheapest table there is
+ *   obs       14 days   0.46 GB   the residual tables are the least starved of the three
+ *   trips    365 days   0.11 GB
+ *   ticks    the rest   ~1.5 GB   about two days, and only ever needed to re-derive the above
+ *                       -------
+ *                        4.5 GB   against a 5 GB volume
+ *
+ * Events went from 400 days to 365 for the arithmetic rather than the calendar, and observations
+ * from 30 days to 14 to buy that room back for ticks. The trade is deliberate: a year of events
+ * takes the per-hour run-time cells from a median of sixteen samples to about four hundred and
+ * fifty, and ticks buy no prediction accuracy at all — they exist so events can be re-derived when
+ * the tracker changes.
+ */
 export const DEFAULT_POLICY: RetentionPolicy = {
   ticksDays: Number(process.env.TICKS_RETENTION_DAYS ?? 3),
-  eventsDays: Number(process.env.EVENTS_RETENTION_DAYS ?? 400),
-  obsDays: Number(process.env.OBS_RETENTION_DAYS ?? 30),
+  eventsDays: Number(process.env.EVENTS_RETENTION_DAYS ?? 365),
+  obsDays: Number(process.env.OBS_RETENTION_DAYS ?? 14),
   compactAfterHours: 2,
-  budgetBytes: Number(process.env.DISK_BUDGET_BYTES ?? 3_000_000_000),
-  freeFloorBytes: Number(process.env.DISK_FREE_FLOOR_BYTES ?? 2_000_000_000),
+  budgetBytes: Number(process.env.DISK_BUDGET_BYTES ?? 4_500_000_000),
+  /*
+   * Small, because this volume has one job.
+   *
+   * Two gigabytes was a laptop's floor — the machine has other things to do and recording trains is
+   * not worth filling its disk. On a five-gigabyte volume mounted for exactly this, it meant three
+   * fifths of the volume was reserved against a use that does not exist.
+   */
+  freeFloorBytes: Number(process.env.DISK_FREE_FLOOR_BYTES ?? 400_000_000),
 };
 
 const DAY_MS = 86_400_000;
@@ -178,14 +204,47 @@ export function freeSpace(dir: string = REC_DIR): number | null {
   }
 }
 
+export interface BudgetResult {
+  removed: number;
+  freedBytes: number;
+  reason?: "budget" | "disk";
+  /**
+   * How far past the budget the tables this cannot evict have grown, in bytes.
+   *
+   * Zero in normal operation. Anything else means the budget is no longer satisfiable by deleting
+   * ticks, and the caller should say so rather than let it pass as housekeeping.
+   */
+  unreachableBytes?: number;
+}
+
 export function enforceBudget(
   policy: RetentionPolicy = DEFAULT_POLICY,
   /** Overridable so this can be exercised against a scratch directory. */
-  opts: { ticksDir?: string; totalBytes?: number; freeBytes?: number | null } = {},
-): { removed: number; freedBytes: number; reason?: "budget" | "disk" } {
+  opts: { ticksDir?: string; totalBytes?: number; tickBytes?: number; freeBytes?: number | null } = {},
+): BudgetResult {
   const dir = opts.ticksDir ?? join(REC_DIR, "ticks");
-  let bytes = opts.totalBytes ?? diskUsage().bytes;
+  const usage = opts.totalBytes === undefined || opts.tickBytes === undefined ? diskUsage() : null;
+  let bytes = opts.totalBytes ?? usage!.bytes;
   const free = opts.freeBytes !== undefined ? opts.freeBytes : freeSpace();
+
+  /*
+   * What the budget is actually asking of the only table this can delete.
+   *
+   * The budget is stated over the whole directory, and everything except ticks is out of reach
+   * here — events and observations age out on their own clocks and are deliberately never dropped
+   * for space. So the room ticks may occupy is the budget minus whatever the untouchable tables
+   * are already using, and when that goes negative the budget cannot be met at all.
+   *
+   * That state is reachable from the defaults rather than hypothetical: four hundred days of
+   * events and thirty of observations come to 3.7 GB against a 3 GB budget. What happened then was
+   * that every tick file but the newest was deleted, every cycle, the budget stayed breached, and
+   * nothing anywhere said so — the archive quietly emptied itself and the number it was emptying
+   * itself to satisfy was unreachable. Now the shortfall is returned and reported.
+   */
+  const tickBytes = opts.tickBytes ?? usage!.byTable.ticks ?? 0;
+  const untouchable = Math.max(0, bytes - tickBytes);
+  const unreachable = Math.max(0, untouchable - policy.budgetBytes);
+
   // Two ceilings: what this directory promised to stay under, and what the volume can still spare.
   // Whichever bites, the remedy is the same and the oldest ticks go first.
   const overBudget = bytes > policy.budgetBytes;
@@ -195,7 +254,7 @@ export function enforceBudget(
   const target = lowOnDisk && free !== null
     ? Math.max(0, bytes - (policy.freeFloorBytes - free))
     : policy.budgetBytes;
-  if (!existsSync(dir)) return { removed: 0, freedBytes: 0 };
+  if (!existsSync(dir)) return { removed: 0, freedBytes: 0, ...(unreachable ? { unreachableBytes: unreachable } : {}) };
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".parquet"))
     .map((f) => ({ f, full: join(dir, f), when: stampTime(f) ?? statSync(join(dir, f)).mtimeMs, size: statSync(join(dir, f)).size }))
@@ -207,7 +266,10 @@ export function enforceBudget(
     if (bytes <= target) break;
     try { unlinkSync(file.full); removed++; freed += file.size; bytes -= file.size; } catch {}
   }
-  return { removed, freedBytes: freed, reason: lowOnDisk ? "disk" : "budget" };
+  return {
+    removed, freedBytes: freed, reason: lowOnDisk ? "disk" : "budget",
+    ...(unreachable ? { unreachableBytes: unreachable } : {}),
+  };
 }
 
 /**
