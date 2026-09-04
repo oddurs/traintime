@@ -24,14 +24,19 @@ export interface Trunk {
    */
   lineToken?: keyof typeof PALETTE;
   /**
-   * Which of the two inks the character is set in.
+   * Which of the two inks the character is set in. The agency's own choice, everywhere.
    *
-   * The agency's own choice, except where measurement says it cannot be read. White on the L's
-   * #a7a9ac is 2.4 to 1 and on the G's #6cbe45 is 2.3 — on paper those bullets sit in a field of
-   * white and read as grey and green; on a black ground they are bright discs with nothing legible
-   * on them. Those three take black. Everything else keeps the ink the MTA prints, including white
-   * on the 6 Avenue orange at 3.0 to 1, which is at the floor and is the most recognised pairing
-   * in the system after the yellow.
+   * The yellow is the only ground the MTA sets in black, and this used to give black to the G, the
+   * L and the shuttles as well, on the grounds that white on #6cbe45 measures 2.3 to 1 and on
+   * #a7a9ac 2.4 — below any contrast floor worth naming. The measurement was right and the
+   * conclusion was wrong. These are not arbitrary marks that happen to need legible text on them;
+   * they are the bullets from the platform signs, and a G with a black character on it is not a
+   * hard-to-read G, it is a bullet nobody in New York has ever seen. Fidelity is the requirement,
+   * and where the two disagree, fidelity wins.
+   *
+   * So the rule is now a property of the ground rather than a list of exceptions: black only where
+   * the colour is genuinely light, which in this system means the yellow alone. audit-design.ts
+   * checks each trunk against that rule rather than against a contrast floor.
    */
   ink: "light" | "dark";
   /** The services that run on it, in the order the map bands them. */
@@ -45,9 +50,9 @@ export const TRUNKS: Record<string, Trunk> = {
   "8av": { name: "8 Avenue", token: "--trunk-8av", lineToken: "--line-8av", ink: "light", services: ["A", "C", "E"] },
   "6av": { name: "6 Avenue", token: "--trunk-6av", ink: "light", services: ["B", "D", "F", "FX", "M"] },
   broadway: { name: "Broadway", token: "--trunk-broadway", ink: "dark", services: ["N", "Q", "R", "W"] },
-  crosstown: { name: "Brooklyn–Queens Crosstown", token: "--trunk-crosstown", ink: "dark", services: ["G"] },
+  crosstown: { name: "Brooklyn–Queens Crosstown", token: "--trunk-crosstown", ink: "light", services: ["G"] },
   nassau: { name: "Nassau Street", token: "--trunk-nassau", ink: "light", services: ["J", "Z"] },
-  canarsie: { name: "14 Street–Canarsie", token: "--trunk-canarsie", ink: "dark", services: ["L"] },
+  canarsie: { name: "14 Street–Canarsie", token: "--trunk-canarsie", ink: "light", services: ["L"] },
   /**
    * The shuttles are their own line, not part of the Canarsie one.
    *
@@ -55,7 +60,7 @@ export const TRUNKS: Record<string, Trunk> = {
    * everything downstream of colour: zoomed out, the 42 St shuttle merged into the L, two services
    * that share no track and run in different boroughs.
    */
-  shuttle: { name: "Shuttles", token: "--trunk-shuttle", ink: "dark", services: ["GS", "FS", "H"] },
+  shuttle: { name: "Shuttles", token: "--trunk-shuttle", ink: "light", services: ["GS", "FS", "H"] },
   sir: { name: "Staten Island Railway", token: "--trunk-sir", ink: "light", services: ["SI"] },
 };
 

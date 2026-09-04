@@ -354,12 +354,19 @@ lines.forEach((raw, i) => {
 }
 
 /**
- * Every bullet's character can actually be read on its own ground.
+ * Every bullet is set in the ink the MTA prints.
  *
- * The MTA's inks are chosen for ink on paper, where a bullet sits in a field of white and its
- * colour reads as colour. On black the light ones are bright discs, and white on the L's grey is
- * 2.4 to 1 — a mark with nothing legible on it. The ink is the agency's except where measurement
- * says otherwise, and this is the measurement.
+ * This used to be a contrast floor, and the floor was the wrong instrument. White on the G's
+ * #6cbe45 measures 2.3 to 1 and on the L's #a7a9ac 2.4, so the floor demanded black on both — and
+ * black on a G is not a more legible G, it is a bullet that does not exist. These marks are copied
+ * from the platform signs; where legibility and fidelity disagree the sign wins, and the fix for a
+ * dim bullet is its size, not its ink.
+ *
+ * So the rule is a property of the ground: black only where the colour is genuinely light, which
+ * across the whole system means the yellow and nothing else. Stated as a threshold rather than a
+ * list, so a trunk added later is checked rather than merely absent from an exception list.
+ *
+ * (This clause was also in the file twice, verbatim, quietly reporting everything it found twice.)
  */
 {
   const srgb = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
@@ -367,72 +374,27 @@ lines.forEach((raw, i) => {
     const n = parseInt(hex.slice(1), 16);
     return 0.2126 * srgb(((n >> 16) & 255) / 255) + 0.7152 * srgb(((n >> 8) & 255) / 255) + 0.0722 * srgb((n & 255) / 255);
   };
-  const ratio = (a: string, b: string) => {
-    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
-    return (hi + 0.05) / (lo + 0.05);
-  };
   const trunks = readFileSync(join(process.cwd(), "src/lib/trunks.ts"), "utf8");
   const pal = readFileSync(join(process.cwd(), "src/lib/palette.ts"), "utf8");
   const colourOf = new Map<string, string>();
   for (const m of pal.matchAll(/"(--[\w-]+)":\s*"(#[0-9a-fA-F]{6})"/g)) colourOf.set(m[1], m[2]);
-  const ink = { light: colourOf.get("--ink-light") ?? "#ffffff", dark: colourOf.get("--ink-dark") ?? "#000000" };
-  // Bold text on a coloured ground: 3:1 is the large-text floor, and 6 Avenue's white on orange
-  // sits at 2.98 — the most recognised pairing in the system, kept deliberately and named here.
-  const FLOOR = 2.95;
+  /*
+   * Where the ink turns over. The Broadway yellow sits at 0.64 and the next lightest ground in the
+   * system — the crosstown green at 0.40 and the Canarsie grey at 0.40 — are far below it, so the
+   * threshold is nowhere near anything it has to separate finely.
+   */
+  const LIGHT_GROUND = 0.5;
   for (const m of trunks.matchAll(/(\w+):\s*\{\s*name:\s*"([^"]+)",\s*token:\s*"(--[\w-]+)"(?:,\s*lineToken:\s*"--[\w-]+")?,\s*ink:\s*"(light|dark)"/g)) {
     const [, id, , token, which] = m;
     const ground = colourOf.get(token);
     if (!ground) continue;
-    const got = ratio(ground, ink[which as "light" | "dark"]);
-    const other = ratio(ground, ink[which === "light" ? "dark" : "light"]);
+    const want = lum(ground) > LIGHT_GROUND ? "dark" : "light";
+    if (which === want) continue;
     const line = trunks.slice(0, m.index).split("\n").length;
-    if (got >= FLOOR) continue;
     findings.push({
-      line, kind: "contrast", file: "src/lib/trunks.ts",
+      line, kind: "ink", file: "src/lib/trunks.ts",
       text: `${id}: ${which} ink on ${ground}`,
-      detail: `${got.toFixed(2)}:1 — the other ink gives ${other.toFixed(2)}:1`,
-    });
-  }
-}
-
-/**
- * Every bullet's character can actually be read on its own ground.
- *
- * The MTA's inks are chosen for ink on paper, where a bullet sits in a field of white and its
- * colour reads as colour. On black the light ones are bright discs, and white on the L's grey is
- * 2.4 to 1 — a mark with nothing legible on it. The ink is the agency's except where measurement
- * says otherwise, and this is the measurement.
- */
-{
-  const srgb = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
-  const lum = (hex: string) => {
-    const n = parseInt(hex.slice(1), 16);
-    return 0.2126 * srgb(((n >> 16) & 255) / 255) + 0.7152 * srgb(((n >> 8) & 255) / 255) + 0.0722 * srgb((n & 255) / 255);
-  };
-  const ratio = (a: string, b: string) => {
-    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
-    return (hi + 0.05) / (lo + 0.05);
-  };
-  const trunks = readFileSync(join(process.cwd(), "src/lib/trunks.ts"), "utf8");
-  const pal = readFileSync(join(process.cwd(), "src/lib/palette.ts"), "utf8");
-  const colourOf = new Map<string, string>();
-  for (const m of pal.matchAll(/"(--[\w-]+)":\s*"(#[0-9a-fA-F]{6})"/g)) colourOf.set(m[1], m[2]);
-  const ink = { light: colourOf.get("--ink-light") ?? "#ffffff", dark: colourOf.get("--ink-dark") ?? "#000000" };
-  // Bold text on a coloured ground: 3:1 is the large-text floor, and 6 Avenue's white on orange
-  // sits at 2.98 — the most recognised pairing in the system, kept deliberately and named here.
-  const FLOOR = 2.95;
-  for (const m of trunks.matchAll(/(\w+):\s*\{\s*name:\s*"([^"]+)",\s*token:\s*"(--[\w-]+)"(?:,\s*lineToken:\s*"--[\w-]+")?,\s*ink:\s*"(light|dark)"/g)) {
-    const [, id, , token, which] = m;
-    const ground = colourOf.get(token);
-    if (!ground) continue;
-    const got = ratio(ground, ink[which as "light" | "dark"]);
-    const other = ratio(ground, ink[which === "light" ? "dark" : "light"]);
-    const line = trunks.slice(0, m.index).split("\n").length;
-    if (got >= FLOOR) continue;
-    findings.push({
-      line, kind: "contrast", file: "src/lib/trunks.ts",
-      text: `${id}: ${which} ink on ${ground}`,
-      detail: `${got.toFixed(2)}:1 — the other ink gives ${other.toFixed(2)}:1`,
+      detail: `the MTA sets this one in ${want} — its ground has luminance ${lum(ground).toFixed(2)}`,
     });
   }
 }

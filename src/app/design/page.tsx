@@ -89,8 +89,15 @@ export default function DesignPage() {
         An emblem and a line have different jobs. Ten of the eleven trunks clear 4:1 against the
         map&rsquo;s black ground and read at a two-pixel stroke; 8 Avenue does not, so its line is
         lifted from <code>#0039a6</code> to <code>#0053f3</code> — hue and saturation untouched —
-        while the bullet keeps the printed colour. The ink is the agency&rsquo;s too, except on the
-        three light grounds where white measures under 3:1 and cannot be read at all.
+        while the bullet keeps the printed colour.
+      </p>
+      <p>
+        The ink is the agency&rsquo;s everywhere, and only the Broadway yellow is set in black.
+        White on the crosstown green measures 2.3:1 and on the Canarsie grey 2.4:1, and for a while
+        those three trunks were given black on that evidence. The measurement was right and the
+        conclusion was wrong: these are the bullets from the platform signs, and a G with a black
+        character on it is not a hard-to-read G, it is one nobody in New York has ever seen. Where
+        legibility and fidelity disagree the sign wins, and the answer to a dim bullet is its size.
       </p>
       <div className="ds-stack">
         {index && Object.keys(TRUNKS).map((id) => (
