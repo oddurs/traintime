@@ -8,7 +8,8 @@ import { markTiming } from "@/lib/clientHealth";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
 import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
 import { Kinematics } from "@/lib/kinematics";
-import { addRouteIcons, bulletId, chevronId } from "@/lib/icons";
+import { addRouteIcons, buildTrainAtlas, bulletId, chevronId } from "@/lib/icons";
+import { STRIDE, TrainLayer, mercatorPerMetre, mercatorX, mercatorY, writeMark } from "@/lib/trainLayer";
 import { BOX } from "@/lib/roundel";
 import { STALLED_S } from "@/lib/format";
 import { paint } from "@/lib/mapTheme";
@@ -60,17 +61,16 @@ function fanned(p: TrainPosition, index: NetworkIndex, fan: { colour: number; me
 const NYC: [number, number] = [-73.955, 40.735];
 
 /*
- * How often the trains are handed to the renderer, from how fast they are actually moving on
- * screen.
+ * How often the map's GeoJSON sources are rebuilt, from how fast a train moves on screen.
  *
- * Motion is integrated every frame regardless; this is only how often the result is uploaded. It
- * was a flat thirty a second at every zoom, and the renderer's own cost is proportional to it:
- * parsing and tiling seven hundred features was taking more than half the main thread on a
- * throttled machine. At city zoom a train covers a quarter of a pixel per second, so thirty
- * uploads a second was a hundred and fifteen of them per pixel of movement.
+ * This used to govern the trains themselves, and that was the whole problem. Each update parsed
+ * and tiled seven hundred features on a worker, so it was rationed — down to four times a second
+ * at city zoom, which is what the stepping was. The trains are drawn from a buffer now and move at
+ * the frame rate; what is left on this clock is the ribbons and the platform counts, which are
+ * geometry rather than animation and cost the same as they always did.
  *
- * The rate now follows the movement: redraw about every 0.4 px a train travels, floored so the
- * map still answers a feed update promptly and capped so it never asks for more than a frame.
+ * The rate follows the movement: rebuild about every 0.4 px a train travels, floored so the map
+ * still answers a feed update promptly and capped so it never asks for more than a frame.
  */
 const TRAIN_SPEED = 15;
 const MOVE_PX = 0.4;
@@ -212,6 +212,18 @@ export default function TrainMap(props: Props) {
   /** The band each train was last riding, so one standing at a platform keeps its lane. */
   const lastBandRef = useRef(new Map<string, [number, number]>());
   const kinRef = useRef<Kinematics | null>(null);
+  /*
+   * The trains are drawn by trainLayer.ts rather than by a symbol layer. These hold the layer, the
+   * instance buffer it is fed from — reused, never reallocated per frame — and where each train
+   * was actually drawn, which is what a click has to be tested against now that the renderer no
+   * longer keeps queryable features for them.
+   */
+  const trainLayerRef = useRef<TrainLayer | null>(null);
+  const atlasRef = useRef<ReturnType<typeof buildTrainAtlas>>(null);
+  const marksRef = useRef(new Float32Array(1024 * STRIDE));
+  const drawnRef = useRef(new Map<string, [number, number]>());
+  /** What the slow source last held, so labels are only rebuilt when they actually change. */
+  const stackSigRef = useRef("");
   const readyRef = useRef(false);
   const layersRef = useRef(false);
   // Set once the map's own layers exist, so the effects that configure them know to run. Layers
@@ -280,11 +292,29 @@ export default function TrainMap(props: Props) {
        * up afterwards — and the further you zoom the further they swim, because the same eleven
        * pixels is four hundred metres at city zoom and nothing at all at street level.
        */
-      if (!map.isMoving() && ts - lastDraw < drawInterval(map.getZoom())) return;
-      lastDraw = ts;
+      /*
+       * The marks are rebuilt every frame; the GeoJSON sources are not.
+       *
+       * This used to gate everything, because everything went through a source and a source update
+       * is expensive. The trains no longer do — they are a buffer upload — so the only things left
+       * on the old cadence are the ribbons and the platform counts, which are geometry rather than
+       * animation and were never the reason the map looked slow.
+       */
+      const geoDue = map.isMoving() || ts - lastDraw >= drawInterval(map.getZoom());
+      if (geoDue) lastDraw = ts;
       const { visibleRoutes: vis, showRibbons: ribbons, selection: sel, highlight: hi, follow: fol } = live.current;
-      const points: GeoJSON.Feature[] = [];
       const bands: GeoJSON.Feature[] = [];
+      const rings: GeoJSON.Feature[] = [];
+      const stacks: GeoJSON.Feature[] = [];
+      const layer = trainLayerRef.current;
+      const atlas = atlasRef.current;
+      let marks = marksRef.current;
+      let n = 0;
+      const drawnPos = drawnRef.current;
+      drawnPos.clear();
+      // A speed in metres per second becomes a velocity in the frame the layer draws in. The
+      // latitude barely varies across the city, so this is worked out once for the view.
+      const mpu = mercatorPerMetre(map.getCenter().lat);
       // Trains are placed on the same fan the lines are drawn with. The renderer eases the lines
       // apart as a pixel offset, so the equivalent distance in metres is worked out for the zoom
       // being drawn and applied to each train — otherwise a train would sit on its line at one
@@ -342,31 +372,60 @@ export default function TrainMap(props: Props) {
           if (drawn.has(stackKey)) continue;
           drawn.add(stackKey);
         }
-        points.push({
-          type: "Feature",
-          properties: {
-            id: p.id, route: p.route,
-            /*
-             * The emblem, as an image: circle or diamond, its colour, its character, its casing —
-             * the same drawing the panel renders as SVG, from the same path. A train on the map is
-             * its own bullet rather than a coloured dot with a letter over it.
-             */
-            bullet: bulletId(p.route, p.phase === "unstarted" ? "parked"
-              : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain"),
-            ghost: p.phase === "unstarted" || !p.state.assigned || !!p.state.stale,
-            // How long since the feed last revised anything about this train. A train the MTA has
-            // not touched in forty minutes was being drawn exactly like one revised nine seconds
-            // ago, which is a claim about freshness we cannot support.
-            revised: Math.max(0, Math.round(t - (p.state.updatedAt ?? t))),
-            moving, bearing: Math.round(p.bearing),
-            chevron: chevronId(p.route), selected, highlighted: hi.has(p.id),
-            // How many trains this marker stands for. A train the viewer has selected is always
-            // drawn in its own right, so selecting one never makes it vanish under a pile.
-            stacked: selected ? 1 : stacked,
-          },
-          geometry: { type: "Point", coordinates: fanned(p, idx, fan, lastBand) },
-        });
-        if (p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
+        const shown = selected ? 1 : stacked;
+        const [lon, lat] = fanned(p, idx, fan, lastBand);
+        drawnPos.set(p.id, [lon, lat]);
+
+        if (atlas && layer) {
+          // Room for a bullet and a chevron for every train left to consider.
+          if ((n + 2) * STRIDE > marks.length) {
+            const bigger = new Float32Array(marks.length * 2);
+            bigger.set(marks);
+            marks = marksRef.current = bigger;
+          }
+          const x = mercatorX(lon), y = mercatorY(lat);
+          const rad = (p.bearing * Math.PI) / 180;
+          // Where it will be, rather than where it was: the shader carries a train forward from
+          // here, so a rebuild that arrives late still draws it in the right place.
+          const v = moving ? p.speed * mpu : 0;
+          const vx = Math.sin(rad) * v, vy = -Math.cos(rad) * v;
+          const ghost = p.phase === "unstarted" || !p.state.assigned || !!p.state.stale;
+          const revised = Math.max(0, t - (p.state.updatedAt ?? t));
+
+          const bullet = atlas.rect(bulletId(p.route, p.phase === "unstarted" ? "parked"
+            : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain"));
+          if (bullet) {
+            // Full strength while the feed is still revising it; fading as the record goes quiet,
+            // down to a train we are still drawing but no longer vouching for.
+            const fade = ghost ? 0.45 : 1 - 0.55 * Math.max(0, Math.min(1, (revised - 600) / 1800));
+            const lo = bullet.w * (shown > 1 ? 13 : 11) / BOX;
+            const hi = bullet.w * (shown > 1 ? 24 : 20) / BOX;
+            writeMark(marks, n++, x, y, vx, vy, bullet, lo, lo, hi, hi, 0, fade, 0);
+          }
+          if (moving) {
+            const chev = atlas.rect(chevronId(p.route));
+            // The chevron sits in the upper part of a taller mark, so turning it by the bearing
+            // puts it ahead of the bullet without any offset of its own.
+            if (chev) writeMark(marks, n++, x, y, vx, vy, chev,
+              chev.w * 0.42, chev.h * 0.42, chev.w * 0.85, chev.h * 0.85, rad, ghost ? 0.35 : 0.95, 1);
+          }
+        }
+
+        if (selected || hi.has(p.id)) {
+          rings.push({
+            type: "Feature",
+            properties: { selected },
+            geometry: { type: "Point", coordinates: [lon, lat] },
+          });
+        }
+        if (geoDue && shown > 1) {
+          stacks.push({
+            type: "Feature",
+            properties: { stacked: shown },
+            geometry: { type: "Point", coordinates: [lon, lat] },
+          });
+        }
+        if (geoDue && p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
           bands.push({
             type: "Feature",
             properties: { color: selected ? paint("--label") : idx.routeColor(p.route) },
@@ -375,8 +434,24 @@ export default function TrainMap(props: Props) {
         }
         if (fol && selected) map.setCenter([p.lon, p.lat]);
       }
-      (map.getSource("trains") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: points });
-      (map.getSource("ribbons") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: bands });
+      if (layer) {
+        layer.setMarks(marks, n, t);
+        // A custom layer only draws when the map draws, and nothing else has changed.
+        map.triggerRepaint();
+      }
+      // One or two features, so this stays cheap at the frame rate: the ring has to keep up with
+      // the train it is drawn around.
+      (map.getSource("trains") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: rings });
+      if (geoDue) {
+        (map.getSource("ribbons") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: bands });
+        // The counts sit at platforms and change only when a queue does, so they are handed over
+        // when they differ rather than on a clock.
+        const sig = `${Math.round(map.getZoom() * 10)}|${stacks.map((f) => `${f.properties!.stacked}@${(f.geometry as GeoJSON.Point).coordinates.join()}`).join(";")}`;
+        if (sig !== stackSigRef.current) {
+          stackSigRef.current = sig;
+          (map.getSource("train-stacks") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: stacks });
+        }
+      }
     };
     raf = requestAnimationFrame(frame);
 
@@ -398,12 +473,23 @@ export default function TrainMap(props: Props) {
       if (layersRef.current || !mapRef.current) return;
       layersRef.current = true;
       kinRef.current = new Kinematics(index);
-      addRouteIcons(map, index);
+      /*
+       * The marks go into one texture of our own rather than MapLibre's image atlas: nothing draws
+       * them as symbols any more. Where a canvas is unavailable the atlas comes back null and the
+       * symbol layers are registered instead, so the map still draws — slowly, but at all.
+       */
+      const atlas = buildTrainAtlas(index);
+      atlasRef.current = atlas;
+      if (!atlas) addRouteIcons(map, index);
 
       map.addSource("routes", { type: "geojson", data: routeLines(index) });
       map.addSource("stations", { type: "geojson", data: stationPoints(index, null) });
       map.addSource("ribbons", { type: "geojson", data: EMPTY });
+      // Two sources, split by how often they change rather than by what they mean: the ring
+      // follows a selected train every frame and is one feature; the counts sit at platforms and
+      // change only when the queue does.
       map.addSource("trains", { type: "geojson", data: EMPTY });
+      map.addSource("train-stacks", { type: "geojson", data: EMPTY });
       map.addSource("focus", { type: "geojson", data: EMPTY });
 
       // The weave. One casing-and-line pair per band level, lowest first, so a band crossing over
@@ -500,8 +586,10 @@ export default function TrainMap(props: Props) {
         },
       });
       map.addLayer({
+        // No filter: the source now carries only the trains that should be ringed, rather than
+        // every train with a flag on it. Leaving the old filter in place would have dropped a
+        // highlighted-but-unselected train, whose flag no longer exists.
         id: "train-highlight", type: "circle", source: "trains",
-        filter: ["any", ["get", "highlighted"], ["get", "selected"]],
         paint: {
           "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 9, 14, 16],
           "circle-color": "rgba(0,0,0,0)",
@@ -510,51 +598,22 @@ export default function TrainMap(props: Props) {
           "circle-stroke-opacity": 0.95,
         },
       });
+      /*
+       * The trains themselves, drawn by trainLayer.ts.
+       *
+       * This was two symbol layers on a GeoJSON source. Moving a symbol means handing the source
+       * new geometry, which re-tiles and rebuilds the buckets for every feature on a worker — so
+       * the trains were repositioned four times a second to keep the cost down, and four times a
+       * second is what stepping looks like. One instanced draw call from a buffer costs nothing
+       * per frame, so they move at the frame rate instead.
+       */
+      if (atlas) {
+        const layer = new TrainLayer(atlas, () => live.current.clock());
+        trainLayerRef.current = layer;
+        map.addLayer(layer);
+      }
       map.addLayer({
-        id: "train-chevrons", type: "symbol", source: "trains",
-        filter: ["get", "moving"],
-        layout: {
-          "icon-image": ["get", "chevron"],
-          "icon-rotate": ["get", "bearing"],
-          "icon-rotation-alignment": "map",
-          "icon-allow-overlap": true, "icon-ignore-placement": true,
-          "icon-size": ["interpolate", ["linear"], ["zoom"], 10, 0.42, 14, 0.85],
-        },
-        paint: { "icon-opacity": ["case", ["get", "ghost"], 0.35, 0.95] },
-      });
-      map.addLayer({
-        /*
-         * A train is its own bullet.
-         *
-         * This was a circle layer with a white ring and a separate label in the tile style's font,
-         * which is not the emblem the panel draws and not the one on any platform in the city.
-         * It is the same drawing now — the same path, the same Helvetica, the same colours, the
-         * same dark casing the lines have — rasterised from src/lib/roundel.ts into the image
-         * atlas. An express is a diamond here exactly as it is there.
-         *
-         * `icon-size` scales the hundred-unit drawing to the diameter the markers used to have, so
-         * nothing about the map's density changes; the mark inside it does.
-         */
-        id: "trains", type: "symbol", source: "trains",
-        layout: {
-          "icon-image": ["get", "bullet"],
-          "icon-size": [
-            "interpolate", ["linear"], ["zoom"],
-            10, ["/", ["case", [">", ["get", "stacked"], 1], 13, 11], BOX],
-            14, ["/", ["case", [">", ["get", "stacked"], 1], 24, 20], BOX],
-          ],
-          "icon-allow-overlap": true, "icon-ignore-placement": true,
-        },
-        paint: {
-          // Full strength while the feed is still revising it; fading as the record goes quiet,
-          // down to a train we are still drawing but no longer vouching for.
-          "icon-opacity": ["case", ["get", "ghost"], 0.45,
-            ["interpolate", ["linear"], ["get", "revised"], 600, 1, 2400, 0.45]],
-        },
-      });
-      map.addLayer({
-        id: "train-stack", type: "symbol", source: "trains", minzoom: 12,
-        filter: [">", ["get", "stacked"], 1],
+        id: "train-stack", type: "symbol", source: "train-stacks", minzoom: 12,
         layout: {
           // "×4" beside the bullet: four trains are waiting here, not one.
           "text-field": ["concat", "×", ["to-string", ["get", "stacked"]]],
@@ -570,23 +629,62 @@ export default function TrainMap(props: Props) {
       });
 
       const cursor = (on: boolean) => () => (map.getCanvas().style.cursor = on ? "pointer" : "");
-      for (const id of ["trains", "stations", "station-labels"]) {
+      for (const id of ["stations", "station-labels"]) {
         map.on("mouseenter", id, cursor(true));
         map.on("mouseleave", id, cursor(false));
       }
-      map.on("click", "trains", (e: MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-        const f = e.features?.[0];
-        if (f) live.current.onSelect({ kind: "train", id: String(f.properties?.id) });
+
+      /*
+       * Which train is under the pointer.
+       *
+       * The renderer used to answer this: the trains were features in a symbol layer and
+       * `queryRenderedFeatures` found them. They are instances in a buffer now, which nothing can
+       * query, so the hit test is ours — over the positions the last frame actually drew, which is
+       * the same set the eye is picking from, stacked trains included as the one mark that stands
+       * for them.
+       */
+      const HIT_PX = 14;
+      const pickTrain = (point: maplibregl.Point): string | null => {
+        let best: string | null = null;
+        let bestD = HIT_PX * HIT_PX;
+        for (const [id, at] of drawnRef.current) {
+          const p = map.project(at);
+          const dx = p.x - point.x, dy = p.y - point.y;
+          const d = dx * dx + dy * dy;
+          if (d <= bestD) { bestD = d; best = id; }
+        }
+        return best;
+      };
+
+      // Hover runs on every pointer move, and the scan is over every train on screen — often a
+      // few hundred. Ten times a second is past the point anyone can tell.
+      let hoverAt = 0;
+      let overTrain = false;
+      map.on("mousemove", (e) => {
+        const now = performance.now();
+        if (now - hoverAt < 100) return;
+        hoverAt = now;
+        const over = pickTrain(e.point) !== null;
+        if (over === overTrain) return;
+        overTrain = over;
+        if (over) map.getCanvas().style.cursor = "pointer";
+        else if (!map.queryRenderedFeatures(e.point, { layers: ["stations", "station-labels"] }).length) {
+          map.getCanvas().style.cursor = "";
+        }
       });
+
       const pickStation = (e: MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-        if (map.queryRenderedFeatures(e.point, { layers: ["trains"] }).length) return;
+        // A train drawn over a station wins, the way it did when the renderer decided.
+        if (pickTrain(e.point)) return;
         const f = e.features?.[0];
         if (f) live.current.onSelect({ kind: "station", id: String(f.properties?.id) });
       };
       map.on("click", "stations", pickStation);
       map.on("click", "station-labels", pickStation);
       map.on("click", (e) => {
-        const hits = map.queryRenderedFeatures(e.point, { layers: ["trains", "stations", "station-labels"] });
+        const train = pickTrain(e.point);
+        if (train) return live.current.onSelect({ kind: "train", id: train });
+        const hits = map.queryRenderedFeatures(e.point, { layers: ["stations", "station-labels"] });
         if (hits.length === 0) live.current.onSelect({ kind: "none" });
       });
 

@@ -93,6 +93,91 @@ function bullet(route: string, index: NetworkIndex, state: BulletState, ratio: n
   return g.getImageData(0, 0, c.width, c.height);
 }
 
+/**
+ * Every mark a train can be drawn as, in one texture.
+ *
+ * MapLibre keeps its own atlas for symbol layers, but a symbol layer cannot animate: moving one
+ * means handing the source new geometry, which re-tiles and rebuilds the symbol buckets for every
+ * feature, on a worker, across a thread boundary. That is why the trains were repositioned four
+ * times a second instead of sixty. The custom layer in trainLayer.ts draws them itself, and it
+ * needs its own atlas — one texture, so the whole system is one draw call.
+ *
+ * The marks are the same rasterisers the symbol layers used, so a train is the same drawing it
+ * has always been; only who uploads it has changed.
+ */
+export interface AtlasRect {
+  /** Where the mark sits in the texture, normalised. */
+  u0: number; v0: number; u1: number; v1: number;
+  /**
+   * How big it is in layout units — its pixels divided by the ratio it was rasterised at, which is
+   * what MapLibre's `icon-size` multiplies and therefore what the on-screen size is derived from.
+   */
+  w: number; h: number;
+}
+
+export interface TrainAtlas {
+  image: ImageData;
+  width: number;
+  height: number;
+  rect: (id: string) => AtlasRect | undefined;
+}
+
+const ATLAS_WIDTH = 2048;
+const PAD = 1;
+
+/**
+ * Pack every bullet and chevron into one texture.
+ *
+ * Shelf packing, tallest first: the marks are all much the same size, so anything cleverer would
+ * buy nothing. Returns null where there is no canvas to draw on, and the caller keeps the symbol
+ * layers — this is an optimisation, not a dependency.
+ */
+export function buildTrainAtlas(index: NetworkIndex): TrainAtlas | null {
+  const ratio = Math.min(3, Math.max(2, Math.round((globalThis.devicePixelRatio || 1) * SCALE)));
+  const marks: { id: string; img: ImageData; ratio: number }[] = [];
+  for (const route of Object.keys(index.net.routes)) {
+    const ch = chevron(index.routeLineColor(route), ratio);
+    if (ch) marks.push({ id: chevronId(route), img: ch, ratio });
+    for (const state of ["plain", "hold", "parked"] as BulletState[]) {
+      const b = bullet(route, index, state, BULLET_RATIO);
+      if (b) marks.push({ id: bulletId(route, state), img: b, ratio: BULLET_RATIO });
+    }
+  }
+  if (!marks.length) return null;
+
+  marks.sort((a, b) => b.img.height - a.img.height);
+  const placed = new Map<string, { x: number; y: number; w: number; h: number; ratio: number }>();
+  let x = PAD, y = PAD, shelf = 0;
+  for (const m of marks) {
+    const { width: w, height: h } = m.img;
+    if (x + w + PAD > ATLAS_WIDTH) { x = PAD; y += shelf + PAD; shelf = 0; }
+    placed.set(m.id, { x, y, w, h, ratio: m.ratio });
+    x += w + PAD;
+    shelf = Math.max(shelf, h);
+  }
+  const height = y + shelf + PAD;
+
+  const c = document.createElement("canvas");
+  c.width = ATLAS_WIDTH;
+  c.height = height;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  if (!g) return null;
+  for (const m of marks) {
+    const at = placed.get(m.id)!;
+    g.putImageData(m.img, at.x, at.y);
+  }
+  const image = g.getImageData(0, 0, ATLAS_WIDTH, height);
+  const rects = new Map<string, AtlasRect>();
+  for (const [id, at] of placed) {
+    rects.set(id, {
+      u0: at.x / ATLAS_WIDTH, v0: at.y / height,
+      u1: (at.x + at.w) / ATLAS_WIDTH, v1: (at.y + at.h) / height,
+      w: at.w / at.ratio, h: at.h / at.ratio,
+    });
+  }
+  return { image, width: ATLAS_WIDTH, height, rect: (id) => rects.get(id) };
+}
+
 /** Register a chevron and a bullet per service, in each state; safe to call more than once. */
 export function addRouteIcons(map: MapLibreMap, index: NetworkIndex) {
   const ratio = Math.min(3, Math.max(2, Math.round((globalThis.devicePixelRatio || 1) * SCALE)));
