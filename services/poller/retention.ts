@@ -78,6 +78,11 @@ export const DEFAULT_POLICY: RetentionPolicy = {
 };
 
 const DAY_MS = 86_400_000;
+/**
+ * Slack on top of a merge's own size, so a compaction that just fits does not leave a volume with
+ * nothing left for the flush that follows it.
+ */
+const MERGE_HEADROOM_BYTES = 128_000_000;
 const stampOf = (file: string) => file.replace(/\.parquet$/, "").replace(/^rebuilt-/, "").replace(/^daily-/, "");
 const isDaily = (file: string) => file.startsWith("daily-");
 
@@ -103,9 +108,13 @@ export function stampTime(file: string): number | null {
  */
 export function cleanTemp(): number {
   let removed = 0;
-  for (const table of TABLES) {
-    const dir = join(REC_DIR, table);
-    if (!existsSync(dir)) continue;
+  if (!existsSync(REC_DIR)) return removed;
+  // Every directory, not just the recorder's: the summariser stages `<day>.tmp.parquet` under
+  // `rollups/` with the same rename-when-complete discipline, and a crash there left a partial
+  // file that nothing was looking for.
+  for (const entry of readdirSync(REC_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const dir = join(REC_DIR, entry.name);
     for (const f of readdirSync(dir)) {
       if (!f.startsWith("tmp_") && !f.endsWith(".tmp.parquet")) continue;
       try { unlinkSync(join(dir, f)); removed++; } catch {}
@@ -133,19 +142,29 @@ function dedupe(table: (typeof TABLES)[number], read: string): string {
   }
 }
 
+/**
+ * What the recordings occupy, counted over every directory under `rec/` rather than over TABLES.
+ *
+ * The list was the bug. `rollups/` is written by the summariser and is not a recorder table, so a
+ * budget stated over "total storage" could not see it — the summaries that exist precisely so a
+ * year of history fits a 5 GB volume were the one thing the 5 GB ceiling did not count, and the
+ * gap grew with every day summarised. Walking the directory means the next thing to write here is
+ * accounted for on the day it appears rather than the day someone remembers the list.
+ */
 export function diskUsage(): { bytes: number; files: number; byTable: Record<string, number> } {
   let bytes = 0, files = 0;
   const byTable: Record<string, number> = {};
-  for (const table of TABLES) {
-    const dir = join(REC_DIR, table);
-    if (!existsSync(dir)) continue;
+  if (!existsSync(REC_DIR)) return { bytes, files, byTable };
+  for (const entry of readdirSync(REC_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const dir = join(REC_DIR, entry.name);
     let t = 0;
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".parquet")) continue;
       t += statSync(join(dir, f)).size;
       files++;
     }
-    byTable[table] = t;
+    byTable[entry.name] = t;
     bytes += t;
   }
   return { bytes, files, byTable };
@@ -250,10 +269,13 @@ export function enforceBudget(
   const overBudget = bytes > policy.budgetBytes;
   const lowOnDisk = free !== null && free < policy.freeFloorBytes;
   if (!overBudget && !lowOnDisk) return { removed: 0, freedBytes: 0 };
-  // When the disk is the problem, free enough to clear the floor rather than the whole budget.
-  const target = lowOnDisk && free !== null
-    ? Math.max(0, bytes - (policy.freeFloorBytes - free))
-    : policy.budgetBytes;
+  // When both bite, the tighter one wins. Taking the disk's target because the disk was low left
+  // the budget still breached at the end of a pass that had just deleted for it, so it took two
+  // passes — two hours — to reach a number one pass had the information to reach.
+  const targets: number[] = [];
+  if (overBudget) targets.push(policy.budgetBytes);
+  if (lowOnDisk && free !== null) targets.push(Math.max(0, bytes - (policy.freeFloorBytes - free)));
+  const target = Math.min(...targets);
   if (!existsSync(dir)) return { removed: 0, freedBytes: 0, ...(unreachable ? { unreachableBytes: unreachable } : {}) };
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".parquet"))
@@ -284,7 +306,12 @@ export function enforceBudget(
  * a crash can now do is leave the sources behind to be merged a second time, which is why the
  * merge also de-duplicates: repeating it has to be harmless.
  */
-export async function compact(conn: DuckDBConnection, policy: RetentionPolicy = DEFAULT_POLICY): Promise<Record<string, number>> {
+export async function compact(
+  conn: DuckDBConnection,
+  policy: RetentionPolicy = DEFAULT_POLICY,
+  /** Overridable so the "there is no room for this" path can be exercised on a disk that has room. */
+  opts: { freeBytes?: number | null } = {},
+): Promise<Record<string, number>> {
   const merged: Record<string, number> = {};
   const cutoff = Date.now() - policy.compactAfterHours * 3_600_000;
   for (const table of TABLES) {
@@ -306,6 +333,22 @@ export async function compact(conn: DuckDBConnection, policy: RetentionPolicy = 
       // already in the daily file, and skipping it would leave the duplicate there for good.
       if (files.length < 2 && !existsSync(target)) continue;
       const sources = [...files, ...(existsSync(target) ? [target] : [])];
+      /*
+       * Compaction that does not fit is compaction that fills the volume and then fails.
+       *
+       * The merge writes the whole day again, under a temporary name, before a byte of the day can
+       * be removed — so a day of ticks needs its own size free on top of itself. At the defaults a
+       * day of ticks is about 820 MB and the budget leaves roughly half that, which means the merge
+       * could not have succeeded: it wrote until the disk was full and left the poller a volume
+       * with nothing on it to spare. Better to leave the day in small files and say why.
+       */
+      const need = sources.reduce((n, f) => n + statSync(f).size, 0);
+      const free = opts.freeBytes !== undefined ? opts.freeBytes : freeSpace(dir);
+      if (free !== null && free < need + MERGE_HEADROOM_BYTES) {
+        console.warn(`[maintenance] skipped compacting ${table}/${day}: needs ${(need / 1e6).toFixed(0)} MB ` +
+          `to merge and ${(free / 1e6).toFixed(0)} MB is free`);
+        continue;
+      }
       const list = sources.map((f) => `'${f}'`).join(", ");
       const tmp = join(dir, `daily-${day}.tmp.parquet`);
       const read = `read_parquet([${list}], union_by_name=true)`;

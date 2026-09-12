@@ -102,3 +102,50 @@ test("a budget the untouchable tables have already broken is reported, not silen
   const idle = enforceBudget(policy, { ticksDir: dir, totalBytes: 500_000, tickBytes: 200_000, freeBytes: null });
   assert.deepEqual(idle, { removed: 0, freedBytes: 0 });
 });
+
+/**
+ * The budget is a promise about a directory, so it has to be measured over the directory. It was
+ * measured over a list of table names instead, and `rollups/` is not a table — so the summaries
+ * that exist precisely so a year of history fits the volume were invisible to the ceiling meant to
+ * keep it fitting, and the gap grew with every day summarised.
+ */
+test("disk usage counts every directory under rec/, including the ones that are not tables", async () => {
+  const { diskUsage } = await import("../services/poller/retention");
+  const rec = join(root, "rec");
+  for (const d of ["events", "rollups"]) mkdirSync(join(rec, d), { recursive: true });
+  writeFileSync(join(rec, "events", "2026-08-01.parquet"), Buffer.alloc(1_000));
+  writeFileSync(join(rec, "rollups", "2026-08-01.parquet"), Buffer.alloc(4_000));
+
+  const usage = diskUsage();
+  assert.equal(usage.byTable.rollups, 4_000, "the summaries occupy the volume and must be counted");
+  assert.ok(usage.bytes >= 5_000, "the total includes them too");
+});
+
+/**
+ * Compaction rewrites a whole day before it may delete any of it, so it needs that day's size free
+ * on top of the day itself. At the defaults a day of ticks is about 820 MB against a few hundred
+ * megabytes of headroom — the merge could not have succeeded, and what it did instead was write
+ * until the volume was full and then fail, leaving the poller no room to flush into. A day left in
+ * small files is slower to read; a full volume stops the recording altogether.
+ */
+test("compaction that would not fit is skipped, not attempted", async () => {
+  const { compact } = await import("../services/poller/retention");
+  const dir = join(root, "rec", "trips");
+  mkdirSync(dir, { recursive: true });
+  const names = ["2026-08-28T01-00-00.parquet", "2026-08-28T02-00-00.parquet"];
+  for (const n of names) writeFileSync(join(dir, n), Buffer.alloc(2_000));
+  const backdated = new Date(Date.now() - 6 * 3600_000);
+  for (const f of readdirSync(dir)) utimesSync(join(dir, f), backdated, backdated);
+
+  const db = await DuckDBInstance.create(":memory:");
+  const conn = await db.connect();
+  // Not a byte to spare. The files are not even valid Parquet — if the guard let the merge start,
+  // DuckDB would reject them and this would throw rather than return.
+  const merged = await compact(conn, undefined, { freeBytes: 1_000 });
+  conn.closeSync(); db.closeSync();
+
+  assert.deepEqual(merged, {}, "nothing was merged");
+  for (const n of names) assert.ok(existsSync(join(dir, n)), `${n} is left where it was`);
+  assert.ok(!existsSync(join(dir, "daily-2026-08-28.parquet")), "no half-written daily file");
+  assert.ok(!readdirSync(dir).some((f) => f.endsWith(".tmp.parquet")), "and nothing partial behind");
+});

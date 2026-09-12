@@ -79,6 +79,51 @@ running service, and priced for that; a cold protobuf archive does not belong on
 The accuracy win needs none of this. A year of events is 2.37 GB and fits the volume already paid
 for, which is why the retention change above was worth making on its own.
 
+## How the volume filled anyway
+
+Measured 12 September 2026, from a poller that had been in a crash loop since the small hours.
+
+The volume hit 4,998 MB of 5,000 and the poller died every five minutes with
+`IO Error: Could not write file ".../ticks/….parquet": No space left on device`. Four separate
+defects had to line up, and each one on its own would have been survivable:
+
+1. **Housekeeping freed space last.** The hourly pass ran `flush → compact → rollup → prune →
+   enforceBudget`. Every step that writes came before every step that deletes, and the whole pass
+   sat in one `try`. On a full volume it threw on its first line and pruning never ran — the only
+   code that could free the disk was sequenced behind three operations that needed it freed.
+2. **Compaction could never have fit.** Merging a day rewrites it entirely before deleting any of
+   it, so a day of ticks needs its own 820 MB free on top of itself; the budget leaves about 490.
+   So the merge wrote until the disk was full and then failed — which is the likeliest way the
+   last 490 MB went in the first place.
+3. **A failed flush killed the process.** The interval callback was `async` and nothing awaited
+   it, so Node's default for an unhandled rejection turned a full disk into an uncaught exception.
+   The poller died at minute five of every boot, which meant the hourly pass — even correctly
+   ordered — was never once reached.
+4. **The budget could not see `rollups/`.** `diskUsage()` walked `TABLES`, and the summariser's
+   output is not a table. The summaries that exist so a year of history fits the volume were the
+   one thing the ceiling keeping it fitting did not count.
+
+What changed: deleting is split out as `reclaim()` and runs first in the pass, on every boot, and
+again whenever a flush reports no space. Each housekeeping step fails on its own now instead of
+cancelling the rest. Compaction checks it has room before it starts and skips the day if it does
+not. `diskUsage()` and `cleanTemp()` walk every directory under `rec/` rather than a list of names.
+And when the budget and the free floor both bite, the tighter of the two wins, so one pass reaches
+the number one pass had the information to reach.
+
+## Ticks will not be compacted at this volume size
+
+The consequence of the free-space check, stated plainly: a day of ticks is ~820 MB and the budget
+leaves ~490 MB free, so tick compaction is skipped and says so once an hour. Lowering the budget
+far enough to afford the merge costs about a day of ticks to buy back the room to tidy the day
+before it — the largest table cannot be compacted without reserving its own size, and on a 5 GB
+volume that trade does not pay.
+
+The unresolved question is whether ticks should be exempt from compaction outright rather than
+attempted and skipped. Compaction exists to keep reads fast, and ticks are read only to re-derive
+events; events and observations are 7 MB and 33 MB a day and merge for almost nothing. Leaving
+ticks as ~288 flush files a day is the honest default if that is the trade — but it should be
+written down as a decision rather than emerge from a warning nobody reads.
+
 ---
 
 # Not built yet

@@ -33,6 +33,8 @@ const MODEL_PATH = join(DATA_DIR, "eta-model.json");
 const TIMING_SNAPSHOT = join(ROOT, "public", "data", "timing.json");
 const MODEL_SNAPSHOT = join(ROOT, "public", "data", "eta-model.json");
 const LEARN_ENABLED = process.env.NIGHTLY_LEARN !== "0";
+/** DuckDB reports a full volume through its own IO error, so this is matched on text, not errno. */
+const OUT_OF_SPACE = /No space left on device|ENOSPC/i;
 
 function loadJson<T>(path: string): T | null {
   try { return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as T) : null; } catch { return null; }
@@ -175,49 +177,124 @@ async function main() {
   contextTick();
   setInterval(contextTick, 5 * 60_000);
 
-  setInterval(async () => {
-    const w = await recorder.flush();
-    if (Object.keys(w).length) console.log(`[recorder] flushed ${Object.entries(w).map(([k, v]) => `${k}=${v}`).join(" ")}`);
-  }, FLUSH_EVERY * 1000);
+  /**
+   * Free space. Nothing here writes, so this is the only housekeeping that still works on a volume
+   * with nothing left — which is exactly when housekeeping matters.
+   *
+   * It used to run last. Compaction and summarising both write a merged file before removing what
+   * they merged, and the flush at the top of the pass writes too, so on a full disk the pass threw
+   * on its first line and took pruning and the budget down with it. The only code that could free
+   * the volume was sequenced behind three operations that needed the volume freed. Deleting needs
+   * no room, so it goes first, and it is callable from anywhere that has just been told there is
+   * none.
+   */
+  const reclaim = (why: string) => {
+    const cleaned = cleanTemp();
+    const pruned = prune();
+    const budget = enforceBudget();
+    if (cleaned || Object.keys(pruned).length || budget.removed) {
+      console.log(`[maintenance] reclaimed (${why}): cleaned=${cleaned} pruned=${JSON.stringify(pruned)} ` +
+        `budget=${JSON.stringify(budget)} disk=${(diskUsage().bytes / 1e6).toFixed(0)}MB`);
+    }
+    // A budget that cannot be met by deleting ticks is a configuration problem, not housekeeping:
+    // it will delete the whole tick archive on every pass and still be over. Say so every time.
+    if (budget.unreachableBytes) {
+      console.warn(`[maintenance] budget unreachable: the tables that cannot be evicted are ` +
+        `${(budget.unreachableBytes / 1e6).toFixed(0)} MB past it — raise DISK_BUDGET_BYTES or shorten a retention window`);
+    }
+    return { pruned, budget };
+  };
+
+  /**
+   * One housekeeping step, which may fail without ending the pass.
+   *
+   * The pass was a single try/catch, so whichever step failed first cancelled every step after it.
+   * They are independent pieces of work and a bad day for one is not a reason to skip the rest.
+   */
+  const step = async <T>(name: string, fn: () => Promise<T>): Promise<T | null> => {
+    try { return await fn(); } catch (e) {
+      console.error(`[maintenance] ${name} failed: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  };
+
+  /**
+   * A flush that fails must not end the process.
+   *
+   * It did. The interval callback was `async` and nothing awaited it, so a rejected flush became an
+   * unhandled rejection, and Node's default for those is to throw — a full volume killed the poller
+   * five minutes after every boot, before the hourly pass that would have freed it could run once.
+   * The recording a caught flush loses is one flush; the recording the crash loop lost was all of
+   * them, indefinitely.
+   */
+  const flushOnce = async () => {
+    try {
+      const w = await recorder.flush();
+      if (Object.keys(w).length) console.log(`[recorder] flushed ${Object.entries(w).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[recorder] flush failed: ${msg}`);
+      // No space is the one failure with an obvious remedy, and waiting up to an hour for the
+      // scheduled pass to apply it is an hour of flushes failing the same way.
+      if (OUT_OF_SPACE.test(msg)) reclaim("flush: no space");
+    }
+  };
+  setInterval(() => void flushOnce(), FLUSH_EVERY * 1000);
 
   // Housekeeping: bound the disk and keep the file count sane. Hourly is often enough.
-  setInterval(async () => {
-    try {
-      await recorder.flush();
-      cleanTemp();
-      const compacted = await compact(recorder.connection);
-      // Summarise days old enough that the model no longer trains on them, before pruning can
-      // reach them. The statistics outlive the rows, so a year of history stays learnable on a
-      // volume that could never hold a year of observations.
-      const rolled = await rollup(recorder.connection);
-      const pruned = prune();
-      const budget = enforceBudget();
-      lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted, budget, rolled };
-      if (rolled.days.length) console.log(`[maintenance] summarised ${rolled.days.join(", ")} into ${rolled.cells} cells`);
-      if (Object.keys(pruned).length || Object.keys(compacted).length || budget.removed) {
-        console.log(`[maintenance] pruned ${JSON.stringify(pruned)} compacted ${JSON.stringify(compacted)} budget ${JSON.stringify(budget)} disk ${(diskUsage().bytes / 1e6).toFixed(0)} MB`);
-      }
-      // A budget that cannot be met by deleting ticks is a configuration problem, not housekeeping:
-      // it will delete the whole tick archive on every pass and still be over. Say so every time.
-      if (budget.unreachableBytes) {
-        console.warn(`[maintenance] budget unreachable: the tables that cannot be evicted are ` +
-          `${(budget.unreachableBytes / 1e6).toFixed(0)} MB past it — raise DISK_BUDGET_BYTES or shorten a retention window`);
-      }
-    } catch (e) {
-      console.error("[maintenance] failed:", e instanceof Error ? e.message : e);
+  const maintain = async (why: string) => {
+    const { pruned, budget } = reclaim(why);
+    await step("flush", () => recorder.flush());
+    const compacted = await step("compact", () => compact(recorder.connection)) ?? {};
+    // Summarise days old enough that the model no longer trains on them, before pruning can
+    // reach them. The statistics outlive the rows, so a year of history stays learnable on a
+    // volume that could never hold a year of observations.
+    const rolled = await step("rollup", () => rollup(recorder.connection));
+    // Flushing, compacting and summarising all just wrote. Hold the ceiling at the end of the pass
+    // as well as the start, so the next hour begins inside the budget rather than over it.
+    const after = enforceBudget();
+    // Both ends of the pass enforce the same ceiling. Report them added together, rather than
+    // leaving whoever reads /health to guess which half did the work.
+    const total = { ...after, removed: budget.removed + after.removed, freedBytes: budget.freedBytes + after.freedBytes };
+    lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted, budget: total, rolled: rolled ?? undefined };
+    if (rolled?.days.length) console.log(`[maintenance] summarised ${rolled.days.join(", ")} into ${rolled.cells} cells`);
+    if (Object.keys(compacted).length || after.removed) {
+      console.log(`[maintenance] compacted ${JSON.stringify(compacted)} budget ${JSON.stringify(total)} disk ${(diskUsage().bytes / 1e6).toFixed(0)} MB`);
     }
-  }, 3_600_000);
+  };
+
+  /*
+   * Reclaim before the first feed is ever polled.
+   *
+   * The hourly timer is unreachable to a process that does not survive the hour, which is the state
+   * a full volume put this one in: crash at minute five, restart, crash at minute five. Recovery
+   * has to be something a boot does, not something a boot schedules — and since deleting is the
+   * half that needs no room, a boot can always do it. The feeds start on timers below, so this
+   * synchronous pass is complete before the first tick is recorded.
+   */
+  reclaim("startup");
+  setInterval(() => void maintain("hourly"), 3_600_000);
 
   // Nightly learning, at the quietest hour, with a held-out test before anything is adopted.
   const scheduleLearn = () => {
     const wait = msUntilNightly();
     setTimeout(async () => {
-      if (LEARN_ENABLED) {
-        console.log("[learn] starting nightly rebuild");
-        await recorder.flush();
-        lastLearn = await learnOnce(net);
-        console.log(`[learn] ${lastLearn.adopted ? "ADOPTED" : "kept incumbent"}: ${lastLearn.reason}`);
-        if (lastLearn.adopted) reload();
+      // A rebuild that throws must cost one night, not every night after it. Unguarded, the
+      // rejection ended the process and — because the next timer is armed at the end of this
+      // callback and never reached — the rebuild would not have come back even if it had not.
+      try {
+        if (LEARN_ENABLED) {
+          console.log("[learn] starting nightly rebuild");
+          // The rebuild reads what the flush is about to write, so a full volume fails it here
+          // rather than halfway through. Reclaim first: this is the one hour it is worth waiting.
+          reclaim("nightly");
+          await recorder.flush();
+          lastLearn = await learnOnce(net);
+          console.log(`[learn] ${lastLearn.adopted ? "ADOPTED" : "kept incumbent"}: ${lastLearn.reason}`);
+          if (lastLearn.adopted) reload();
+        }
+      } catch (e) {
+        console.error(`[learn] nightly rebuild failed: ${e instanceof Error ? e.message : e}`);
       }
       scheduleLearn();
     }, wait);
