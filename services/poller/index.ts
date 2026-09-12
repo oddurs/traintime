@@ -192,6 +192,10 @@ async function main() {
     const cleaned = cleanTemp();
     const pruned = prune();
     const budget = enforceBudget();
+    // Record it. The two moments this runs outside the scheduled pass — a boot onto a full volume
+    // and a flush that found no space — are the two most worth seeing, and reporting them only to
+    // the log meant /health answered `retention: null` about the recovery it had just performed.
+    lastMaintenance = { at: Math.floor(Date.now() / 1000), pruned, compacted: {}, budget, ...(lastMaintenance?.rolled ? { rolled: lastMaintenance.rolled } : {}) };
     if (cleaned || Object.keys(pruned).length || budget.removed) {
       console.log(`[maintenance] reclaimed (${why}): cleaned=${cleaned} pruned=${JSON.stringify(pruned)} ` +
         `budget=${JSON.stringify(budget)} disk=${(diskUsage().bytes / 1e6).toFixed(0)}MB`);

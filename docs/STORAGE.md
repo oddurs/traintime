@@ -82,6 +82,7 @@ for, which is why the retention change above was worth making on its own.
 ## How the volume filled anyway
 
 Measured 12 September 2026, from a poller that had been in a crash loop since the small hours.
+Memory was never near it: the peak was 5.1 GB against an 8 GB limit.
 
 The volume hit 4,998 MB of 5,000 and the poller died every five minutes with
 `IO Error: Could not write file ".../ticks/….parquet": No space left on device`. Four separate
@@ -100,8 +101,10 @@ defects had to line up, and each one on its own would have been survivable:
    The poller died at minute five of every boot, which meant the hourly pass — even correctly
    ordered — was never once reached.
 4. **The budget could not see `rollups/`.** `diskUsage()` walked `TABLES`, and the summariser's
-   output is not a table. The summaries that exist so a year of history fits the volume were the
-   one thing the ceiling keeping it fitting did not count.
+   output is not a table. This one is latent rather than guilty: the live volume holds 0 MB of
+   rollups, so it contributed nothing here — see "the rollup that has never run" below. It is
+   listed because it is the same mistake as the other three, and it would have mattered on the
+   day the summariser started working.
 
 What changed: deleting is split out as `reclaim()` and runs first in the pass, on every boot, and
 again whenever a flush reports no space. Each housekeeping step fails on its own now instead of
@@ -110,19 +113,28 @@ not. `diskUsage()` and `cleanTemp()` walk every directory under `rec/` rather th
 And when the budget and the free floor both bite, the tighter of the two wins, so one pass reaches
 the number one pass had the information to reach.
 
-## Ticks will not be compacted at this volume size
+## What recovery looked like, and when compaction stops fitting
 
-The consequence of the free-space check, stated plainly: a day of ticks is ~820 MB and the budget
-leaves ~490 MB free, so tick compaction is skipped and says so once an hour. Lowering the budget
-far enough to afford the merge costs about a day of ticks to buy back the room to tidy the day
-before it — the largest table cannot be compacted without reserving its own size, and on a 5 GB
-volume that trade does not pay.
+The first boot of the fixed poller reclaimed the volume from 4,998 MB to **3,258 MB** — ticks 2,989,
+eta_obs 218, events 46, trips 5, rollups 0 — and came back with 8/8 feeds and 492 trains. Most of
+that was not the budget: it was twelve hours of `prune` that could not run, deleting ticks past
+their three days and observations past their fourteen.
 
-The unresolved question is whether ticks should be exempt from compaction outright rather than
-attempted and skipped. Compaction exists to keep reads fast, and ticks are read only to re-derive
-events; events and observations are 7 MB and 33 MB a day and merge for almost nothing. Leaving
-ticks as ~288 flush files a day is the honest default if that is the trade — but it should be
-written down as a decision rather than emerge from a warning nobody reads.
+So there is about 1.7 GB free today and compaction fits comfortably. It will not stay that way. The
+budget binds as events accumulate — they are 46 MB now and 2.37 GB at a year — and at saturation
+`rec/` sits at the 4.5 GB budget with roughly 490 MB free. A day of ticks is ~820 MB and a merge
+needs that much again before it may delete anything, so **tick compaction starts being skipped once
+events have grown in**, and says so once an hour.
+
+Lowering the budget far enough to afford the merge costs about a day of ticks to buy back the room
+to tidy the day before it: the largest table cannot be compacted without reserving its own size, and
+on a 5 GB volume that trade does not pay.
+
+The open question is whether ticks should be exempt from compaction outright rather than attempted
+and skipped. Compaction exists to keep reads fast, and ticks are read only to re-derive events;
+events and observations are 6.5 MB and 33 MB a day and merge for almost nothing. Leaving ticks as
+~288 flush files a day is probably the honest default — but it should be written down as a decision
+rather than emerge from a warning nobody reads.
 
 ---
 
