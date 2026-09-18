@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DuckDBInstance } from "@duckdb/node-api";
@@ -55,7 +55,8 @@ test("compaction merges without losing rows, and repeating it changes nothing", 
   await compact(conn);
   const after = await countRows(dir);
   assert.equal(after, before, "compaction must not lose a single row");
-  assert.ok(existsSync(join(dir, "daily-2026-08-29.parquet")), "a daily file should exist");
+  // Ticks merge by the hour, not the day: both seeded files are in hour 01.
+  assert.ok(existsSync(join(dir, "hourly-2026-08-29T01.parquet")), "an hourly file should exist");
   assert.ok(!readdirSync(dir).some((f) => f.endsWith(".tmp.parquet")), "no partial file may be left behind");
 
   // Simulate the crash window: the merged file is in place and a source reappears. Merging again
@@ -147,5 +148,87 @@ test("compaction that would not fit is skipped, not attempted", async () => {
   assert.deepEqual(merged, {}, "nothing was merged");
   for (const n of names) assert.ok(existsSync(join(dir, n)), `${n} is left where it was`);
   assert.ok(!existsSync(join(dir, "daily-2026-08-28.parquet")), "no half-written daily file");
+  assert.ok(!existsSync(join(dir, "hourly-2026-08-28T01.parquet")), "nor an hourly one");
   assert.ok(!readdirSync(dir).some((f) => f.endsWith(".tmp.parquet")), "and nothing partial behind");
+
+  // These are deliberately not valid Parquet, and the data directory is shared by every test in
+  // this file — so they have to go, or the next test to compact with room reads them and fails.
+  for (const n of names) unlinkSync(join(dir, n));
+});
+
+
+/**
+ * The grouping is the whole reason compaction can run at all. A merge rewrites its group before it
+ * may delete any of it, so a group of ticks has to be something the volume can hold twice — and a
+ * day of them is not. This pins which table gets which unit, because getting it wrong is silent:
+ * the merge is skipped for want of room and the files it existed to collapse simply stay.
+ */
+test("ticks merge by the hour and everything else by the day", async () => {
+  const { compact, stampTime } = await import("../services/poller/retention");
+  const backdated = new Date(Date.now() - 6 * 3600_000);
+  // Two hours of one day, two flush files each.
+  const files = [
+    { name: "2026-07-04T05-00-00.parquet", rows: [[1, "gtfs"]] as [number, string][] },
+    { name: "2026-07-04T05-30-00.parquet", rows: [[2, "gtfs"]] as [number, string][] },
+    { name: "2026-07-04T06-00-00.parquet", rows: [[3, "gtfs"]] as [number, string][] },
+    { name: "2026-07-04T06-30-00.parquet", rows: [[4, "gtfs"]] as [number, string][] },
+  ];
+  const prepare = async (table: string) => {
+    const d = join(root, "rec", table);
+    mkdirSync(d, { recursive: true });
+    await seed(d, files);
+    for (const f of readdirSync(d)) utimesSync(join(d, f), backdated, backdated);
+    return d;
+  };
+  const ticks = await prepare("ticks");
+  const events = await prepare("events");
+
+  const db = await DuckDBInstance.create(":memory:");
+  const conn = await db.connect();
+  await compact(conn);
+  conn.closeSync(); db.closeSync();
+
+  // One merged file per hour for ticks, because a day of them cannot be rewritten in place.
+  assert.ok(existsSync(join(ticks, "hourly-2026-07-04T05.parquet")), "hour 05 merged on its own");
+  assert.ok(existsSync(join(ticks, "hourly-2026-07-04T06.parquet")), "hour 06 merged on its own");
+  assert.ok(!existsSync(join(ticks, "daily-2026-07-04.parquet")), "and never as a whole day");
+  // Events are small enough that a day is the right unit, and a year of days is cheap to read.
+  assert.ok(existsSync(join(events, "daily-2026-07-04.parquet")), "events merged as one day");
+  assert.equal(readdirSync(events).filter((f) => f.startsWith("hourly-")).length, 0);
+  // Every source is gone, and no partial file anywhere.
+  for (const f of files) assert.ok(!existsSync(join(ticks, f.name)), `${f.name} was consumed`);
+  for (const d of [ticks, events]) assert.ok(!readdirSync(d).some((f) => f.endsWith(".tmp.parquet")));
+
+  // An hourly stamp has to parse, or prune and the budget cannot tell how old the file is — and a
+  // name that says nothing falls back to mtime, which the merge has just reset to now.
+  assert.equal(stampTime("hourly-2026-07-04T05.parquet"), Date.UTC(2026, 6, 4, 5, 0, 0));
+  assert.equal(stampTime("daily-2026-07-04.parquet"), Date.UTC(2026, 6, 4, 0, 0, 0));
+  assert.equal(stampTime("2026-07-04T05-30-00.parquet"), Date.UTC(2026, 6, 4, 5, 30, 0));
+});
+
+/**
+ * The summariser has to finish with a day before `prune` reaches it. These two windows were set by
+ * two unrelated constants, one moved, and the pair became unsatisfiable — so nothing was ever
+ * summarised and `/health` reported that as "nothing to summarise".
+ */
+test("the rollup window always falls inside the observation window", async () => {
+  const { rollupAfterDays } = await import("../services/poller/rollup");
+  const policy = (obsDays: number) => ({
+    ticksDays: 3, eventsDays: 365, obsDays, compactAfterHours: 2,
+    budgetBytes: 4_500_000_000, freeFloorBytes: 400_000_000,
+  });
+
+  delete process.env.ROLLUP_AFTER_DAYS;
+  assert.equal(rollupAfterDays(policy(14)), 13, "a day of margin inside a 14-day window");
+  assert.equal(rollupAfterDays(policy(30)), 29);
+  assert.equal(rollupAfterDays(policy(1)), 1, "never zero or negative");
+
+  // The value that shipped. It has to be pulled back inside the window rather than honoured.
+  process.env.ROLLUP_AFTER_DAYS = "21";
+  assert.equal(rollupAfterDays(policy(14)), 13, "an override past the window cannot disable the rollup");
+  process.env.ROLLUP_AFTER_DAYS = "7";
+  assert.equal(rollupAfterDays(policy(14)), 7, "an override inside the window is honoured");
+  process.env.ROLLUP_AFTER_DAYS = "nonsense";
+  assert.equal(rollupAfterDays(policy(14)), 13);
+  delete process.env.ROLLUP_AFTER_DAYS;
 });

@@ -83,8 +83,28 @@ const DAY_MS = 86_400_000;
  * nothing left for the flush that follows it.
  */
 const MERGE_HEADROOM_BYTES = 128_000_000;
-const stampOf = (file: string) => file.replace(/\.parquet$/, "").replace(/^rebuilt-/, "").replace(/^daily-/, "");
-const isDaily = (file: string) => file.startsWith("daily-");
+const stampOf = (file: string) => file.replace(/\.parquet$/, "").replace(/^(rebuilt|daily|hourly)-/, "");
+const isMerged = (file: string) => /^(daily|hourly)-/.test(file);
+
+/**
+ * What one merged file covers, per table.
+ *
+ * A merge rewrites its whole group before it may delete any of it, so the group has to be something
+ * the volume can hold twice over. Grouping ticks by day asked for a merge that could never run: a
+ * day of them is ~820 MB against a few hundred megabytes of headroom, so it was skipped every hour
+ * for ever and the day stayed as the 288 flush files the grouping existed to collapse. An hour of
+ * ticks is ~34 MB and always fits, which turns a 288-file day into a 24-file one — most of the win,
+ * at a cost the budget can actually pay.
+ *
+ * Everything else is two orders of magnitude smaller — a day of events is 6.5 MB, of observations
+ * 33 MB — and stays on days, which is what makes a year of them cheap to read.
+ */
+const GROUP: Partial<Record<(typeof TABLES)[number], "hour">> = { ticks: "hour" };
+/** `2026-09-16T02-15-30` → `2026-09-16T02` by hour, `2026-09-16` by day. */
+const groupKey = (table: (typeof TABLES)[number], file: string) =>
+  stampOf(file).slice(0, GROUP[table] === "hour" ? 13 : 10);
+const mergedName = (table: (typeof TABLES)[number], key: string) =>
+  `${GROUP[table] === "hour" ? "hourly" : "daily"}-${key}.parquet`;
 
 /**
  * When a file's contents are from, in epoch ms, or null if the name does not say.
@@ -95,7 +115,7 @@ const isDaily = (file: string) => file.startsWith("daily-");
  * Names are produced from toISOString(), so they are UTC.
  */
 export function stampTime(file: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2})-(\d{2})-(\d{2}))?$/.exec(stampOf(file));
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2})(?:-(\d{2})(?:-(\d{2}))?)?)?$/.exec(stampOf(file));
   if (!m) return null;
   const [, y, mo, d, h, mi, se] = m;
   return Date.UTC(+y, +mo - 1, +d, +(h ?? 0), +(mi ?? 0), +(se ?? 0));
@@ -318,16 +338,16 @@ export async function compact(
     const dir = join(REC_DIR, table);
     if (!existsSync(dir)) continue;
     mkdirSync(dir, { recursive: true });
-    const byDay = new Map<string, string[]>();
+    const byGroup = new Map<string, string[]>();
     for (const f of readdirSync(dir)) {
-      if (!f.endsWith(".parquet") || isDaily(f)) continue;
+      if (!f.endsWith(".parquet") || isMerged(f)) continue;
       const full = join(dir, f);
       if (statSync(full).mtimeMs > cutoff) continue;
-      const day = stampOf(f).slice(0, 10);
-      (byDay.get(day) ?? byDay.set(day, []).get(day)!).push(full);
+      const key = groupKey(table, f);
+      (byGroup.get(key) ?? byGroup.set(key, []).get(key)!).push(full);
     }
-    for (const [day, files] of byDay) {
-      const target = join(dir, `daily-${day}.parquet`);
+    for (const [day, files] of byGroup) {
+      const target = join(dir, mergedName(table, day));
       // Normally there is nothing to do until two files have accumulated. But a single leftover
       // beside an existing daily file is the signature of a crash mid-compaction: its rows are
       // already in the daily file, and skipping it would leave the duplicate there for good.

@@ -113,28 +113,58 @@ not. `diskUsage()` and `cleanTemp()` walk every directory under `rec/` rather th
 And when the budget and the free floor both bite, the tighter of the two wins, so one pass reaches
 the number one pass had the information to reach.
 
-## What recovery looked like, and when compaction stops fitting
+## What recovery looked like
 
 The first boot of the fixed poller reclaimed the volume from 4,998 MB to **3,258 MB** — ticks 2,989,
 eta_obs 218, events 46, trips 5, rollups 0 — and came back with 8/8 feeds and 492 trains. Most of
 that was not the budget: it was twelve hours of `prune` that could not run, deleting ticks past
-their three days and observations past their fourteen.
+their three days and observations past their fourteen. Fifteen days later it is stable at 4,235 MB
+inside a 4,500 MB budget, with 51,000 fetches and two errors.
 
-So there is about 1.7 GB free today and compaction fits comfortably. It will not stay that way. The
-budget binds as events accumulate — they are 46 MB now and 2.37 GB at a year — and at saturation
-`rec/` sits at the 4.5 GB budget with roughly 490 MB free. A day of ticks is ~820 MB and a merge
-needs that much again before it may delete anything, so **tick compaction starts being skipped once
-events have grown in**, and says so once an hour.
+## Why a merge is grouped by the hour, not the day
 
-Lowering the budget far enough to afford the merge costs about a day of ticks to buy back the room
-to tidy the day before it: the largest table cannot be compacted without reserving its own size, and
-on a 5 GB volume that trade does not pay.
+Measured 18 September 2026, from the hourly pass:
 
-The open question is whether ticks should be exempt from compaction outright rather than attempted
-and skipped. Compaction exists to keep reads fast, and ticks are read only to re-derive events;
-events and observations are 6.5 MB and 33 MB a day and merge for almost nothing. Leaving ticks as
-~288 flush files a day is probably the honest default — but it should be written down as a decision
-rather than emerge from a warning nobody reads.
+```
+[maintenance] skipped compacting ticks/2026-09-16: needs 973 MB to merge and 578 MB is free
+[maintenance] skipped compacting ticks/2026-09-17: needs 928 MB to merge and 578 MB is free
+[maintenance] compacted {"ticks":5,"events":12,"eta_obs":13,"trips":13} ... disk 4235 MB
+```
+
+A merge rewrites its whole group before it may delete any of it, so the group has to be something
+the volume can hold **twice**. Grouping ticks by day asked for 973 MB against 578 MB free, which is
+not a shortfall that a bigger budget fixes: the budget is what leaves the headroom, so raising one
+lowers the other. The largest table cannot be rewritten a day at a time on a volume sized for three
+days of it, at any setting.
+
+So the unit is now per-table. Ticks group by hour — ~34 MB, which always fits — and everything else
+still groups by day. A tick day goes from 288 flush files to 24 rather than to 1, which is most of
+the read-speed win for a cost the budget can actually pay. Events are 6.5 MB a day and observations
+33 MB, so a day of those merges for almost nothing and a year of them stays cheap to read.
+
+## The rollup could never have run
+
+`/health` reported `summarised: { days: 0, from: null, to: null }` and this was read as "there was
+nothing to summarise". It was not. Two windows had to agree and did not:
+
+```
+rollup eligible at   21 days   (ROLLUP_AFTER_DAYS)
+prune deletes at     14 days   (obsDays)
+```
+
+Every observation day was deleted a full week before it became eligible, so the pair was
+unsatisfiable and the summariser was unreachable — not slow, not broken, just never called with
+anything. The learner's cold-history path in `scripts/learn-timing.ts`, the one commented
+"everything already summarised — these are the months the raw rows no longer exist for", was always
+going to add zero rows.
+
+It was reachable once: the observation window was 30 days until the retention tightening in
+`81e34f1` cut it to 14 to buy disk back for ticks. Nothing connected the two numbers, so one moved
+and the other did not. That is the actual defect, and the fix is not a better constant —
+`rollupAfterDays()` now derives the window from the policy as `obsDays - 1`, which is twenty-four
+hourly chances to summarise a day before it is pruned, and clamps any `ROLLUP_AFTER_DAYS` override
+back inside the window with a warning. There is no pair of values a future tightening can leave in
+this state.
 
 ---
 
@@ -158,16 +188,6 @@ and a `rebuild-events` that can read from it.
 the same factor, and it does not work: `rebuild-events` derives arrivals and departures from
 consecutive tick diffs, so 30-second sampling blurs event timestamps by ±30 s against a 56 s median
 dwell. Ticks are all-or-nothing. Tiering is the only way to keep them.
-
-## The rollup that has never run
-
-`/health` reports `summarised: { days: 0, from: null, to: null }`. Whatever `services/poller/rollup.ts`
-was meant to produce, it has produced nothing, so there is no middle tier between full fidelity and
-gone — which is exactly the tier that would let ticks age out without losing their information.
-
-Either it should emit real daily summaries of ticks on their way out, or it should be deleted. Dead
-code that claims to summarise is worse than no code, because `summarised: {days: 0}` reads as "there
-was nothing to summarise" rather than "this has never worked".
 
 ## What more data will not fix
 

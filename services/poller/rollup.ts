@@ -16,10 +16,43 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { HORIZONS } from "../../src/lib/timing";
 import { BUCKET_S } from "../../src/lib/histogram";
 import { REC_DIR } from "./recorder";
+import { DEFAULT_POLICY, type RetentionPolicy } from "./retention";
 
-/** Days of raw observations to keep. The model trains on these; the tables can use the rollups. */
-export const ROLLUP_AFTER_DAYS = Number(process.env.ROLLUP_AFTER_DAYS ?? 21);
 const DAY = 86_400;
+
+/**
+ * How old a day must be before it is summarised — which has to be strictly inside the window the
+ * raw observations are kept for, and was not.
+ *
+ * This was a constant 21 against an observation window of 14, so every day was deleted by `prune`
+ * a full week before it became eligible, and the two numbers could never both be satisfied. The
+ * summariser was not slow or broken: it was unreachable. `/health` said `summarised: {days: 0}`,
+ * which reads as "there was nothing to summarise", and the learner's cold-history path — the one
+ * that is supposed to carry the months whose rows no longer exist — was always going to be empty.
+ *
+ * It was reachable once. The window was 30 days until the retention tightening in 81e34f1 cut it
+ * to 14 to buy disk back for ticks, and nothing connected the two numbers, so one of them moved
+ * and the other did not. Deriving it from the policy is the fix: there is no pair of values a
+ * future tightening can leave in this state.
+ */
+export function rollupAfterDays(policy: RetentionPolicy = DEFAULT_POLICY): number {
+  // One day of margin. The pass runs hourly, so that is twenty-four chances to summarise a day
+  // before it is pruned — enough that a restart or a failed pass cannot cost the day.
+  const latest = Math.max(1, policy.obsDays - 1);
+  const configured = process.env.ROLLUP_AFTER_DAYS;
+  if (configured === undefined) return latest;
+  const n = Number(configured);
+  if (!Number.isFinite(n) || n < 1) {
+    console.warn(`[rollup] ROLLUP_AFTER_DAYS=${configured} is not a positive number; using ${latest}`);
+    return latest;
+  }
+  if (n > latest) {
+    console.warn(`[rollup] ROLLUP_AFTER_DAYS=${n} is outside the ${policy.obsDays}-day observation ` +
+      `window, so nothing would ever be summarised; using ${latest}`);
+    return latest;
+  }
+  return n;
+}
 
 const dir = (name: string) => join(REC_DIR, name);
 const dayOf = (file: string) => /(\d{4}-\d{2}-\d{2})/.exec(file)?.[1] ?? null;
@@ -49,7 +82,11 @@ export interface RollupResult { days: string[]; cells: number; freedRows: number
  * Summarise every complete day older than the cutoff that has not been summarised already, then
  * drop the raw files for those days.
  */
-export async function rollup(conn: DuckDBConnection, now = Math.floor(Date.now() / 1000)): Promise<RollupResult> {
+export async function rollup(
+  conn: DuckDBConnection,
+  now = Math.floor(Date.now() / 1000),
+  policy: RetentionPolicy = DEFAULT_POLICY,
+): Promise<RollupResult> {
   const obsDir = dir("eta_obs"), outDir = dir("rollups");
   if (!existsSync(obsDir)) return { days: [], cells: 0, freedRows: 0 };
   mkdirSync(outDir, { recursive: true });
@@ -57,7 +94,7 @@ export async function rollup(conn: DuckDBConnection, now = Math.floor(Date.now()
   const done = new Set<string>();
   for (const f of readdirSync(outDir)) { const d = dayOf(f); if (d) done.add(d); }
 
-  const cutoff = now - ROLLUP_AFTER_DAYS * DAY;
+  const cutoff = now - rollupAfterDays(policy) * DAY;
   const byDay = new Map<string, string[]>();
   for (const f of readdirSync(obsDir)) {
     if (!f.endsWith(".parquet")) continue;
