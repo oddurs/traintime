@@ -167,7 +167,63 @@ export function fanAt(zoom: number): { colour: number; metric: number } {
 }
 
 /** The zooms the renderer is given the curve at; between them it interpolates. */
-const FAN_STOPS = [10, 12, 13, 13.4, 13.6, 13.8, 14, 14.2, 14.6, 15, 16, 17, 18, 19, 20];
+/**
+ * The zooms the curve is sampled at, chosen so the straight lines between them stay within a
+ * tenth of a pixel of it.
+ *
+ * It was a hand-written list of fifteen, and the samples were in the right places for the reveal
+ * and the wrong places for everything above it — one stop per zoom level from 16 to 20, across the
+ * stretch where the curve bends hardest and then kinks. Measured against the real curve, the worst
+ * band in the network came out **2.9 px** adrift at zoom 18.1, which is most of a line's width and
+ * far more than the sub-pixel errors render-2 went after.
+ *
+ * It mattered more than a list of stops sounds like it should, because the trains do *not* go
+ * through this: they carry their band into the shader and are offset by `fanAt` itself. So every
+ * pixel of error here was a train sitting that far off its own line — statically, as a function of
+ * zoom, sliding in and out as you scrolled through the range.
+ *
+ * Chosen rather than written: the three places the curve is not smooth are pinned, and each gap
+ * between them is bisected until linear interpolation is inside the tolerance for the largest
+ * bands the network contains. `tests/network.test.ts` holds those bounds to the real data.
+ */
+const FAN_MIN = 10, FAN_MAX = 20;
+/** Where the curve changes character: the reveal opens, closes, and the geometry takes over. */
+const FAN_BREAKS = [MERGE_BELOW, SEPARATE_ABOVE, Math.log2((156_543.03 * Math.cos((40.73 * Math.PI) / 180) * TARGET_PX) / TRACK_M)];
+/** A tenth of a pixel. A line is one to four pixels wide, so this is not a visible difference. */
+const FAN_TOL_PX = 0.1;
+/**
+ * The largest bands to hold the tolerance for. Comfortably past the network's real maxima — a
+ * corridor would have to gain three more tracks before these bind — and a test keeps them honest.
+ */
+export const FAN_BOUND = { cb: 2, mb: 4 };
+
+/** How far the straight line from `a` to `b` strays from the curve, in pixels, for those bounds. */
+function fanGap(z: number, a: number, b: number): number {
+  const fa = fanAt(a), fb = fanAt(b), f = fanAt(z);
+  const t = b === a ? 0 : (z - a) / (b - a);
+  return FAN_BOUND.cb * Math.abs(fa.colour + (fb.colour - fa.colour) * t - f.colour)
+       + FAN_BOUND.mb * Math.abs(fa.metric + (fb.metric - fa.metric) * t - f.metric);
+}
+
+function buildFanStops(): number[] {
+  const out: number[] = [];
+  const refine = (a: number, b: number) => {
+    let worst = 0;
+    for (let i = 1; i < 16; i++) worst = Math.max(worst, fanGap(a + ((b - a) * i) / 16, a, b));
+    // The floor stops a kink that no sampling can straddle from bisecting for ever.
+    if (worst > FAN_TOL_PX && b - a > 1 / 128) {
+      const m = (a + b) / 2;
+      refine(a, m);
+      refine(m, b);
+    } else out.push(a);
+  };
+  const edges = [FAN_MIN, ...FAN_BREAKS.filter((z) => z > FAN_MIN && z < FAN_MAX).sort((x, y) => x - y), FAN_MAX];
+  for (let i = 1; i < edges.length; i++) refine(edges[i - 1], edges[i]);
+  out.push(FAN_MAX);
+  return out;
+}
+
+const FAN_STOPS = buildFanStops();
 
 /**
  * The renderer's version of the same curve, as a MapLibre expression giving a feature's offset.

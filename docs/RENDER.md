@@ -169,6 +169,77 @@ render-3: the casing margin drifting because width samples three zoom stops and 
 fifteen, and `line-offset` displacing vertices that were tessellated for the un-offset centreline.
 Neither of those has been touched yet.
 
+## render-3 — the widths, and what was actually wrong with them
+
+Both of this milestone's stated defects were checked before any of it was built. One did not
+survive; the other was real, larger than anything render-2 chased, and had nothing to do with what
+the plan said it was.
+
+### The casing margin does not drift
+
+The claim was that width samples three zoom stops while offset samples fifteen, so the casing margin
+breathes between them. Width and offset are independent quantities — one sets thickness, the other
+position — so there is no interaction that could make a margin breathe, and the two width curves use
+the *same* three stops as each other. Computed exactly:
+
+```
+zoom    10     11     12     13     14     15     16    17+
+line   1.10   1.50   1.90   2.30   2.93   3.57   4.20   4.20
+casing 2.30   2.83   3.37   3.90   4.80   5.70   6.60   6.60
+margin 0.600  0.667  0.733  0.800  0.933  1.067  1.200  1.200   per side
+```
+
+Monotonic, smooth, and flat above zoom 16. A thicker line gets a proportionally thinner casing —
+0.545 of line width at zoom 10 down to 0.286 at 16 — which reads as a deliberate taper, not a bug.
+Nothing here shimmers.
+
+### The fan the renderer draws strayed four pixels from the fan itself
+
+The real defect, and it is the one a viewer would describe as the widths going janky while scrolling
+in. `bandOffsetExpression` samples `fanAt` at a hand-written list of fifteen zooms and lets MapLibre
+draw straight lines between them. Those samples were placed for the reveal and left one per zoom
+level everywhere else — and a chord across a steep stretch of a smoothstep is nowhere near it.
+
+Measured over the zoom range the map can actually reach (`minZoom` 9.5, `maxZoom` 17), for one
+four-track corridor — the A's, spanning bands −3.469 to +3.469:
+
+```
+                          worst corridor-width error     worst single band
+15 hand-picked stops           4.16 px at zoom 13.50       2.08 px
+41 adaptive stops              0.17 px at zoom 15.43       0.10 px
+```
+
+Zoom 13.50 is where it peaks, and that is the worst place for it to be: 13.4 to 14.2 is the reveal,
+where a trunk stops being one line per colour and becomes one line per service. The chord from the
+13.4 sample to the 13.6 sample overshoots the curve by four pixels, so **the corridor springs open
+early and then settles back** exactly as you scroll through the split. Through 15.4 to 16.6 it runs
+half a pixel to one and a half pixels narrow.
+
+It mattered more than a list of stops sounds like it should, because since render-2 the trains do
+not go through this list at all — they carry their band into the shader and are offset by `fanAt`
+itself. Every pixel between the samples and the curve was a train sitting that far off its own line.
+At 2.08 px for the worst band that is five times the camera staleness render-2 was built to remove,
+it is there at rest rather than only during a gesture, and it is at a zoom people use.
+
+The fix is not a better hand-written list. `buildFanStops()` pins the three places the curve is not
+smooth — the reveal opening at 13.4, closing at 14.2, and the geometry taking over at 18.114 — and
+bisects each gap until linear interpolation is inside a tenth of a pixel for the largest bands the
+network contains. Forty-one stops, and two tests hold it: one on the tolerance, one checking the
+bounds still cover the real network, because a corridor gaining a track would quietly widen the
+bands past what the stops assume.
+
+### The custom line layer is not justified by any of this
+
+`0012` and `0013` were filed to own the weave geometry so "widths stop shimmering and joins come out
+right". Neither half now stands on its own evidence. The widths were the sampling, fixed above. The
+joins were inspected at the tightest thing in the network — the A/C's ninety-degree turn at Broadway
+Junction, at zoom 14.3, where an eleven-pixel offset is comparable to the curve radius in pixels —
+and the parallel bands hold their spacing through the bend with no pinching or crossing.
+
+They stay open, because render-4 needs a line vertex buffer to resolve arc-length against and the
+ring and platform counts are still positioned by longitude and latitude. But the case for them is
+now that, and not the widths.
+
 ## What the measurement corrected in the plan
 
 **Our own frame callback was never the problem.** `cb mean` is 0.4–0.6 ms at 1× and 1.5–2.4 ms at

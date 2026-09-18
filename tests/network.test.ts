@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NetworkIndex, fanAt, bandOffsetExpression, TRACK_M, metresPerPixel } from "../src/lib/network";
+import { NetworkIndex, fanAt, bandOffsetExpression, FAN_BOUND, TRACK_M, metresPerPixel } from "../src/lib/network";
 import { distM } from "../src/lib/geo";
 import { TRUNKS, serviceColours } from "../src/lib/trunks";
 import type { LonLat, Network } from "../src/lib/types";
@@ -296,4 +296,56 @@ test("the weave has a consistent over-and-under", () => {
   // And there are enough levels for the bands that actually exist: clamping is the failure mode.
   assert.ok(zOf(widest) > 0 && zOf(-widest) < LEVELS - 1,
     `band ${widest} is clamped onto its neighbour's draw level`);
+});
+
+/**
+ * The renderer reads the fan as a list of samples with straight lines between them, and the trains
+ * do not — they carry their band into the shader and are offset by `fanAt` itself. So every pixel
+ * between the samples and the curve is a train sitting that far off its own line, statically, as a
+ * function of zoom.
+ *
+ * The hand-written list of fifteen stops put its samples where the reveal is and left one per zoom
+ * level over the range where the curve bends hardest and then kinks. That was 2.9 px adrift at zoom
+ * 18.1 for the largest band in the network — most of a line's width, and thirty times the sub-pixel
+ * errors render-2 chased.
+ */
+test("the drawn fan never strays a tenth of a pixel from the real one", () => {
+  const expr = bandOffsetExpression(1) as unknown[];
+  const zs: number[] = [];
+  for (let i = 3; i < expr.length; i += 2) zs.push(expr[i] as number);
+  assert.ok(zs.length > 3, "the expression should carry a stop list");
+  assert.ok(zs.every((z, i) => i === 0 || z > zs[i - 1]), "stops must ascend");
+
+  // What the renderer draws, for a feature at the bounds the stops were chosen to hold.
+  const drawn = (z: number) => {
+    const at = (k: number) => { const f = fanAt(k); return FAN_BOUND.cb * f.colour + FAN_BOUND.mb * f.metric; };
+    if (z <= zs[0]) return at(zs[0]);
+    if (z >= zs[zs.length - 1]) return at(zs[zs.length - 1]);
+    const i = zs.findIndex((s) => z <= s);
+    const a = zs[i - 1], b = zs[i];
+    return at(a) + (at(b) - at(a)) * ((z - a) / (b - a));
+  };
+  const real = (z: number) => { const f = fanAt(z); return FAN_BOUND.cb * f.colour + FAN_BOUND.mb * f.metric; };
+
+  let worst = 0, at = 0;
+  for (let z = 10; z <= 20; z += 0.002) {
+    const d = Math.abs(drawn(z) - real(z));
+    if (d > worst) { worst = d; at = z; }
+  }
+  assert.ok(worst <= 0.1 + 1e-9, `worst ${worst.toFixed(3)} px at zoom ${at.toFixed(2)} — the stops no longer hold the curve`);
+});
+
+/**
+ * And the bounds those stops were chosen for have to cover what the network actually contains. A
+ * corridor gaining tracks would widen the bands and quietly push the error past the tolerance the
+ * test above checks, which is a failure nobody would think to look for.
+ */
+test("the fan tolerance is held for bands the network actually has", () => {
+  let maxCb = 0, maxMb = 0;
+  for (const s of idx.strokes()) {
+    maxCb = Math.max(maxCb, Math.abs(s.cb));
+    maxMb = Math.max(maxMb, Math.abs(s.mb));
+  }
+  assert.ok(maxCb <= FAN_BOUND.cb, `a stroke rides colour band ${maxCb.toFixed(2)}, past the ${FAN_BOUND.cb} the stops assume`);
+  assert.ok(maxMb <= FAN_BOUND.mb, `a stroke rides metric band ${maxMb.toFixed(2)}, past the ${FAN_BOUND.mb} the stops assume`);
 });
