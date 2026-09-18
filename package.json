@@ -31,7 +31,9 @@
     "build:site": "NEXT_PUBLIC_BASE_PATH= bash scripts/build-pages.sh",
     "site": "tsx services/site/index.ts",
     "audit:layout": "tsx scripts/audit-layout.ts",
-    "build:icons": "tsx scripts/build-icons.ts"
+    "build:icons": "tsx scripts/build-icons.ts",
+    "audit:frames": "node scripts/audit-frames.mjs",
+    "audit:ring": "node scripts/audit-ring.mjs"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",

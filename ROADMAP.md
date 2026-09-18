@@ -4,15 +4,15 @@
 
 ## render-1 — Stop the thrash
 
-`··········` 0% · 0 of 3 done
+`##########` 100% · 3 of 3 done
 
 Stop paying the GeoJSON pipeline for camera movement.
 
-### backlog
+### done
 
-- [ ] `0005` Camera movement forces a source rebuild on every frame <sup>bug · p0</sup>
-- [ ] `0006` The ring source uploads every frame whether or not it changed <sup>bug · p0</sup>
-- [ ] `0007` Record frame timings for pan and pinch, before any of this changes <sup>chore · p0</sup>
+- [x] `0005` Camera movement forces a source rebuild on every frame <sup>bug · p0</sup>
+- [x] `0006` The ring source uploads every frame whether or not it changed <sup>bug · p0</sup>
+- [x] `0007` Record frame timings for pan and pinch, before any of this changes <sup>chore · p0</sup>
 
 ## render-2 — One fan, in the shader
 
@@ -50,4 +50,12 @@ Give a train no position of its own, so it cannot leave its line.
 
 - [ ] `0016` Make (segment, s) the wire format for a train position <sup>feature · p2</sup>
 - [ ] `0017` Resolve arc-length against the line vertex buffer on the GPU <sup>feature · p2</sup>
+
+## Unscheduled
+
+`··········` 0% · 0 of 1 done
+
+### backlog
+
+- [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
 

@@ -3,7 +3,7 @@ id: 1
 key: render-1
 title: Stop the thrash
 type: milestone
-status: backlog
+status: done
 created: 2026-09-17
 updated: 2026-09-17
 priority: p2

@@ -15,6 +15,7 @@ import { STALLED_S } from "@/lib/format";
 import { paint } from "@/lib/mapTheme";
 import { asset } from "@/lib/basePath";
 import { readHash } from "@/lib/urlState";
+import { frameTook, installFramePerf, perfOn, sourceUploaded } from "@/lib/framePerf";
 
 const STYLE = "https://tiles.openfreemap.org/styles/dark";
 // MapLibre's module worker URL doesn't survive Next's bundler; serve a copy from /public instead
@@ -224,6 +225,8 @@ export default function TrainMap(props: Props) {
   const drawnRef = useRef(new Map<string, [number, number]>());
   /** What the slow source last held, so labels are only rebuilt when they actually change. */
   const stackSigRef = useRef("");
+  /** The rings last handed over, so an unchanged frame does not pay for a source update. */
+  const ringSigRef = useRef("\u0000");
   const readyRef = useRef(false);
   const layersRef = useRef(false);
   // Set once the map's own layers exist, so the effects that configure them know to run. Layers
@@ -264,11 +267,22 @@ export default function TrainMap(props: Props) {
       onView({ lat: c.lat, lon: c.lng, zoom: map.getZoom() });
     });
 
+    installFramePerf();
     let raf = 0;
     let last = performance.now();
     let lastDraw = 0;
+    /*
+     * The callback is split in two so the work can be timed without a stopwatch threaded through
+     * its early returns. `frame` re-arms and measures; `frameBody` is the work, unchanged.
+     */
     const frame = (ts: number) => {
       raf = requestAnimationFrame(frame);
+      if (!perfOn()) { frameBody(ts); return; }
+      const t0 = performance.now();
+      frameBody(ts);
+      frameTook(performance.now() - t0);
+    };
+    const frameBody = (ts: number) => {
       // A hidden tab should cost nothing; the clock is absolute, so the first visible frame
       // simply picks the trains up where they should be by then.
       if (document.hidden) { last = ts; return; }
@@ -283,29 +297,34 @@ export default function TrainMap(props: Props) {
       for (const p of trains) positions.set(p.id, p);
 
       /*
-       * Thirty times a second is plenty while the camera is still, and visibly not enough while
-       * it is moving.
-       *
-       * The lines are eased into their bands by the renderer, in pixels, on every frame it draws.
-       * A train is eased into the same band by moving it in metres, here, on the CPU. Hold that
-       * back to thirty a second and through a pinch the trains swim off their own lines and catch
-       * up afterwards — and the further you zoom the further they swim, because the same eleven
-       * pixels is four hundred metres at city zoom and nothing at all at street level.
-       */
-      /*
        * The marks are rebuilt every frame; the GeoJSON sources are not.
        *
        * This used to gate everything, because everything went through a source and a source update
-       * is expensive. The trains no longer do — they are a buffer upload — so the only things left
-       * on the old cadence are the ribbons and the platform counts, which are geometry rather than
-       * animation and were never the reason the map looked slow.
+       * is expensive. The trains no longer do — they are a buffer upload, rebuilt unconditionally
+       * below — so the only things left on the old cadence are the ribbons and the platform counts,
+       * which are geometry rather than animation and were never the reason the map looked slow.
+       *
+       * The gate used to read `map.isMoving() || …`, which meant every frame of every gesture was
+       * due: 0.37 ribbon uploads a frame sitting still at city zoom and 0.98 through a drag, with
+       * the main thread going from 6% to 15% busy scrolling in. That term was left over from when
+       * this gate governed the trains, and holding *them* back through a pinch really did make them
+       * swim off their lines. It does nothing for the two things still on this clock, because a
+       * ribbon is `LonLat[]`: the camera moving does not change it, and MapLibre reprojects the
+       * geometry it already has for free. A ribbon needs re-uploading when its train advances along
+       * its path — a fact about time, which `drawInterval` already tracks — and never because
+       * somebody dragged the map.
+       *
+       * (The trains do still swim, and that is real, but the cause is the fan being derived twice
+       * from two readings of the camera rather than this clock. It is `render-2`, and no rebuild
+       * rate fixes it.)
        */
-      const geoDue = map.isMoving() || ts - lastDraw >= drawInterval(map.getZoom());
+      const geoDue = ts - lastDraw >= drawInterval(map.getZoom());
       if (geoDue) lastDraw = ts;
       const { visibleRoutes: vis, showRibbons: ribbons, selection: sel, highlight: hi, follow: fol } = live.current;
       const bands: GeoJSON.Feature[] = [];
       const rings: GeoJSON.Feature[] = [];
       const stacks: GeoJSON.Feature[] = [];
+      let ringSig = "";
       const layer = trainLayerRef.current;
       const atlas = atlasRef.current;
       let marks = marksRef.current;
@@ -417,6 +436,10 @@ export default function TrainMap(props: Props) {
             properties: { selected },
             geometry: { type: "Point", coordinates: [lon, lat] },
           });
+          // Accumulated here rather than walked again afterwards. Six decimals is about a tenth of
+          // a metre, which is finer than a pixel at any zoom this map reaches — so a train that is
+          // actually moving still registers every frame, and one standing at a platform does not.
+          ringSig += `${selected ? "!" : ""}${lon.toFixed(6)},${lat.toFixed(6)};`;
         }
         if (geoDue && shown > 1) {
           stacks.push({
@@ -439,17 +462,36 @@ export default function TrainMap(props: Props) {
         // A custom layer only draws when the map draws, and nothing else has changed.
         map.triggerRepaint();
       }
-      // One or two features, so this stays cheap at the frame rate: the ring has to keep up with
-      // the train it is drawn around.
-      (map.getSource("trains") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: rings });
+      /*
+       * The ring has to keep up with the train it is drawn around, so it is not on the geometry
+       * clock — but "keep up" is not the same as "every frame regardless".
+       *
+       * This was unconditional, and the justification at the time was that one or two features
+       * stay cheap at the frame rate. The feature count was never the cost: a `setData` is a worker
+       * round-trip, a re-parse and a source invalidation whatever it carries, and this asked for one
+       * sixty times a second — measured at 1.00 uploads per frame in every scenario, idle included,
+       * for geometry that only changes when something is selected.
+       *
+       * Nothing is selected most of the time, which is the case worth winning: the signature is
+       * then the empty string every frame and the source is left alone entirely. With a selection
+       * the ring does move, and then an upload is work that has to happen — until rings become
+       * instanced marks in the train layer, which is `render-3`.
+       */
+      if (ringSig !== ringSigRef.current) {
+        ringSigRef.current = ringSig;
+        (map.getSource("trains") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: rings });
+        sourceUploaded("trains");
+      }
       if (geoDue) {
         (map.getSource("ribbons") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: bands });
+        sourceUploaded("ribbons");
         // The counts sit at platforms and change only when a queue does, so they are handed over
         // when they differ rather than on a clock.
         const sig = `${Math.round(map.getZoom() * 10)}|${stacks.map((f) => `${f.properties!.stacked}@${(f.geometry as GeoJSON.Point).coordinates.join()}`).join(";")}`;
         if (sig !== stackSigRef.current) {
           stackSigRef.current = sig;
           (map.getSource("train-stacks") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: stacks });
+          sourceUploaded("train-stacks");
         }
       }
     };
