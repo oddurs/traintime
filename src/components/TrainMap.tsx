@@ -36,27 +36,48 @@ const bandOffset = (scale: number) => bandOffsetExpression(scale) as unknown as 
 const fanScale = { current: 1 };
 
 /**
- * A train's drawn position: its place along the track, shifted into its own band by exactly the
- * amount the line beside it is shifted.
+ * Which band of its corridor a train rides, as the two coefficients the fan is built from.
+ *
+ * This used to return a position: it converted the band into metres using the zoom, displaced the
+ * train perpendicular to its heading, and handed back a longitude and latitude. That was the second
+ * derivation of the fan — the renderer does the same sum in pixels, at draw time, with the camera it
+ * is actually drawing — and the two could only agree when the camera was still. Now the band goes
+ * into the instance buffer and the shader does the sum once, so this returns the band and nothing
+ * else.
  *
  * A train standing at a platform has no segment to take a band from, so it keeps the one it was
  * riding — without that it would hop to the middle of the corridor every time it stopped.
  */
-function fanned(p: TrainPosition, index: NetworkIndex, fan: { colour: number; metric: number }, last: Map<string, [number, number]>): LonLat {
+function bandOf(p: TrainPosition, index: NetworkIndex, last: Map<string, [number, number]>): [number, number] {
   const prev = p.state.prevStop, next = p.state.nextStop;
   // How far into the stretch it is, so it reads the band its line has *here* rather than the one
   // the stretch has on average.
   const along = p.length > 0 ? p.s / p.length : undefined;
   const live = prev && next ? index.lateralBand(p.route, prev, next, along) : undefined;
-  if (live) last.set(p.id, [live.cb, live.mb]);
-  const band = live ? [live.cb, live.mb] : last.get(p.id);
-  if (!band) return [p.lon, p.lat];
-  const metres = band[0] * fan.colour + band[1] * fan.metric;
-  if (metres === 0) return [p.lon, p.lat];
-  // Right of the direction of travel, which is the side the line was offset to.
-  const rad = ((p.bearing + 90) * Math.PI) / 180;
-  const cos = Math.cos((p.lat * Math.PI) / 180) || 1e-6;
-  return [p.lon + (Math.sin(rad) * metres) / (111_320 * cos), p.lat + (Math.cos(rad) * metres) / 111_320];
+  if (live) { last.set(p.id, [live.cb, live.mb]); return [live.cb, live.mb]; }
+  return last.get(p.id) ?? [0, 0];
+}
+
+/**
+ * The fan as a screen offset, in CSS pixels — the same sum the shader does, for the few things
+ * MapLibre still draws by longitude and latitude.
+ *
+ * The trains do not use this: they carry their band into the vertex shader and are displaced with
+ * the camera of the frame being drawn. What is left are the selection ring, the platform counts and
+ * the hit test, and every one of those is read at a moment when the camera is settled — a click, or
+ * a source rebuild on the geometry clock — so a formula evaluated here cannot be a frame stale in
+ * the way the trains' was.
+ *
+ * It is still a second copy of the sum, and the way to be rid of it is to draw the ring and the
+ * counts as instanced marks in the train layer, which is render-3.
+ */
+function fanOffsetPx(cb: number, mb: number, tangentRad: number, zoom: number, bearingRad: number, scale: number): [number, number] {
+  const f = fanAt(zoom);
+  const d = (cb * f.colour + mb * f.metric) * scale;
+  if (d === 0) return [0, 0];
+  // Right of the direction of travel, which is the side the line is offset to. Screen y runs down.
+  const a = tangentRad + Math.PI / 2 - bearingRad;
+  return [Math.sin(a) * d, -Math.cos(a) * d];
 }
 
 const NYC: [number, number] = [-73.955, 40.735];
@@ -222,7 +243,12 @@ export default function TrainMap(props: Props) {
   const trainLayerRef = useRef<TrainLayer | null>(null);
   const atlasRef = useRef<ReturnType<typeof buildTrainAtlas>>(null);
   const marksRef = useRef(new Float32Array(1024 * STRIDE));
-  const drawnRef = useRef(new Map<string, [number, number]>());
+  /**
+   * What the last frame drew, as centreline position plus the band and tangent the shader fanned it
+   * by — enough for the hit test to reconstruct the screen position without a second fan on the
+   * frame path. `[lon, lat, cb, mb, tangentRad]`.
+   */
+  const drawnRef = useRef(new Map<string, [number, number, number, number, number]>());
   /** What the slow source last held, so labels are only rebuilt when they actually change. */
   const stackSigRef = useRef("");
   /** The rings last handed over, so an unchanged frame does not pay for a source update. */
@@ -334,15 +360,30 @@ export default function TrainMap(props: Props) {
       // A speed in metres per second becomes a velocity in the frame the layer draws in. The
       // latitude barely varies across the city, so this is worked out once for the view.
       const mpu = mercatorPerMetre(map.getCenter().lat);
-      // Trains are placed on the same fan the lines are drawn with. The renderer eases the lines
-      // apart as a pixel offset, so the equivalent distance in metres is worked out for the zoom
-      // being drawn and applied to each train — otherwise a train would sit on its line at one
-      // zoom and beside it at every other.
+      /*
+       * No fan is computed here any more.
+       *
+       * A train carries its band into the vertex shader, which does the sum in pixels against the
+       * camera the frame is drawn with — the same camera, the same formula and the same instant as
+       * the line beside it. What is left on this side is the band itself, which is a fact about the
+       * network rather than about the view.
+       *
+       * The ring and the platform counts are still positioned by longitude and latitude, so they
+       * are offset through `fanOffsetPx` below, using the map's own projection rather than an
+       * approximation in metres. Both are read at moments when the camera is settled.
+       */
       const zoom = map.getZoom();
-      const m = metresPerPixel(zoom) * fanScale.current;
-      const px = fanAt(zoom);
-      const fan = { colour: px.colour * m, metric: px.metric * m };
+      const bearingRad = (map.getBearing() * Math.PI) / 180;
+      const fanScaleNow = fanScale.current;
       const lastBand = lastBandRef.current;
+      /** Centreline position, shifted into its band the way the shader will shift the train. */
+      const fannedLonLat = (lon: number, lat: number, cb: number, mb: number, tanRad: number): LonLat => {
+        const [dx, dy] = fanOffsetPx(cb, mb, tanRad, zoom, bearingRad, fanScaleNow);
+        if (dx === 0 && dy === 0) return [lon, lat];
+        const q = map.project([lon, lat]);
+        const back = map.unproject([q.x + dx, q.y + dy]);
+        return [back.lng, back.lat];
+      };
       /*
        * Only the trains the camera can see.
        *
@@ -392,8 +433,14 @@ export default function TrainMap(props: Props) {
           drawn.add(stackKey);
         }
         const shown = selected ? 1 : stacked;
-        const [lon, lat] = fanned(p, idx, fan, lastBand);
-        drawnPos.set(p.id, [lon, lat]);
+        const [cb, mb] = bandOf(p, idx, lastBand);
+        // The track's own direction here, which is the basis the line is offset from. Not
+        // `p.bearing`, which is rate-limited so the arrow sweeps through curves — see 0010.
+        const tanRad = (p.tangent * Math.PI) / 180;
+        // Centreline. The shader adds the fan, so nothing on this side needs the drawn position
+        // except the hit test, which reconstructs it from these same numbers.
+        const lon = p.lon, lat = p.lat;
+        drawnPos.set(p.id, [lon, lat, cb, mb, tanRad]);
 
         if (atlas && layer) {
           // Room for a bullet and a chevron for every train left to consider.
@@ -419,33 +466,35 @@ export default function TrainMap(props: Props) {
             const fade = ghost ? 0.45 : 1 - 0.55 * Math.max(0, Math.min(1, (revised - 600) / 1800));
             const lo = bullet.w * (shown > 1 ? 13 : 11) / BOX;
             const hi = bullet.w * (shown > 1 ? 24 : 20) / BOX;
-            writeMark(marks, n++, x, y, vx, vy, bullet, lo, lo, hi, hi, 0, fade, 0);
+            writeMark(marks, n++, x, y, vx, vy, bullet, lo, lo, hi, hi, 0, fade, 0, tanRad, cb, mb);
           }
           if (moving) {
             const chev = atlas.rect(chevronId(p.route));
             // The chevron sits in the upper part of a taller mark, so turning it by the bearing
             // puts it ahead of the bullet without any offset of its own.
             if (chev) writeMark(marks, n++, x, y, vx, vy, chev,
-              chev.w * 0.42, chev.h * 0.42, chev.w * 0.85, chev.h * 0.85, rad, ghost ? 0.35 : 0.95, 1);
+              chev.w * 0.42, chev.h * 0.42, chev.w * 0.85, chev.h * 0.85, rad, ghost ? 0.35 : 0.95, 1,
+              tanRad, cb, mb);
           }
         }
 
         if (selected || hi.has(p.id)) {
+          const at = fannedLonLat(lon, lat, cb, mb, tanRad);
           rings.push({
             type: "Feature",
             properties: { selected },
-            geometry: { type: "Point", coordinates: [lon, lat] },
+            geometry: { type: "Point", coordinates: at },
           });
           // Accumulated here rather than walked again afterwards. Six decimals is about a tenth of
           // a metre, which is finer than a pixel at any zoom this map reaches — so a train that is
           // actually moving still registers every frame, and one standing at a platform does not.
-          ringSig += `${selected ? "!" : ""}${lon.toFixed(6)},${lat.toFixed(6)};`;
+          ringSig += `${selected ? "!" : ""}${at[0].toFixed(6)},${at[1].toFixed(6)};`;
         }
         if (geoDue && shown > 1) {
           stacks.push({
             type: "Feature",
             properties: { stacked: shown },
-            geometry: { type: "Point", coordinates: [lon, lat] },
+            geometry: { type: "Point", coordinates: fannedLonLat(lon, lat, cb, mb, tanRad) },
           });
         }
         if (geoDue && p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
@@ -650,7 +699,9 @@ export default function TrainMap(props: Props) {
        * per frame, so they move at the frame rate instead.
        */
       if (atlas) {
-        const layer = new TrainLayer(atlas, () => live.current.clock());
+        // The filter scale is read through a closure rather than passed as a number, so the layer
+        // evaluates the fan against the zoom of the frame it is drawing.
+        const layer = new TrainLayer(atlas, () => live.current.clock(), () => fanScale.current);
         trainLayerRef.current = layer;
         map.addLayer(layer);
       }
@@ -689,9 +740,16 @@ export default function TrainMap(props: Props) {
       const pickTrain = (point: maplibregl.Point): string | null => {
         let best: string | null = null;
         let bestD = HIT_PX * HIT_PX;
+        // The fan is the shader's now, so the drawn position has to be rebuilt here from the same
+        // band and tangent it was drawn with. Once per pick rather than once per train per frame,
+        // and at a moment when the camera is settled — a pointer is not a gesture.
+        const zoom = map.getZoom();
+        const bearingRad = (map.getBearing() * Math.PI) / 180;
+        const scale = fanScale.current;
         for (const [id, at] of drawnRef.current) {
-          const p = map.project(at);
-          const dx = p.x - point.x, dy = p.y - point.y;
+          const p = map.project([at[0], at[1]]);
+          const [ox, oy] = fanOffsetPx(at[2], at[3], at[4], zoom, bearingRad, scale);
+          const dx = p.x + ox - point.x, dy = p.y + oy - point.y;
           const d = dx * dx + dy * dy;
           if (d <= bestD) { bestD = d; best = id; }
         }

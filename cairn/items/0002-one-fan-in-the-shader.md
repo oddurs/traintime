@@ -3,9 +3,9 @@ id: 2
 key: render-2
 title: One fan, in the shader
 type: milestone
-status: backlog
+status: done
 created: 2026-09-17
-updated: 2026-09-17
+updated: 2026-09-18
 priority: p2
 ---
 

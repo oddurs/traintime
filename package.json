@@ -33,7 +33,8 @@
     "audit:layout": "tsx scripts/audit-layout.ts",
     "build:icons": "tsx scripts/build-icons.ts",
     "audit:frames": "node scripts/audit-frames.mjs",
-    "audit:ring": "node scripts/audit-ring.mjs"
+    "audit:ring": "node scripts/audit-ring.mjs",
+    "audit:fan": "tsx scripts/audit-fan.mjs"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.5-r.4",

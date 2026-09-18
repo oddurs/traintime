@@ -111,6 +111,64 @@ clock because `drawInterval` is zoom-dependent by design. None of that is ours t
 milestone, and a target phrased against idle conflated our pipeline with everything the map does
 during a zoom. Per frame the same scenario went 8.2 → 7.4 ms, which is the honest figure.
 
+## render-2 — one fan, and what it turned out to be worth
+
+The fan is now computed once, in the vertex shader, from the camera the frame is drawn with. The
+band coefficients and the track's own direction ride in the instance buffer; `fanned()`,
+`fanScale`-on-the-frame-path and the per-train trigonometry are gone.
+
+Measured with `npm run audit:fan`, which needs no access to the GPU: record the zoom a
+`requestAnimationFrame` callback sees and the zoom the `render` that follows it sees, pair them, and
+evaluate the real `fanAt` at both. That difference *is* the error the old code committed.
+
+```
+cpu   mean      p95      max      (lateral px, band two tracks out, zoom 14.4 -> 17.2)
+1x    0.08     0.19     0.70
+4x    0.09     0.21     0.80
+8x    0.09     0.35     0.75
+```
+
+And the second error, the rate-limited heading used as the offset basis, sampled over 162 moving
+trains at zoom 14:
+
+```
+|bearing - tangent|   mean 0.10°   p50 0.00°   p95 0.87°   max 2.07°
+lateral equivalent    mean 0.03 px             p95 0.26 px  max 0.63 px
+trains off by >5°     0 of 162
+```
+
+Both are now zero by construction — one reading of the camera, and the true tangent rather than the
+damped heading. The cost side:
+
+```
+                  render-1   render-2
+mean cb              1.20 ms    1.05 ms   (1.15x)
+mean main ms/fr      7.93 ms    7.50 ms   (1.06x)
+stride              64 B       80 B       per train, two slots spare for render-4
+```
+
+### This milestone was justified on the wrong grounds
+
+The plan said the trains swim off their lines and that this was the cause. They do, and it was
+worth fixing, but **the error is sub-pixel** — under a pixel at the ninety-fifth percentile even
+with the CPU throttled eight times, against a fan that is eleven to seventeen pixels wide. Nobody
+has ever seen it.
+
+What render-2 actually buys, stated without inflation:
+
+- One derivation instead of two, so render-3 can stroke the lines from the same function rather
+  than a fifteen-stop approximation of it. This is the real reason to have done it, and it is
+  structural rather than visible.
+- The offset basis is the track's direction rather than a heading that is deliberately damped for
+  the benefit of an arrowhead. Correct for a reason that survives someone changing the damping.
+- About 13% off our own frame callback, which was already cheap.
+- A stride with room for the arc-length render-4 needs.
+
+It is not a visible improvement, and the honest place to look for the jank the complaint names is
+render-3: the casing margin drifting because width samples three zoom stops and offset samples
+fifteen, and `line-offset` displacing vertices that were tessellated for the un-offset centreline.
+Neither of those has been touched yet.
+
 ## What the measurement corrected in the plan
 
 **Our own frame callback was never the problem.** `cb mean` is 0.4–0.6 ms at 1× and 1.5–2.4 ms at

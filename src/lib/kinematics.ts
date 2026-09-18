@@ -267,7 +267,7 @@ export class Kinematics {
   }
 
   private emit(st: TrainState, b: Body, now: number, dt = 1): TrainPosition {
-    const { p } = alongPath(b.path, b.s);
+    const { p, bearing: tangent } = alongPath(b.path, b.s);
     // Whatever produced the heading — a turn, or a body replaced under the train — the arrow may
     // only move so fast. A train at speed on a hundred-metre curve turns about nine degrees a
     // second; this leaves room to catch up without letting the arrow spin.
@@ -284,7 +284,7 @@ export class Kinematics {
     }
     void now;
     return {
-      id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing: b.shown ?? b.heading,
+      id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing: b.shown ?? b.heading, tangent,
       speed: b.v, phase: st.phase, motion: b.motion, s: b.s, length: b.L, stalledFor: b.stalled ?? 0, ribbon, state: st,
     };
   }

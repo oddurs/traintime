@@ -194,7 +194,22 @@ export interface TrainPosition {
   direction: Direction;
   lon: number;
   lat: number;
+  /**
+   * The compass heading the marker is *drawn* at: smoothed, then rate-limited, so the arrow sweeps
+   * through a curve instead of snapping round it.
+   */
   bearing: number;
+  /**
+   * The direction of the track itself at this point — the polyline segment's own bearing, with no
+   * smoothing and no rate limit.
+   *
+   * Separate from `bearing` because they are used for different things and only one of them may be
+   * damped. `bearing` orients the chevron, where lag is the desired behaviour. `tangent` is the
+   * basis for the sideways shift into the service's band, where lag means the train is offset in a
+   * slightly wrong direction — and it lags most through the tightest curves, which is exactly where
+   * the offset is most visible.
+   */
+  tangent: number;
   /** m/s */
   speed: number;
   phase: TrainPhase;

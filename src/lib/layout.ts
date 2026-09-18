@@ -125,6 +125,34 @@ export const metresPerPixel = (zoom: number) => (156_543.03 * Math.cos((40.73 * 
  * summed, and five lines sharing Queens Boulevard bunched and crossed and changed spacing as you
  * zoomed. Adding a colour term to a metric one is not a blend, it is a collision.
  */
+/*
+ * The whole curve, in closed form, because render-2 compiles it into a shader and after that there
+ * is exactly one place it lives:
+ *
+ *     geo(z)    = TRACK_M / metresPerPixel(z)          the 4.6 m the geometry already carries
+ *     reveal(z) = smoothstep((z - 13.4) / (14.2 - 13.4))
+ *     colour(z) = (1 - reveal) * 11
+ *     metric(z) = max(reveal * 11, geo) - geo
+ *     offset    = cb * colour(z) + mb * metric(z)      and the geometry adds mb * geo(z)
+ *
+ * Three regimes, and the crossovers between them are the decision:
+ *
+ *   below z 13.4   colour only. A trunk is one line per colour, 11 px apart, the way the printed
+ *                  map draws it — at this zoom the 4, 5 and 6 are one green line and should be.
+ *   13.4 to 14.2   the reveal. Deliberately under one zoom level: spread over three, as it once
+ *                  was, those three services spent the whole mid-range two to seven pixels apart,
+ *                  far enough to look wrong and not far enough to read as three lines.
+ *   above z 14.2   metric only, and the two terms sum to exactly 11 px per band while the real
+ *                  spacing is narrower than that.
+ *   above z 18.114 metric(z) hits zero and the geometry alone carries the offset, so the lines
+ *                  stand exactly where the track does. This crossover is *derived*, not chosen:
+ *                  it is where TRACK_M / metresPerPixel(z) reaches TARGET_PX, i.e.
+ *                  z = log2(156543.03 * cos(40.73°) * TARGET_PX / TRACK_M) = 18.114.
+ *
+ * Confirmed as-is rather than changed. The two chosen numbers are 13.4 and 14.2, and they are
+ * chosen for a reason that is written down above; the third falls out of two physical constants.
+ * See 0011.
+ */
 export function fanAt(zoom: number): { colour: number; metric: number } {
   const geo = TRACK_M / metresPerPixel(zoom);
   const reveal = smoothstep((zoom - MERGE_BELOW) / (SEPARATE_ABOVE - MERGE_BELOW));

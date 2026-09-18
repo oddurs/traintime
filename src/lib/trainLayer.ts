@@ -1,5 +1,6 @@
 import type { CustomLayerInterface, CustomRenderMethodInput, Map as MapLibreMap } from "maplibre-gl";
 import type { AtlasRect, TrainAtlas } from "./icons";
+import { fanAt } from "./layout";
 
 /**
  * The trains, drawn directly.
@@ -19,8 +20,15 @@ import type { AtlasRect, TrainAtlas } from "./icons";
  * at whatever rate the CPU can afford and the motion is still smooth at the frame rate.
  */
 
-/** Floats per instance. Sixteen keeps the stride at a round sixty-four bytes. */
-export const STRIDE = 16;
+/**
+ * Floats per instance. Twenty keeps the stride at eighty bytes, a multiple of sixteen, with two
+ * slots to spare for the arc-length that render-4 will want.
+ *
+ * It was sixteen, for a round sixty-four, until the fan moved in here: a train now carries the band
+ * it rides and the direction of the track under it, because that is what lets the sideways shift be
+ * computed with the camera this frame is drawn with rather than the one the CPU last looked at.
+ */
+export const STRIDE = 20;
 
 const VERT = `#version 300 es
 precision highp float;
@@ -34,6 +42,8 @@ in vec2 a_sizeHi;      // pixels at zoom 14
 in float a_rot;        // radians, clockwise from up
 in float a_alpha;
 in float a_aligned;    // 1 where the mark turns with the map, as a chevron does
+in float a_tangent;    // radians, the direction of the track here — not the marker's heading
+in vec2 a_band;        // (cb, mb): which band of its corridor this service rides
 
 uniform mat4 u_matrix;
 uniform vec2 u_viewport;
@@ -41,9 +51,14 @@ uniform float u_zoom;
 uniform float u_dt;
 uniform float u_bearing;
 uniform float u_dpr;
+// Pixels per band at the zoom being drawn: (colour, metric). Set in render(), from the camera the
+// frame is actually drawn with.
+uniform vec2 u_fan;
 
 out vec2 v_uv;
 out float v_alpha;
+
+const float HALF_PI = 1.5707963267948966;
 
 void main() {
   vec4 clip = u_matrix * vec4(a_pos + a_vel * u_dt, 0.0, 1.0);
@@ -54,6 +69,29 @@ void main() {
   float c = cos(angle), s = sin(angle);
   vec2 off = a_corner * size;
   off = vec2(off.x * c - off.y * s, off.x * s + off.y * c);
+  /*
+   * The fan, in pixels, here rather than on the CPU.
+   *
+   * This is the sideways shift that makes five services sharing Queens Boulevard read as five
+   * lines, and the renderer gives the line itself exactly this shift. It used to be computed
+   * twice — once in pixels by the renderer at draw time, once in metres by the frame callback
+   * from a map.getZoom() read taken before MapLibre had integrated the camera — so through
+   * any gesture the trains were fanned by one zoom and their lines drawn at another, and they
+   * swam sideways off the line and caught up afterwards. Eleven pixels is four hundred metres
+   * at city zoom, which is why it got worse the further in you went.
+   *
+   * There is no version of two derivations that stays in step; this is the one, and u_fan
+   * carries the frame's own camera into it.
+   *
+   * Perpendicular to the track's own direction, on the right of travel, which is the side the
+   * line is offset to. a_tangent and not the marker's heading: the heading is rate-limited so
+   * the arrow sweeps through curves rather than snapping, and a damped direction is the right
+   * thing to point an arrow with and the wrong thing to displace a position by — it lags most
+   * exactly where the curve is tightest.
+   */
+  float fan = dot(a_band, u_fan) * u_dpr;
+  float fa = a_tangent + HALF_PI - u_bearing;
+  off += vec2(sin(fa), -cos(fa)) * fan;
   clip.xy += vec2(off.x, -off.y) / u_viewport * 2.0 * clip.w;
   gl_Position = clip;
   v_uv = mix(a_uv.xy, a_uv.zw, a_corner + 0.5);
@@ -97,8 +135,19 @@ export class TrainLayer implements CustomLayerInterface {
   private epoch = 0;
   private uniforms: Record<string, WebGLUniformLocation | null> = {};
 
-  /** The simulation clock, so a replay at speed carries the trains forward at that speed. */
-  constructor(private readonly atlas: TrainAtlas, private time: () => number) {}
+  /**
+   * `time` is the simulation clock, so a replay at speed carries the trains forward at that speed.
+   *
+   * `fanScale` is how much the fan is widened when the view is filtered to a few services — the
+   * component owns that decision, but the *curve* is evaluated in here, against the zoom this
+   * frame is drawn with. Handing over a finished number instead would put the camera read back on
+   * the CPU, one frame early, which is the whole bug.
+   */
+  constructor(
+    private readonly atlas: TrainAtlas,
+    private time: () => number,
+    private fanScale: () => number = () => 1,
+  ) {}
 
   onAdd(map: MapLibreMap, gl: WebGL2RenderingContext) {
     this.map = map;
@@ -109,7 +158,7 @@ export class TrainLayer implements CustomLayerInterface {
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? "program failed to link");
     this.program = program;
-    for (const n of ["u_matrix", "u_viewport", "u_zoom", "u_dt", "u_bearing", "u_dpr", "u_atlas"]) {
+    for (const n of ["u_matrix", "u_viewport", "u_zoom", "u_dt", "u_bearing", "u_dpr", "u_atlas", "u_fan"]) {
       this.uniforms[n] = gl.getUniformLocation(program, n);
     }
 
@@ -142,6 +191,9 @@ export class TrainLayer implements CustomLayerInterface {
     attr("a_rot", 1, 12);
     attr("a_alpha", 1, 13);
     attr("a_aligned", 1, 14);
+    attr("a_tangent", 1, 15);
+    // At float 16, so the vec2 lands on an eight-byte boundary.
+    attr("a_band", 2, 16);
     gl.bindVertexArray(null);
 
     this.texture = gl.createTexture();
@@ -207,6 +259,16 @@ export class TrainLayer implements CustomLayerInterface {
     gl.uniform1f(this.uniforms.u_zoom, map.getZoom());
     gl.uniform1f(this.uniforms.u_bearing, (map.getBearing() * Math.PI) / 180);
     gl.uniform1f(this.uniforms.u_dpr, gl.drawingBufferWidth / Math.max(1, map.getCanvas().clientWidth));
+    /*
+     * The fan, from the camera this frame is being drawn with.
+     *
+     * `map.getZoom()` read *here* is the transform MapLibre is rendering, which is the point: the
+     * same call from the frame callback is read before the camera is integrated and is a frame
+     * stale through every gesture.
+     */
+    const fan = fanAt(map.getZoom());
+    const fs = this.fanScale();
+    gl.uniform2f(this.uniforms.u_fan, fan.colour * fs, fan.metric * fs);
     // How far past the buffer we are. Zero when it was rebuilt this frame; the shader carries the
     // trains the rest of the way when it was not.
     gl.uniform1f(this.uniforms.u_dt, Math.max(0, Math.min(2, this.time() - this.epoch)));
@@ -244,10 +306,13 @@ export function writeMark(
   r: AtlasRect,
   loW: number, loH: number, hiW: number, hiH: number,
   rot: number, alpha: number, aligned: number,
+  tangent: number, cb: number, mb: number,
 ) {
   const o = i * STRIDE;
   out[o] = x; out[o + 1] = y; out[o + 2] = vx; out[o + 3] = vy;
   out[o + 4] = r.u0; out[o + 5] = r.v0; out[o + 6] = r.u1; out[o + 7] = r.v1;
   out[o + 8] = loW; out[o + 9] = loH; out[o + 10] = hiW; out[o + 11] = hiH;
-  out[o + 12] = rot; out[o + 13] = alpha; out[o + 14] = aligned; out[o + 15] = 0;
+  out[o + 12] = rot; out[o + 13] = alpha; out[o + 14] = aligned;
+  out[o + 15] = tangent; out[o + 16] = cb; out[o + 17] = mb;
+  out[o + 18] = 0; out[o + 19] = 0;
 }

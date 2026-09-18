@@ -16,16 +16,16 @@ Stop paying the GeoJSON pipeline for camera movement.
 
 ## render-2 — One fan, in the shader
 
-`··········` 0% · 0 of 4 done
+`##########` 100% · 4 of 4 done
 
 Delete the second derivation of the fan rather than reconcile it.
 
-### backlog
+### done
 
-- [ ] `0008` Carry the band coefficients and segment tangent in the instance stride <sup>feature · p0</sup>
-- [ ] `0009` Evaluate the fan in the vertex shader from render-time uniforms <sup>feature · p0</sup>
-- [ ] `0010` A train is offset from its heading where its line is offset from its tangent <sup>bug · p0</sup>
-- [ ] `0011` Settle the fan curve before it is baked into GLSL <sup>docs · p0</sup>
+- [x] `0008` Carry the band coefficients and segment tangent in the instance stride <sup>feature · p0</sup>
+- [x] `0009` Evaluate the fan in the vertex shader from render-time uniforms <sup>feature · p0</sup>
+- [x] `0010` A train is offset from its heading where its line is offset from its tangent <sup>bug · p0</sup>
+- [x] `0011` Settle the fan curve before it is baked into GLSL <sup>docs · p0</sup>
 
 ## render-3 — One custom line layer
 
