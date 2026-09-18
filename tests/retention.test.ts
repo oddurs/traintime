@@ -82,7 +82,7 @@ test("a budget the untouchable tables have already broken is reported, not silen
 
   const policy = {
     ticksDays: 3, eventsDays: 365, obsDays: 14, compactAfterHours: 2,
-    budgetBytes: 1_000_000, freeFloorBytes: 0,
+    budgetBytes: 1_000_000, freeFloorBytes: 0, obsGraceDays: 7,
   };
 
   // Events and observations alone are over budget: ticks cannot get the total back under it.
@@ -215,7 +215,7 @@ test("the rollup window always falls inside the observation window", async () =>
   const { rollupAfterDays } = await import("../services/poller/rollup");
   const policy = (obsDays: number) => ({
     ticksDays: 3, eventsDays: 365, obsDays, compactAfterHours: 2,
-    budgetBytes: 4_500_000_000, freeFloorBytes: 400_000_000,
+    budgetBytes: 4_500_000_000, freeFloorBytes: 400_000_000, obsGraceDays: 7,
   });
 
   delete process.env.ROLLUP_AFTER_DAYS;
@@ -231,4 +231,50 @@ test("the rollup window always falls inside the observation window", async () =>
   process.env.ROLLUP_AFTER_DAYS = "nonsense";
   assert.equal(rollupAfterDays(policy(14)), 13);
   delete process.env.ROLLUP_AFTER_DAYS;
+});
+
+/**
+ * `rollup` says "the raw rows are only removed once their rollup is safely on disk", and that was
+ * true of its own deletions and false of `prune`'s, which went by age and knew nothing about
+ * rollups. All that separated them was the one-day margin between the two windows — so an outage
+ * longer than a day walked past it and deleted residual history nothing can reconstruct. Twelve
+ * hours of crash loop is most of that margin.
+ */
+test("an observation day that has not been summarised is held, then eventually let go", async () => {
+  const { prune, summarisedDays } = await import("../services/poller/retention");
+  const obs = join(root, "rec", "eta_obs");
+  const rollups = join(root, "rec", "rollups");
+  for (const d of [obs, rollups]) mkdirSync(d, { recursive: true });
+
+  const policy = {
+    ticksDays: 999, eventsDays: 999, obsDays: 14, compactAfterHours: 2,
+    budgetBytes: 4_500_000_000, freeFloorBytes: 0, obsGraceDays: 7,
+  };
+  const dayAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+  const write = (n: number) => {
+    const day = dayAgo(n);
+    const f = join(obs, `${day}T03-00-00.parquet`);
+    writeFileSync(f, Buffer.alloc(10));
+    const when = new Date(Date.now() - n * 86_400_000);
+    utimesSync(f, when, when);
+    return { day, f };
+  };
+
+  // Past the 14-day window, inside the 7-day grace, and not summarised.
+  const held = write(20);
+  // Past the window and past the grace: a broken summariser must not become a volume that fills.
+  const gone = write(25);
+
+  prune(policy);
+  assert.ok(existsSync(held.f), "an unsummarised day inside the grace period is held");
+  assert.ok(!existsSync(gone.f), "but the grace period is not indefinite");
+
+  // Summarise it, and the next pass is free to take it.
+  writeFileSync(join(rollups, `${held.day}.parquet`), Buffer.alloc(10));
+  assert.ok(summarisedDays().has(held.day), "the rollups directory is what prune consults");
+  prune(policy);
+  assert.ok(!existsSync(held.f), "once the summary is on disk the raw rows are expendable");
+
+  // Shared data directory: leave it as it was found.
+  unlinkSync(join(rollups, `${held.day}.parquet`));
 });

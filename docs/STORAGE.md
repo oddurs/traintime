@@ -166,6 +166,23 @@ hourly chances to summarise a day before it is pruned, and clamps any `ROLLUP_AF
 back inside the window with a warning. There is no pair of values a future tightening can leave in
 this state.
 
+## Why an unsummarised day is held rather than deleted
+
+`rollup.ts` says the raw rows are only removed once their rollup is safely on disk. That was true of
+its own deletions and false of `prune`'s, which went by age and knew nothing about rollups — so the
+promise held only for as long as the one-day margin between the two windows, and an outage longer
+than a day walked straight past it. The twelve-hour crash loop above is most of that margin; a
+slightly worse one would have destroyed residual history that nothing can reconstruct, silently.
+
+So `prune` now consults `summarisedDays()` and holds an observation day whose summary is not on
+disk. Held, not kept: after `obsGraceDays` (7) it goes regardless, because a summariser that is
+broken must not also become a volume that fills. The worst case is 0.23 GB of extra observations and
+a warning on every pass, which is the only signal that arrives *before* the day is gone for good.
+
+In normal operation none of this is reachable — `rollup` consumes a day at `obsDays - 1` and leaves
+`prune` nothing to find. It exists for the case where the summariser fell behind, which is precisely
+when the loss would be permanent.
+
 ---
 
 # Not built yet

@@ -40,6 +40,19 @@ export interface RetentionPolicy {
    * oldest ticks go regardless of their age or the budget.
    */
   freeFloorBytes: number;
+  /**
+   * How long past its window an observation day may be held while it waits to be summarised.
+   *
+   * `rollup` deletes the rows it has summarised, and promises "the raw rows are only removed once
+   * their rollup is safely on disk" — but `prune` deletes by age and knew nothing about rollups, so
+   * the promise held only as long as the one-day margin between the two windows. A poller down for
+   * longer than that — twelve hours of crash loop is most of it — walks straight past the margin
+   * and deletes residual history that nothing can reconstruct.
+   *
+   * Held, not kept. After the grace period the day goes whether it was summarised or not, because
+   * a summariser that is broken must not also become a volume that fills.
+   */
+  obsGraceDays: number;
 }
 
 /*
@@ -75,6 +88,9 @@ export const DEFAULT_POLICY: RetentionPolicy = {
    * fifths of the volume was reserved against a use that does not exist.
    */
   freeFloorBytes: Number(process.env.DISK_FREE_FLOOR_BYTES ?? 400_000_000),
+  // A week. Long enough to cover an outage and the passes needed to catch up; short enough that
+  // the worst case is 0.23 GB of extra observations rather than an unbounded table.
+  obsGraceDays: Number(process.env.OBS_GRACE_DAYS ?? 7),
 };
 
 const DAY_MS = 86_400_000;
@@ -162,6 +178,27 @@ function dedupe(table: (typeof TABLES)[number], read: string): string {
   }
 }
 
+/** The `YYYY-MM-DD` a recording file's name refers to, or null. */
+const dayOfName = (file: string) => /(\d{4}-\d{2}-\d{2})/.exec(file)?.[1] ?? null;
+
+/**
+ * Which days the summariser has finished with.
+ *
+ * Lives here rather than in rollup.ts because both sides need it and the dependency only runs one
+ * way: rollup.ts reads the retention policy, so retention.ts must not read back.
+ */
+export function summarisedDays(): Set<string> {
+  const days = new Set<string>();
+  const dir = join(REC_DIR, "rollups");
+  if (!existsSync(dir)) return days;
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith(".parquet") || f.endsWith(".tmp.parquet")) continue;
+    const d = dayOfName(f);
+    if (d) days.add(d);
+  }
+  return days;
+}
+
 /**
  * What the recordings occupy, counted over every directory under `rec/` rather than over TABLES.
  *
@@ -202,12 +239,26 @@ export function prune(policy: RetentionPolicy = DEFAULT_POLICY): Record<string, 
     // run times, dwells and approaches are derived from their ordering rather than from counts.
     const days = table === "ticks" ? policy.ticksDays : table === "eta_obs" ? policy.obsDays : policy.eventsDays;
     const cutoff = now - days * DAY_MS;
-    let n = 0;
+    // Observations are the one table whose rows are supposed to outlive themselves as summaries, so
+    // they are the one table where age alone is not enough to delete. In normal operation this set
+    // is irrelevant: `rollup` consumes a day at `obsDays - 1` and there is nothing left for `prune`
+    // to find. It matters when the summariser fell behind, which is exactly when losing the day is
+    // permanent.
+    const summarised = table === "eta_obs" ? summarisedDays() : null;
+    const graceCutoff = now - (policy.obsDays + policy.obsGraceDays) * DAY_MS;
+    let n = 0, held = 0;
     for (const f of readdirSync(dir)) {
       if (!f.endsWith(".parquet")) continue;
       const full = join(dir, f);
       const named = stampTime(f);
       const mtime = statSync(full).mtimeMs;
+      if (summarised) {
+        const day = dayOfName(f);
+        if (day && !summarised.has(day) && mtime >= graceCutoff && (named === null || named >= graceCutoff)) {
+          if (mtime < cutoff && (named === null || named < cutoff)) held++;
+          continue;
+        }
+      }
       // A file is only old if BOTH its name and its mtime say so. Recently written files are
       // never deleted, whatever their name claims — losing recordings is unrecoverable, and a
       // parsing mistake must not be able to cause it.
@@ -217,6 +268,12 @@ export function prune(policy: RetentionPolicy = DEFAULT_POLICY): Record<string, 
       n++;
     }
     if (n) removed[table] = n;
+    // Past its window and still not summarised means the rollup is behind. Say so: it is the only
+    // warning that arrives before the grace period runs out and the day is gone for good.
+    if (held) {
+      console.warn(`[maintenance] holding ${held} observation file(s) past their ${policy.obsDays}-day ` +
+        `window because their day has not been summarised; they go anyway after ${policy.obsGraceDays} more days`);
+    }
   }
   return removed;
 }

@@ -78,7 +78,7 @@ test("retention: the budget drops the oldest ticks and never the newest", () => 
   for (const day of ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]) {
     writeFileSync(join(dir, `daily-${day}.parquet`), big);
   }
-  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 450_000, freeFloorBytes: 0 };
+  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 450_000, freeFloorBytes: 0, obsGraceDays: 7 };
   const res = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000, freeBytes: null });
   const left = readdirSync(dir).sort();
   assert.ok(res.removed >= 2, `expected the oldest files to go, dropped ${res.removed}`);
@@ -95,7 +95,7 @@ test("retention: a full volume overrides the budget", () => {
   for (const day of ["2026-08-28", "2026-08-29", "2026-08-30", "2026-08-31"]) {
     writeFileSync(join(dir, `daily-${day}.parquet`), big);
   }
-  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 10_000_000, freeFloorBytes: 1_000_000 };
+  const policy = { ticksDays: 99, eventsDays: 99, obsDays: 99, compactAfterHours: 2, budgetBytes: 10_000_000, freeFloorBytes: 1_000_000, obsGraceDays: 7 };
 
   // Comfortably inside the budget and plenty of room: nothing is touched.
   const idle = enforceBudget(policy, { ticksDir: dir, totalBytes: 800_000, freeBytes: 5_000_000 });

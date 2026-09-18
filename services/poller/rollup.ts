@@ -16,7 +16,7 @@ import type { DuckDBConnection } from "@duckdb/node-api";
 import { HORIZONS } from "../../src/lib/timing";
 import { BUCKET_S } from "../../src/lib/histogram";
 import { REC_DIR } from "./recorder";
-import { DEFAULT_POLICY, type RetentionPolicy } from "./retention";
+import { DEFAULT_POLICY, summarisedDays, type RetentionPolicy } from "./retention";
 
 const DAY = 86_400;
 
@@ -91,8 +91,8 @@ export async function rollup(
   if (!existsSync(obsDir)) return { days: [], cells: 0, freedRows: 0 };
   mkdirSync(outDir, { recursive: true });
 
-  const done = new Set<string>();
-  for (const f of readdirSync(outDir)) { const d = dayOf(f); if (d) done.add(d); }
+  // Shared with prune, which holds an unsummarised day past its window rather than delete it.
+  const done = summarisedDays();
 
   const cutoff = now - rollupAfterDays(policy) * DAY;
   const byDay = new Map<string, string[]>();
