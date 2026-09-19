@@ -228,6 +228,60 @@ network contains. Forty-one stops, and two tests hold it: one on the tolerance, 
 bounds still cover the real network, because a corridor gaining a track would quietly widen the
 bands past what the stops assume.
 
+### Built anyway, and here is what it cost
+
+The above was the recommendation; the instruction was to build it, so it is built. `lineGeometry.ts`
+bakes the 2 950 strokes into a static interleaved buffer — 52 546 vertices, 139 938 indices, 3.06 MB,
+24 ms once at load — and `lineLayer.ts` strokes them in a shader that calls the same `fanAt` the
+trains do.
+
+What went with it: eighteen GeoJSON line layers, the `routes` source, `routeLines()`,
+`bandOffsetExpression`, `FAN_STOPS`, and the whole adaptive-stop apparatus from the section above.
+That machinery existed to bound the error in sampling a curve for a style expression. There is no
+sampling now, so it lived for exactly one commit — which is the right lifetime for scaffolding
+around something you are about to remove.
+
+A polyline is expanded in the vertex stage, not on the CPU: each vertex carries the point before and
+after it so the shader can work out the direction of a bend **in screen space**, which is where a
+pixel is defined. The band offset and the half width are then both applied along the same miter, to
+geometry that knows which way the line is turning — rather than displacing vertices tessellated for a
+line somewhere else. Ends carry a duplicate pair of vertices pushed out by the half width, which is
+what lets the fragment stage round a cap instead of squaring it.
+
+```
+                                  main ms/fr    fps
+eighteen GeoJSON layers (render-2)     7.50     27.7
+ours, eighteen draws                   9.63     22.7
+  + viewport culling                   8.83     26.1     recovered 8%
+  + nine instanced draws               8.42     27.3     casing and line as two instances
+```
+
+**The performance criterion is not met.** At 8.42 against 7.50 the custom layer is 1.12× slower here,
+and that is the honest number. Two things about it are worth knowing and neither is an excuse:
+
+The harness rasterises in software, so every GL call is charged to the main thread — which is exactly
+the thread this column measures. Moving work from MapLibre's pipeline onto the GPU therefore looks
+like a regression whatever the GPU would have done with it. On real hardware the same change plausibly
+goes the other way, and **that is a measurement this harness cannot take.**
+
+And the gap is fill and draw-call bound rather than vertex bound: dropping the casing pass — half the
+draw calls, most of the filled pixels — lands at 7.51, within noise of MapLibre. Culling fifty
+thousand vertices down to what is on screen bought only 8%. MapLibre's line shader is simply better
+optimised than a first version of one, which is what it should be.
+
+One optimisation was reverted after measuring: narrowing the antialiasing extension from one pixel to
+half a pixel — strictly less fill — made it *2.7× slower*, reproducibly. That is a software-rasteriser
+pathology rather than a fact about the code, and chasing it further would be tuning for a renderer
+nobody uses.
+
+### What the screenshot caught that nothing else would
+
+Every casing in the network drew magenta at three quarters opacity, and the map looked subtly,
+unplaceably wrong rather than broken. `--map-casing` is authored `#000000`, computes to `#000`, and
+the colour parser only knew the six-digit form — so it fell through to its "cannot read this" colour.
+No type checker, no test and no audit would have found it; a screenshot found it in one look. There
+is a test for it now.
+
 ### The custom line layer is not justified by any of this
 
 `0012` and `0013` were filed to own the weave geometry so "widths stop shimmering and joins come out
@@ -236,9 +290,10 @@ joins were inspected at the tightest thing in the network — the A/C's ninety-d
 Junction, at zoom 14.3, where an eleven-pixel offset is comparable to the curve radius in pixels —
 and the parallel bands hold their spacing through the bend with no pinching or crossing.
 
-They stay open, because render-4 needs a line vertex buffer to resolve arc-length against and the
-ring and platform counts are still positioned by longitude and latitude. But the case for them is
-now that, and not the widths.
+That was the recommendation, and it was overruled deliberately — see above, where it is built. The
+reasoning is left standing because the evidence has not changed: the widths were the sampling and the
+joins were fine, and the case for owning the geometry is render-4's arc-length and retiring the last
+CPU copy of the fan, not the complaint this all started with.
 
 ## What the measurement corrected in the plan
 

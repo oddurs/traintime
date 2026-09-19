@@ -6,7 +6,9 @@ import type { GeoJSONSource, MapMouseEvent } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { markTiming } from "@/lib/clientHealth";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
-import { NetworkIndex, fanAt, bandOffsetExpression, metresPerPixel } from "@/lib/network";
+import { NetworkIndex, fanAt, metresPerPixel } from "@/lib/network";
+import { buildLineMesh, parseColour } from "@/lib/lineGeometry";
+import { LineLayer } from "@/lib/lineLayer";
 import { Kinematics } from "@/lib/kinematics";
 import { addRouteIcons, buildTrainAtlas, bulletId, chevronId } from "@/lib/icons";
 import { STRIDE, TrainLayer, mercatorPerMetre, mercatorX, mercatorY, writeMark } from "@/lib/trainLayer";
@@ -22,18 +24,15 @@ const STYLE = "https://tiles.openfreemap.org/styles/dark";
 // (see the prepare:assets script in package.json).
 maplibregl.setWorkerUrl(asset("/maplibre/maplibre-gl-worker.mjs"));
 
-/** Band levels the weave is drawn in; matches zOf() in scripts/build-network.ts. */
-const WEAVE_LEVELS = 9;
-
-/**
- * How far a band sits from its corridor's centreline, in pixels. The true spacing is already in
- * the geometry; this is the extra separation that makes services legible, and it is the same
- * curve the trains are placed on so a train can never drift off its own line.
- */
-const bandOffset = (scale: number) => bandOffsetExpression(scale) as unknown as maplibregl.DataDrivenPropertyValueSpecification<number>;
-
-/** Shared with the train layer so both read one number. */
+/** Shared by the line layer and the train layer so both read one number. */
 const fanScale = { current: 1 };
+/**
+ * The layer that draws the weave, reached from the visibility pass.
+ *
+ * A module-level holder rather than a ref because `applyVisibilityFactory` is built outside the
+ * component, beside `fanScale`, which has the same shape for the same reason.
+ */
+const lineLayer: { current: LineLayer | null } = { current: null };
 
 /**
  * Which band of its corridor a train rides, as the two coefficients the fan is built from.
@@ -129,18 +128,6 @@ interface Props {
 
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
-/** Every service, as strokes the renderer can offset. The cutting is the engine's business. */
-function routeLines(index: NetworkIndex): GeoJSON.FeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: index.strokes().map((s) => ({
-      type: "Feature",
-      properties: { route: s.route, color: s.colour, slot: s.slot, shared: s.shared, z: s.z, cb: s.cb, mb: s.mb },
-      geometry: { type: "LineString", coordinates: s.pts },
-    })),
-  };
-}
-
 /**
  * Stations, with the role each one plays.
  *
@@ -183,7 +170,7 @@ function stationPoints(index: NetworkIndex, visible: Set<string> | null): GeoJSO
  */
 function applyVisibilityFactory(applied: { scale: number | null; served: string | null }) {
   const apply = (map: maplibregl.Map, index: NetworkIndex, visible: Set<string> | null, attempt = 0) => {
-    if (!map.getLayer("routes-line-0")) return;
+    if (!lineLayer.current) return;
     // The layer can exist while the style is still settling its sprites and glyphs, and MapLibre
     // throws rather than queueing. Waiting for "idle" is no good here — the train layer updates
     // every frame, so this map never goes idle — so retry briefly instead. Without this, a filter
@@ -194,18 +181,14 @@ function applyVisibilityFactory(applied: { scale: number | null; served: string 
     }
     const all = Object.keys(index.net.routes);
     const list = visible ? [...visible] : all;
-    const routeIn: maplibregl.FilterSpecification = ["in", ["get", "route"], ["literal", list]];
     const scale = visible && visible.size < all.length ? 1.6 : 1;
-    for (let z = 0; z < WEAVE_LEVELS; z++) {
-      const f: maplibregl.FilterSpecification = ["all", routeIn, ["==", ["get", "z"], z]];
-      map.setFilter(`routes-line-${z}`, f);
-      map.setFilter(`routes-casing-${z}`, f);
-      if (scale !== applied.scale) {
-        const offset = bandOffset(scale);
-        map.setPaintProperty(`routes-line-${z}`, "line-offset", offset);
-        map.setPaintProperty(`routes-casing-${z}`, "line-offset", offset);
-      }
-    }
+    /*
+     * Filtering is a bitmask handed to the shader, and the widening is a number both shaders read
+     * when they next draw. Neither touches a buffer, and neither is a paint property — which is
+     * what eighteen `setFilter` and eighteen `setPaintProperty` calls used to be, each of them
+     * re-evaluating an expression against every feature in every tile.
+     */
+    lineLayer.current.setVisible(visible);
     applied.scale = scale;
     fanScale.current = scale;
     // Stations a shown service runs past without stopping are dimmed rather than left looking
@@ -573,7 +556,6 @@ export default function TrainMap(props: Props) {
       atlasRef.current = atlas;
       if (!atlas) addRouteIcons(map, index);
 
-      map.addSource("routes", { type: "geojson", data: routeLines(index) });
       map.addSource("stations", { type: "geojson", data: stationPoints(index, null) });
       map.addSource("ribbons", { type: "geojson", data: EMPTY });
       // Two sources, split by how often they change rather than by what they mean: the ring
@@ -583,33 +565,25 @@ export default function TrainMap(props: Props) {
       map.addSource("train-stacks", { type: "geojson", data: EMPTY });
       map.addSource("focus", { type: "geojson", data: EMPTY });
 
-      // The weave. One casing-and-line pair per band level, lowest first, so a band crossing over
-      // another has its own black casing drawn on top of the line beneath — which is what makes a
-      // crossing read as one line passing under another rather than as two lines merging. A single
-      // casing layer under every line, as before, cannot do this: the casing is below both strokes,
-      // so crossings came out flat.
-      for (let z = 0; z < WEAVE_LEVELS; z++) {
-        map.addLayer({
-          id: `routes-casing-${z}`, type: "line", source: "routes",
-          filter: ["==", ["get", "z"], z],
-          layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
-          paint: {
-            "line-color": paint("--map-casing"), "line-opacity": 0.75,
-            "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2.3, 13, 3.9, 16, 6.6],
-            "line-offset": bandOffset(1),
-          },
-        });
-        map.addLayer({
-          id: `routes-line-${z}`, type: "line", source: "routes",
-          filter: ["==", ["get", "z"], z],
-          layout: { "line-cap": "round", "line-join": "round", "line-miter-limit": 1.4 },
-          paint: {
-            "line-color": ["get", "color"], "line-opacity": 0.95,
-            "line-width": ["interpolate", ["linear"], ["zoom"], 10, 1.1, 13, 2.3, 16, 4.2],
-            "line-offset": bandOffset(1),
-          },
-        });
-      }
+      /*
+       * The weave, drawn by us.
+       *
+       * One casing-and-line pair per band level, lowest first, so a band crossing another has its
+       * own casing drawn over the line beneath — which is what makes a crossing read as one line
+       * passing under another rather than as two lines merging. That ordering is unchanged; what
+       * changed is that it is eighteen draw calls over one static buffer instead of eighteen
+       * GeoJSON layers over a source that was re-tiled as though the subway moved.
+       *
+       * The offset is the reason. These layers took the fan from an expression that sampled
+       * `fanAt` at a list of zooms and drew chords between the samples, while the trains took it
+       * from `fanAt` itself — so the gap between chord and curve was a train sitting off its own
+       * line, four pixels of it at the zoom where a trunk splits. Both now call the same function
+       * in the same pass from the same camera.
+       */
+      const mesh = buildLineMesh(index);
+      const layer = new LineLayer(mesh, parseColour(paint("--map-casing")), () => fanScale.current);
+      lineLayer.current = layer;
+      map.addLayer(layer);
       map.addLayer({
         id: "focus-ring", type: "circle", source: "focus",
         paint: {

@@ -6,7 +6,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NetworkIndex, fanAt, bandOffsetExpression, FAN_BOUND, TRACK_M, metresPerPixel } from "../src/lib/network";
+import { NetworkIndex, fanAt, lineWidthAt, casingWidthAt, TRACK_M, metresPerPixel } from "../src/lib/network";
+import { buildLineMesh, parseColour, LINE_STRIDE } from "../src/lib/lineGeometry";
 import { distM } from "../src/lib/geo";
 import { TRUNKS, serviceColours } from "../src/lib/trunks";
 import type { LonLat, Network } from "../src/lib/types";
@@ -116,22 +117,62 @@ test("services sharing a trunk colour merge as the map zooms out", () => {
 });
 
 test("lines and trains are placed by the same fan", () => {
-  // The renderer follows the expression; the trains follow the function. If they ever disagreed,
-  // a train would sit beside its line rather than on it.
-  const expr = bandOffsetExpression(1);
-  // MapLibre drops a layer whose zoom interpolation is not the outermost expression, which took
-  // most of the network off the map once. The shape is load-bearing, so it is asserted.
-  assert.equal(expr[0], "interpolate");
-  assert.deepEqual(expr[2], ["zoom"], "the zoom interpolation has to be outermost");
-  for (let i = 3; i + 1 < expr.length; i += 2) {
-    const zoom = expr[i] as number;
-    const [, colourTerm, metricTerm] = expr[i + 1] as unknown[];
-    assert.deepEqual((colourTerm as unknown[])[1], ["get", "cb"]);
-    assert.deepEqual((metricTerm as unknown[])[1], ["get", "mb"]);
-    const at = fanAt(zoom);
-    assert.ok(Math.abs(((colourTerm as unknown[])[2] as number) - at.colour) < 1e-9, `colour disagrees at zoom ${zoom}`);
-    assert.ok(Math.abs(((metricTerm as unknown[])[2] as number) - at.metric) < 1e-9, `metric disagrees at zoom ${zoom}`);
+  /*
+   * There is one fan now. `lineLayer.ts` and `trainLayer.ts` both call `fanAt` in their vertex
+   * stage, from the camera of the frame being drawn, so the two cannot disagree about the curve —
+   * which is what the expression this test used to inspect could not promise. What is left to
+   * check is that the geometry handed to the shader carries the band the stroke actually rides,
+   * because that is the one place the two could still be fed different numbers.
+   */
+  const mesh = buildLineMesh(idx);
+  const strokes = idx.strokes().filter((st) => st.pts.length >= 2).sort((x, y) => x.z - y.z);
+
+  let v = 0;
+  for (const st of strokes) {
+    // A cap pair at each end, and a pair per point, all carrying the stroke's own band.
+    const pairs = st.pts.length + 2;
+    for (let k = 0; k < pairs * 2; k++) {
+      const o = (v + k) * LINE_STRIDE;
+      // fround, because the buffer holds single precision and the stroke holds double — an
+      // epsilon here would hide a band being off by a hair, which is exactly what this guards.
+      assert.equal(mesh.vertices[o + 8], Math.fround(st.cb), `vertex ${v + k} rides colour band ${mesh.vertices[o + 8]}, not ${st.cb}`);
+      assert.equal(mesh.vertices[o + 9], Math.fround(st.mb), `vertex ${v + k} rides metric band ${mesh.vertices[o + 9]}, not ${st.mb}`);
+    }
+    v += pairs * 2;
   }
+  assert.equal(v, mesh.vertexCount, "every vertex belongs to a stroke");
+
+  // Sides alternate, so the strip has two edges and not one.
+  for (let k = 0; k < mesh.vertexCount; k++) {
+    assert.equal(mesh.vertices[k * LINE_STRIDE + 6], k % 2 === 0 ? -1 : 1);
+  }
+});
+
+test("the weave is drawn lowest level first, and every triangle belongs to one", () => {
+  // The interleaving is what makes a crossing read as one line passing under another. It only
+  // works if each level's triangles are contiguous and the ranges cover the buffer exactly.
+  const mesh = buildLineMesh(idx);
+  let covered = 0, last = -1;
+  mesh.levels.forEach((lv, z) => {
+    if (lv.count === 0) return;
+    assert.ok(lv.start >= last, `level ${z} starts before the level beneath it ends`);
+    last = lv.start + lv.count;
+    covered += lv.count;
+  });
+  assert.equal(covered, mesh.indices.length, "every triangle sits in exactly one level");
+  for (const ix of mesh.indices) assert.ok(ix < mesh.vertexCount, "an index points past the buffer");
+});
+
+test("the drawn widths are the ones the style used to carry", () => {
+  // The custom layer replaced two three-stop ramps with two functions. Same numbers, or the map
+  // quietly changes weight.
+  for (const [z, line, casing] of [[10, 1.1, 2.3], [13, 2.3, 3.9], [16, 4.2, 6.6], [17, 4.2, 6.6]] as const) {
+    assert.ok(Math.abs(lineWidthAt(z) - line) < 1e-9, `line width at ${z}`);
+    assert.ok(Math.abs(casingWidthAt(z) - casing) < 1e-9, `casing width at ${z}`);
+  }
+  // And between stops it is the same straight line the expression drew.
+  assert.ok(Math.abs(lineWidthAt(11.5) - 1.7) < 1e-9);
+  assert.ok(Math.abs(casingWidthAt(14.5) - 5.25) < 1e-9);
 });
 
 test("a change of band is a splay, not a step", () => {
@@ -299,53 +340,24 @@ test("the weave has a consistent over-and-under", () => {
 });
 
 /**
- * The renderer reads the fan as a list of samples with straight lines between them, and the trains
- * do not — they carry their band into the shader and are offset by `fanAt` itself. So every pixel
- * between the samples and the curve is a train sitting that far off its own line, statically, as a
- * function of zoom.
- *
- * The hand-written list of fifteen stops put its samples where the reveal is and left one per zoom
- * level over the range where the curve bends hardest and then kinks. That was 2.9 px adrift at zoom
- * 18.1 for the largest band in the network — most of a line's width, and thirty times the sub-pixel
- * errors render-2 chased.
+ * Every casing in the network drew magenta at three quarters opacity because `--map-casing` is
+ * authored `#000000`, computes to `#000`, and the parser only knew the six-digit form. It did not
+ * read as a parse failure — it read as the whole map having gone slightly wrong, which is the kind
+ * of bug a screenshot catches and a type checker never will.
  */
-test("the drawn fan never strays a tenth of a pixel from the real one", () => {
-  const expr = bandOffsetExpression(1) as unknown[];
-  const zs: number[] = [];
-  for (let i = 3; i < expr.length; i += 2) zs.push(expr[i] as number);
-  assert.ok(zs.length > 3, "the expression should carry a stop list");
-  assert.ok(zs.every((z, i) => i === 0 || z > zs[i - 1]), "stops must ascend");
+test("a colour is read in every form the token layer emits", () => {
+  const near = (a: readonly number[], b: readonly number[]) => a.every((x, i) => Math.abs(x - b[i]) < 1e-6);
+  assert.ok(near(parseColour("#000"), [0, 0, 0]), "short hex");
+  assert.ok(near(parseColour("#000000"), [0, 0, 0]), "long hex");
+  assert.ok(near(parseColour("#fff"), [1, 1, 1]));
+  assert.ok(near(parseColour("#ee352e"), [238 / 255, 53 / 255, 46 / 255]));
+  assert.ok(near(parseColour("rgb(0, 57, 166)"), [0, 57 / 255, 166 / 255]));
+  // Alpha is the layer's business, so it is dropped rather than folded into the colour.
+  assert.ok(near(parseColour("#ee352e80"), [238 / 255, 53 / 255, 46 / 255]), "hex with alpha");
 
-  // What the renderer draws, for a feature at the bounds the stops were chosen to hold.
-  const drawn = (z: number) => {
-    const at = (k: number) => { const f = fanAt(k); return FAN_BOUND.cb * f.colour + FAN_BOUND.mb * f.metric; };
-    if (z <= zs[0]) return at(zs[0]);
-    if (z >= zs[zs.length - 1]) return at(zs[zs.length - 1]);
-    const i = zs.findIndex((s) => z <= s);
-    const a = zs[i - 1], b = zs[i];
-    return at(a) + (at(b) - at(a)) * ((z - a) / (b - a));
-  };
-  const real = (z: number) => { const f = fanAt(z); return FAN_BOUND.cb * f.colour + FAN_BOUND.mb * f.metric; };
-
-  let worst = 0, at = 0;
-  for (let z = 10; z <= 20; z += 0.002) {
-    const d = Math.abs(drawn(z) - real(z));
-    if (d > worst) { worst = d; at = z; }
+  // And every colour the network actually carries reads as itself rather than as the fallback.
+  const magenta = (p: readonly number[]) => p[0] === 1 && p[1] === 0 && p[2] === 1;
+  for (const st of idx.strokes()) {
+    assert.ok(!magenta(parseColour(st.colour)), `${st.route} draws in the fallback colour: ${st.colour}`);
   }
-  assert.ok(worst <= 0.1 + 1e-9, `worst ${worst.toFixed(3)} px at zoom ${at.toFixed(2)} — the stops no longer hold the curve`);
-});
-
-/**
- * And the bounds those stops were chosen for have to cover what the network actually contains. A
- * corridor gaining tracks would widen the bands and quietly push the error past the tolerance the
- * test above checks, which is a failure nobody would think to look for.
- */
-test("the fan tolerance is held for bands the network actually has", () => {
-  let maxCb = 0, maxMb = 0;
-  for (const s of idx.strokes()) {
-    maxCb = Math.max(maxCb, Math.abs(s.cb));
-    maxMb = Math.max(maxMb, Math.abs(s.mb));
-  }
-  assert.ok(maxCb <= FAN_BOUND.cb, `a stroke rides colour band ${maxCb.toFixed(2)}, past the ${FAN_BOUND.cb} the stops assume`);
-  assert.ok(maxMb <= FAN_BOUND.mb, `a stroke rides metric band ${maxMb.toFixed(2)}, past the ${FAN_BOUND.mb} the stops assume`);
 });

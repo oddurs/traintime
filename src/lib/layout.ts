@@ -105,6 +105,29 @@ export interface Stroke {
   pts: LonLat[];
 }
 
+/**
+ * How wide a line and its casing are drawn, in CSS pixels.
+ *
+ * The same three-stop ramp the style carried, kept exactly — a thicker line gets a proportionally
+ * thinner casing, 0.545 of the line's width at zoom 10 down to 0.286 at 16, which is a deliberate
+ * taper and not the drift 0015 was filed about. Written as functions because the renderer is ours
+ * now and a shader cannot read a style expression, and because one definition is the point.
+ */
+const ramp = (z: number, stops: readonly (readonly [number, number])[]): number => {
+  if (z <= stops[0][0]) return stops[0][1];
+  const last = stops[stops.length - 1];
+  if (z >= last[0]) return last[1];
+  for (let i = 1; i < stops.length; i++) {
+    const [z0, v0] = stops[i - 1], [z1, v1] = stops[i];
+    if (z <= z1) return v0 + ((v1 - v0) * (z - z0)) / (z1 - z0);
+  }
+  return last[1];
+};
+const LINE_W = [[10, 1.1], [13, 2.3], [16, 4.2]] as const;
+const CASING_W = [[10, 2.3], [13, 3.9], [16, 6.6]] as const;
+export const lineWidthAt = (zoom: number) => ramp(zoom, LINE_W);
+export const casingWidthAt = (zoom: number) => ramp(zoom, CASING_W);
+
 /** Metres per pixel at New York's latitude. */
 export const metresPerPixel = (zoom: number) => (156_543.03 * Math.cos((40.73 * Math.PI) / 180)) / 2 ** zoom;
 
@@ -167,83 +190,21 @@ export function fanAt(zoom: number): { colour: number; metric: number } {
 }
 
 /** The zooms the renderer is given the curve at; between them it interpolates. */
-/**
- * The zooms the curve is sampled at, chosen so the straight lines between them stay within a
- * tenth of a pixel of it.
+/*
+ * The sampled fan is gone, and so is the apparatus that kept it honest.
  *
- * It was a hand-written list of fifteen, and the samples were in the right places for the reveal
- * and the wrong places for everything above it — one stop per zoom level from 16 to 20, across the
- * stretch where the curve bends hardest and then kinks. Measured against the real curve, the worst
- * band in the network came out **2.9 px** adrift at zoom 18.1, which is most of a line's width and
- * far more than the sub-pixel errors render-2 went after.
+ * `bandOffsetExpression` handed MapLibre the curve as a list of zooms with straight lines between
+ * them, because a style expression cannot evaluate a smoothstep and MapLibre rejects a zoom
+ * interpolation that is not the outermost expression. The samples were four pixels off the curve at
+ * the zoom where a trunk splits into its services, so the stops were made adaptive and bounded to a
+ * tenth of a pixel — forty-one of them, with two tests holding the tolerance and the band bounds.
  *
- * It mattered more than a list of stops sounds like it should, because the trains do *not* go
- * through this: they carry their band into the shader and are offset by `fanAt` itself. So every
- * pixel of error here was a train sitting that far off its own line — statically, as a function of
- * zoom, sliding in and out as you scrolled through the range.
- *
- * Chosen rather than written: the three places the curve is not smooth are pinned, and each gap
- * between them is bisected until linear interpolation is inside the tolerance for the largest
- * bands the network contains. `tests/network.test.ts` holds those bounds to the real data.
+ * None of that is needed now. `lineLayer.ts` strokes the weave itself and calls `fanAt` directly,
+ * in the same pass and from the same camera as the trains, so there is no sampling to bound and no
+ * gap to measure. The bounded version lived for exactly one commit, which is the right lifetime for
+ * scaffolding around a thing you are about to remove.
  */
-const FAN_MIN = 10, FAN_MAX = 20;
-/** Where the curve changes character: the reveal opens, closes, and the geometry takes over. */
-const FAN_BREAKS = [MERGE_BELOW, SEPARATE_ABOVE, Math.log2((156_543.03 * Math.cos((40.73 * Math.PI) / 180) * TARGET_PX) / TRACK_M)];
-/** A tenth of a pixel. A line is one to four pixels wide, so this is not a visible difference. */
-const FAN_TOL_PX = 0.1;
-/**
- * The largest bands to hold the tolerance for. Comfortably past the network's real maxima — a
- * corridor would have to gain three more tracks before these bind — and a test keeps them honest.
- */
-export const FAN_BOUND = { cb: 2, mb: 4 };
 
-/** How far the straight line from `a` to `b` strays from the curve, in pixels, for those bounds. */
-function fanGap(z: number, a: number, b: number): number {
-  const fa = fanAt(a), fb = fanAt(b), f = fanAt(z);
-  const t = b === a ? 0 : (z - a) / (b - a);
-  return FAN_BOUND.cb * Math.abs(fa.colour + (fb.colour - fa.colour) * t - f.colour)
-       + FAN_BOUND.mb * Math.abs(fa.metric + (fb.metric - fa.metric) * t - f.metric);
-}
-
-function buildFanStops(): number[] {
-  const out: number[] = [];
-  const refine = (a: number, b: number) => {
-    let worst = 0;
-    for (let i = 1; i < 16; i++) worst = Math.max(worst, fanGap(a + ((b - a) * i) / 16, a, b));
-    // The floor stops a kink that no sampling can straddle from bisecting for ever.
-    if (worst > FAN_TOL_PX && b - a > 1 / 128) {
-      const m = (a + b) / 2;
-      refine(a, m);
-      refine(m, b);
-    } else out.push(a);
-  };
-  const edges = [FAN_MIN, ...FAN_BREAKS.filter((z) => z > FAN_MIN && z < FAN_MAX).sort((x, y) => x - y), FAN_MAX];
-  for (let i = 1; i < edges.length; i++) refine(edges[i - 1], edges[i]);
-  out.push(FAN_MAX);
-  return out;
-}
-
-const FAN_STOPS = buildFanStops();
-
-/**
- * The renderer's version of the same curve, as a MapLibre expression giving a feature's offset.
- *
- * Sampled from `fanAt` rather than written out separately, so the lines and the trains cannot
- * drift apart: there is one curve and this is a reading of it.
- *
- * The zoom interpolation has to be the outermost expression — MapLibre rejects one nested inside
- * another and silently drops the layer when you try, which took most of the network off the map.
- * So each stop combines the feature's own two bands rather than the curve being multiplied whole.
- */
-export function bandOffsetExpression(scale = 1): unknown[] {
-  return [
-    "interpolate", ["linear"], ["zoom"],
-    ...FAN_STOPS.flatMap((z) => {
-      const f = fanAt(z);
-      return [z, ["+", ["*", ["get", "cb"], f.colour * scale], ["*", ["get", "mb"], f.metric * scale]]];
-    }),
-  ];
-}
 
 /** One engine per network. Everything it lays out is cached for the life of it. */
 export class LineEngine {

@@ -29,18 +29,15 @@ Delete the second derivation of the fan rather than reconcile it.
 
 ## render-3 — One custom line layer
 
-`###·······` 25% · 1 of 4 done
+`##########` 100% · 4 of 4 done
 
 Make the drawn fan match the real one; the geometry turned out not to be the problem.
 
-### backlog
-
-- [ ] `0012` Bake the segments into a static vertex buffer with per-vertex tangent and band <sup>feature · p1</sup>
-- [ ] `0013` Stroke the lines in a shader that shares the trains' fan function <sup>feature · p1</sup>
-- [ ] `0014` Retire the eighteen GeoJSON weave layers and the fifteen-stop offset expression <sup>chore · p1</sup>
-
 ### done
 
+- [x] `0012` Bake the segments into a static vertex buffer with per-vertex tangent and band <sup>feature · p1</sup>
+- [x] `0013` Stroke the lines in a shader that shares the trains' fan function <sup>feature · p1</sup>
+- [x] `0014` Retire the eighteen GeoJSON weave layers and the fifteen-stop offset expression <sup>chore · p1</sup>
 - [x] `0019` The drawn fan strays four pixels from the real one at the reveal <sup>bug · p0</sup>
 
 ## render-4 — Positions as arc-length

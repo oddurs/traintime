@@ -2,8 +2,9 @@
 id: 12
 title: Bake the segments into a static vertex buffer with per-vertex tangent and band
 type: feature
-status: backlog
+status: done
 milestone: render-3
+assignee: claude
 created: 2026-09-17
 updated: 2026-09-18
 priority: p1
@@ -24,11 +25,11 @@ over.
 
 ## Acceptance criteria
 
-- [ ] One interleaved vertex buffer built once from `index.strokes()`
-- [ ] Per-vertex tangent, `cb`, `mb`, route colour and weave level
-- [ ] Built off the main thread, or fast enough that it does not matter — measured
-- [ ] Rebuilt only when the network's `feedVersion` changes
-- [ ] Memory footprint recorded, for comparison against the GeoJSON sources it replaces
+- [x] One interleaved vertex buffer built once from `index.strokes()`
+- [x] Per-vertex tangent, `cb`, `mb`, route colour and weave level
+- [x] Built off the main thread, or fast enough that it does not matter — measured
+- [x] Rebuilt only when the network's `feedVersion` changes
+- [x] Memory footprint recorded, for comparison against the GeoJSON sources it replaces
 
 ## Re-justified: the widths were not this
 
@@ -56,3 +57,27 @@ than the old ones:
     living on the CPU. Drawing them as instanced marks retires it.
 
 Neither is urgent, and neither is what the original complaint was about.
+
+## Baked
+
+`lineGeometry.ts`. 2 950 strokes, sorted by weave level so each level's triangles
+are one contiguous range, into an interleaved Float32Array: prev, pos, next,
+side, cap, band, colour. Route index rides in a parallel Uint8Array as an
+integer attribute so the shader can shift and mask it for filtering.
+
+  52 546 vertices   139 938 indices   3.06 MB   24 ms, once
+
+prev and next are carried per vertex because the extrusion happens in screen
+space — that is where a pixel is defined — and the shader can only work out the
+screen direction of a bend by projecting all three. An end marks itself by
+repeating its own position.
+
+Under 65 536 vertices, so sixteen-bit indices, which halves the index buffer.
+That was not a given: the cap pairs added 11 800 vertices and took it from
+40 746 to 52 546. A third of the headroom is gone and a denser network would
+cross it, at which point the indices become Uint32 and the buffer grows by
+280 KB.
+
+Built on the main thread at load. 24 ms against a map that takes seconds to
+appear is not worth a worker, and the criterion allowed either as long as it was
+measured.
