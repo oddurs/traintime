@@ -312,3 +312,61 @@ should keep saying so through `render-2` and `render-3`.
 main thread is asked to prepare, so it is the first where a frame rate is the right measure — and
 this harness cannot give one, because it rasterises in software. That will want a real-hardware
 measurement, and the target should be set when there is a way to read it.
+
+## render-4 — the position was already on the line
+
+The milestone's claim was that a train has coordinates of its own and can therefore drift off the
+line it is drawn beside. Two ways that could happen, and both were measured before anything was
+built.
+
+**Along the line: exact.** The geometry the line is stroked from and the path the train rides are
+the same points to **0.0000 m** across 444 segments, with none skipped — `laid()` really is the
+single source for both, and has been since it was written. The pre-existing test for this quietly
+skipped any segment whose point counts differed; there are none.
+
+**Across the line: one band per stop pair.** Of 1 067 stop pairs, **0** are ridden on different
+bands by different runs of the same route. So the train's run-agnostic band lookup is never wrong
+about which band it wants.
+
+What `0016` did was finish the record rather than fix a drift: `segment` and `band` now sit on
+`TrainPosition` beside `s`, and the band is read in the engine, where the history that a stopped
+train needs already lives, instead of per train per frame in the render loop against a map kept
+beside the map.
+
+### What the measurement did find
+
+The band is read two ways. A train takes it from the continuous profile the geometry is swept
+along; its line is drawn from pieces cut wherever that profile has moved `BAND_STEP` (1/16 of a
+band), each piece drawn at the mean of its endpoints. So the train follows a curve and the line
+follows a staircase fitted to it.
+
+```
+zoom 15, 11 752 run-matched points
+  p50   0.304 px     exactly BAND_STEP/2 — the design
+  p90   0.728 px
+  p99   1.274 px
+  max   4.615 px
+  over 2 px: 0.4% of points, 92% of them within 15% of a stretch end
+```
+
+The design bound holds for ninety percent of the network. The tail collects in the band ramps
+either side of a station — where the profile moves fastest and the map is already hardest to read —
+and 4.6 px is more than a line width. Why it exceeds half a step is not yet explained, which is the
+first half of `0020`.
+
+### Why the GPU half was not built
+
+`0017` would resolve `(segment, s)` in the vertex stage. It is not built, and the reason is
+structural rather than effort.
+
+It cannot remove the CPU path: the hit test has to say which train is under the pointer, and a
+pointer cannot query a vertex buffer. The ring, follow mode and `/state` all want a coordinate too.
+So the CPU would keep resolving positions and the GPU would resolve them again — **two evaluations
+where there is one**, which is the shape `render-2` existed to remove.
+
+And it costs accuracy or machinery. A resampled atlas at 64 samples a segment chords a 2 km stretch
+every 31 m, visibly worse than `alongPath` on a curve; keeping the exact polyline means a binary
+search per vertex against a data texture, to save the ~0.5 ms the whole frame callback costs for
+five hundred trains. The item stays open rather than dropped, because the arithmetic changes if the
+ring and the counts ever become instanced marks and the hit test is the only CPU reader left.
+

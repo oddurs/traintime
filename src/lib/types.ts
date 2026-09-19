@@ -214,9 +214,26 @@ export interface TrainPosition {
   speed: number;
   phase: TrainPhase;
   motion: Motion;
+  /**
+   * Which stretch of track it is on, and how far along — which, with `band`, is the position.
+   *
+   * `lon`/`lat` are derived from these three against the geometry the line is drawn from. They stay
+   * on the record because the panel, the search, the hit test and `/state` all want a coordinate,
+   * but they are an answer rather than the question: a train is somewhere on a line, and the line
+   * is where the coordinate comes from.
+   */
+  segment: string;
   /** Metres along the current segment, and its length. */
   s: number;
   length: number;
+  /**
+   * Which band of its corridor it rides, as the two coefficients the fan is built from.
+   *
+   * Read here rather than in the renderer because it is a fact about the network, not about the
+   * view — and because a train standing at a platform has no stretch to read one from, so it has to
+   * be the one it was riding, which only the thing holding the train's history can know.
+   */
+  band: [number, number];
   /**
    * How long this train has been between stations without moving, in seconds.
    *

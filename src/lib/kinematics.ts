@@ -49,6 +49,8 @@ interface Body {
    * degrees in a second that way. The limit belongs at the point the number leaves the engine.
    */
   shown?: number;
+  /** The band last ridden, so a train standing at a platform keeps it instead of hopping. */
+  band?: [number, number];
 }
 
 /**
@@ -84,7 +86,7 @@ export class Kinematics {
     const onLine = this.net.platformPoint(st.route, stop);
     const p: LonLat = onLine ?? (s ? [s.lon, s.lat] : [0, 0]);
     const prev = this.bodies.get(st.id);
-    return { key: `at:${parentOf(stop)}`, path: { pts: [p], cum: [0], length: 0 }, L: 0, vMax: 0, s: 0, v: 0, motion: "stopped", heading: prev?.heading ?? 0, shown: prev?.shown };
+    return { key: `at:${parentOf(stop)}`, path: { pts: [p], cum: [0], length: 0 }, L: 0, vMax: 0, s: 0, v: 0, motion: "stopped", heading: prev?.heading ?? 0, shown: prev?.shown, band: prev?.band };
   }
 
   private stepOne(st: TrainState, byId: Map<string, TrainState>, now: number, dt: number): TrainPosition | undefined {
@@ -119,7 +121,7 @@ export class Kinematics {
       const departed = body && (body.key === `at:${parentOf(st.prevStop)}` || parentOf(this.keyNext(body.key)) === parentOf(st.prevStop));
       // The drawn heading carries across a replacement too, or the arrow snaps to wherever the
       // new body happens to point the moment it is created.
-      const fresh: Body = { key, path, L, vMax, s: 0, v: 0, motion: "accelerating", heading: body?.heading ?? headingAt(path, 0), shown: body?.shown };
+      const fresh: Body = { key, path, L, vMax, s: 0, v: 0, motion: "accelerating", heading: body?.heading ?? headingAt(path, 0), shown: body?.shown, band: body?.band };
       if (!departed) {
         // First sight mid-segment: replay the controller from departure to now so the
         // placement is consistent with how the train would have been animated.
@@ -282,9 +284,24 @@ export class Kinematics {
       const spread = Math.min(b.L, Math.max(b.v, 2) * st.sigma);
       if (spread > 25) ribbon = slicePath(b.path, b.s - spread, b.s + spread);
     }
+    /*
+     * The band, read where the position is rather than in the renderer.
+     *
+     * A train between stations reads the band its line has *here*, so it follows the same profile
+     * the geometry is swept along rather than the average of the stretch. One standing at a
+     * platform has no stretch to read, and keeps the band it arrived on — without that it would hop
+     * to the middle of its corridor every time it stopped.
+     */
+    const live = st.prevStop && st.nextStop
+      ? this.net.lateralBand(st.route, st.prevStop, st.nextStop, b.L > 0 ? b.s / b.L : undefined)
+      : undefined;
+    if (live) b.band = [live.cb, live.mb];
+    const band: [number, number] = b.band ?? [0, 0];
+
     void now;
     return {
       id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing: b.shown ?? b.heading, tangent,
+      segment: b.key, band,
       speed: b.v, phase: st.phase, motion: b.motion, s: b.s, length: b.L, stalledFor: b.stalled ?? 0, ribbon, state: st,
     };
   }

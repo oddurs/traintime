@@ -198,6 +198,54 @@ test("a train standing at a platform is on its own line, not the middle of the c
   assert.ok(distM([p.lon, p.lat], onLine) < 0.01, `stood ${distM([p.lon, p.lat], onLine).toFixed(2)} m off its own line`);
 });
 
+/**
+ * The band is part of where a train is, so it is read where the position is read.
+ *
+ * It used to be looked up in the render loop, once per train per frame, against a map of the last
+ * band each train rode — state about trains, kept beside the map rather than beside the trains. The
+ * renderer now takes it off the position record, which means the fallback for a train with no
+ * stretch to read from has to live in the engine, where the train's history already is.
+ */
+test("a train carries the band it rides, and keeps it when it stops", () => {
+  // Somewhere a service is genuinely off the centre of its corridor, or the band is zero and the
+  // test would pass whatever happened.
+  const offCentre = (() => {
+    for (const [key, slots] of Object.entries(net.segmentSlots)) {
+      for (const [route, [band]] of Object.entries(slots)) {
+        if (Math.abs(band) < 0.5) continue;
+        const [a, b] = key.split("-");
+        if (idx.pathBetween(route, `${a}N`, `${b}N`)?.pts?.length) return { route, a, b };
+      }
+    }
+    return null;
+  })();
+  assert.ok(offCentre, "expected some service to run off the centre of a shared corridor");
+  const { route, a, b } = offCentre!;
+
+  const kin = new Kinematics(idx);
+  const moving = {
+    id: "T", route, direction: "N", assigned: true, phase: "moving",
+    prevStop: `${a}N`, nextStop: `${b}N`, eta: NOW + 60, etaRaw: NOW + 60, sigma: 10,
+    updatedAt: NOW, stops: [] as StopPrediction[],
+  } as unknown as TrainState;
+
+  const [run] = kin.step([moving], NOW, 1);
+  const expected = idx.lateralBand(route, `${a}N`, `${b}N`, run.length > 0 ? run.s / run.length : undefined);
+  assert.ok(expected, "this stretch should have a band to read");
+  assert.equal(run.band[0], expected!.cb, "colour band");
+  assert.equal(run.band[1], expected!.mb, "metric band");
+  assert.ok(Math.abs(run.band[0]) + Math.abs(run.band[1]) > 0, "and it should not be the centre of the corridor");
+
+  // Now stand it at the platform. There is no stretch to read a band from, so it has to keep the
+  // one it arrived on rather than hop to the middle of the corridor.
+  const dwelling = { ...moving, phase: "dwelling", prevStop: `${b}N`, nextStop: `${b}N` } as unknown as TrainState;
+  const [stopped] = kin.step([dwelling], NOW + 2, 1);
+  assert.deepEqual(stopped.band, run.band, "a train that stopped lost the band it was riding");
+
+  // And the position record says which stretch it is on, which with s is the position itself.
+  assert.ok(typeof run.segment === "string" && run.segment.length > 0, "a position needs a segment");
+});
+
 // ---------- the board ----------
 
 const stopsFrom = (ids: string[], start: number, gap = 120): StopPrediction[] =>

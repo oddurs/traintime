@@ -35,29 +35,6 @@ const fanScale = { current: 1 };
 const lineLayer: { current: LineLayer | null } = { current: null };
 
 /**
- * Which band of its corridor a train rides, as the two coefficients the fan is built from.
- *
- * This used to return a position: it converted the band into metres using the zoom, displaced the
- * train perpendicular to its heading, and handed back a longitude and latitude. That was the second
- * derivation of the fan — the renderer does the same sum in pixels, at draw time, with the camera it
- * is actually drawing — and the two could only agree when the camera was still. Now the band goes
- * into the instance buffer and the shader does the sum once, so this returns the band and nothing
- * else.
- *
- * A train standing at a platform has no segment to take a band from, so it keeps the one it was
- * riding — without that it would hop to the middle of the corridor every time it stopped.
- */
-function bandOf(p: TrainPosition, index: NetworkIndex, last: Map<string, [number, number]>): [number, number] {
-  const prev = p.state.prevStop, next = p.state.nextStop;
-  // How far into the stretch it is, so it reads the band its line has *here* rather than the one
-  // the stretch has on average.
-  const along = p.length > 0 ? p.s / p.length : undefined;
-  const live = prev && next ? index.lateralBand(p.route, prev, next, along) : undefined;
-  if (live) { last.set(p.id, [live.cb, live.mb]); return [live.cb, live.mb]; }
-  return last.get(p.id) ?? [0, 0];
-}
-
-/**
  * The fan as a screen offset, in CSS pixels — the same sum the shader does, for the few things
  * MapLibre still draws by longitude and latitude.
  *
@@ -215,7 +192,6 @@ export default function TrainMap(props: Props) {
   // Holds the lane convention currently uploaded, so lines are only rebuilt when it changes.
   const applyVisibility = useMemo(() => applyVisibilityFactory({ scale: null, served: null }), []);
   /** The band each train was last riding, so one standing at a platform keeps its lane. */
-  const lastBandRef = useRef(new Map<string, [number, number]>());
   const kinRef = useRef<Kinematics | null>(null);
   /*
    * The trains are drawn by trainLayer.ts rather than by a symbol layer. These hold the layer, the
@@ -358,7 +334,6 @@ export default function TrainMap(props: Props) {
       const zoom = map.getZoom();
       const bearingRad = (map.getBearing() * Math.PI) / 180;
       const fanScaleNow = fanScale.current;
-      const lastBand = lastBandRef.current;
       /** Centreline position, shifted into its band the way the shader will shift the train. */
       const fannedLonLat = (lon: number, lat: number, cb: number, mb: number, tanRad: number): LonLat => {
         const [dx, dy] = fanOffsetPx(cb, mb, tanRad, zoom, bearingRad, fanScaleNow);
@@ -416,7 +391,7 @@ export default function TrainMap(props: Props) {
           drawn.add(stackKey);
         }
         const shown = selected ? 1 : stacked;
-        const [cb, mb] = bandOf(p, idx, lastBand);
+        const [cb, mb] = p.band;
         // The track's own direction here, which is the basis the line is offset from. Not
         // `p.bearing`, which is rate-limited so the arrow sweeps through curves — see 0010.
         const tanRad = (p.tangent * Math.PI) / 180;
