@@ -41,6 +41,31 @@ import { trunkOf } from "./trunks";
 const parentOf = (id: string) => id.replace(/[NS]$/, "");
 
 /**
+ * The diamond services, and the line each one is drawn on.
+ *
+ * `6X`, `7X` and `FX` are in the feed and in the network, with their own runs and their own slot in
+ * the corridor — so they were drawn as a second line beside their parent, in the *same colour*. A
+ * doubled green line beside the green line carries no colour information; it reads as clutter, and
+ * it is a large part of what a busy corridor looked like.
+ *
+ * The printed map has always solved this the other way round: one line, and a diamond bullet on the
+ * train that runs express. That is the trade here too, and it is a real trade — the express genuinely
+ * runs on a different track, four and a half metres over, and collapsing it onto the local's line
+ * gives that distinction to the bullet alone.
+ *
+ * Measured, so the cost is known rather than assumed: of 548 points these services would have drawn,
+ * four are more than 25 m from any line that is still drawn, and the worst is 101 m on the Culver
+ * express between Bergen St and Church Av, where the express tracks genuinely take their own
+ * alignment. Everywhere else the parent covers the same ground — an express *pair* skips stations,
+ * so the local draws the same track in shorter hops.
+ *
+ * Routed through `standIn`, which every other piece of geometry already asks: the band, the laid
+ * polyline and therefore where the trains ride all follow without knowing this exists.
+ */
+export const DRAWN_AS: Record<string, string> = { "6X": "6", "7X": "7", "FX": "F" };
+export const drawnAs = (route: string) => DRAWN_AS[route] ?? route;
+
+/**
  * Real spacing between adjacent track centres on the New York subway. The drawn geometry uses the
  * true figure, so zooming far enough in shows a four-track trunk laid out the way it is actually
  * built, and a train sits on the track it is actually on.
@@ -278,6 +303,9 @@ export class LineEngine {
     const memo = `${route}|${key}`;
     const hit = this.stands.get(memo);
     if (hit !== undefined) return hit;
+    // A diamond service is drawn as its parent, so everything downstream of here — the band, the
+    // laid polyline, where its trains ride — follows the line that is actually on the map.
+    route = drawnAs(route);
     let pick = route;
     const here = this.net.segmentSlots?.[key];
     if (here && !here[route]) {
@@ -393,6 +421,9 @@ export class LineEngine {
     if (this.strokeCache) return this.strokeCache;
     const out: Stroke[] = [];
     for (const [route, runs] of Object.entries(this.net.routeRuns ?? {})) {
+      // A diamond service has no line of its own; it rides its parent's. Its trains still carry the
+      // diamond bullet, which is where the express now lives.
+      if (DRAWN_AS[route]) continue;
       // The line takes the colour a line is drawn in, which on a black ground is not always the
       // colour the emblem is printed in.
       const colour = this.net.routes[route]?.lineColor ?? this.net.routes[route]?.color;

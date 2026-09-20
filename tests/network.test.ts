@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NetworkIndex, fanAt, lineWidthAt, casingWidthAt, TRACK_M, metresPerPixel } from "../src/lib/network";
+import { NetworkIndex, fanAt, lineWidthAt, casingWidthAt, DRAWN_AS, TRACK_M, metresPerPixel } from "../src/lib/network";
 import { buildLineMesh, parseColour, LINE_STRIDE } from "../src/lib/lineGeometry";
 import { distM } from "../src/lib/geo";
 import { TRUNKS, serviceColours } from "../src/lib/trunks";
@@ -360,4 +360,38 @@ test("a colour is read in every form the token layer emits", () => {
   for (const st of idx.strokes()) {
     assert.ok(!magenta(parseColour(st.colour)), `${st.route} draws in the fallback colour: ${st.colour}`);
   }
+});
+
+/**
+ * A diamond service is drawn as its parent.
+ *
+ * `6X`, `7X` and `FX` are in the feed and in the network with their own runs and their own slot, so
+ * they were drawn as a second line beside their parent in the *same colour* — a doubled green line
+ * beside the green line, which carries no colour information and is most of what a busy corridor
+ * looked like. The printed map has always put the express on the bullet instead.
+ */
+test("the diamond services ride their parent's line rather than a second one", () => {
+  const drawn = new Set(idx.strokes().map((s) => s.route));
+  for (const x of Object.keys(DRAWN_AS)) {
+    assert.ok(!drawn.has(x), `${x} still draws a line of its own`);
+    assert.ok(drawn.has(DRAWN_AS[x]), `${DRAWN_AS[x]} should still be drawn for ${x} to ride`);
+  }
+
+  // And a diamond train has to be placed on the line that is actually there, or it would sit beside
+  // a line nobody drew — which is the whole failure the fan work existed to prevent.
+  let checked = 0;
+  for (const [x, parent] of Object.entries(DRAWN_AS)) {
+    for (const run of (net.routeRuns[x] ?? []).slice(0, 2)) {
+      for (let i = 0; i + 1 < run.stops.length && checked < 40; i++) {
+        const a = `${run.stops[i]}N`, b = `${run.stops[i + 1]}N`;
+        const express = idx.lateralBand(x, a, b, 0.5);
+        const local = idx.lateralBand(parent, a, b, 0.5);
+        if (!express || !local) continue;
+        assert.equal(express.cb, local.cb, `${x} rides a different colour band from ${parent}`);
+        assert.equal(express.mb, local.mb, `${x} rides a different metric band from ${parent}`);
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked > 5, `expected some shared stretches to compare, got ${checked}`);
 });

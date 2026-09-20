@@ -19,7 +19,7 @@
  */
 import type { CustomLayerInterface, CustomRenderMethodInput, Map as MapLibreMap } from "maplibre-gl";
 import { LINE_STRIDE, WEAVE_LEVELS, type LineMesh } from "./lineGeometry";
-import { casingWidthAt, fanAt, lineWidthAt } from "./layout";
+import { casingWidthAt, drawnAs, fanAt, lineWidthAt } from "./layout";
 
 const VERT = `#version 300 es
 precision highp float;
@@ -61,12 +61,31 @@ void main() {
   vec4 clip = clipOf(a_pos);
   vec2 sPrev = toPx(clipOf(a_prev)), sPos = toPx(clip), sNext = toPx(clipOf(a_next));
   vec2 dA = sPos - sPrev, dB = sNext - sPos;
-  bool hasA = dot(dA, dA) > 1e-9;
-  bool hasB = dot(dB, dB) > 1e-9;
-  vec2 uA = hasA ? normalize(dA) : vec2(0.0);
-  vec2 uB = hasB ? normalize(dB) : vec2(0.0);
-  vec2 dir = normalize(hasA && hasB ? uA + uB : (hasA ? uA : uB));
-  if (!hasA && !hasB) dir = vec2(0.0, 1.0);   // a degenerate stretch: pick a direction and move on
+  float lA = length(dA), lB = length(dB);
+  /*
+   * A segment has to be a twentieth of a pixel long before its direction means anything.
+   *
+   * The cutter inserts points to keep a band change gradual, so the ramps around a junction are
+   * made of very short segments — and at anything but street zoom they project to less than a
+   * pixel. Normalising a near-zero vector gives a direction that is numerical noise, the miter
+   * then scales it by up to four, and the result was a fan of shards radiating out of every busy
+   * junction, moving as the camera moved. It was worst in lower Manhattan because that is where
+   * the junctions are.
+   */
+  bool hasA = lA > 0.05;
+  bool hasB = lB > 0.05;
+  // Both ends sub-pixel means the whole quad is sub-pixel. Collapse it rather than draw a blob in
+  // whatever direction the arithmetic happened to produce.
+  if (!hasA && !hasB) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  vec2 uA = hasA ? dA / lA : vec2(0.0);
+  vec2 uB = hasB ? dB / lB : vec2(0.0);
+  /*
+   * A fold — track doubling back on itself — leaves uA + uB near zero, and normalising *that* is
+   * the same failure one level up. Take the outgoing segment and let the join be a notch.
+   */
+  vec2 sum = uA + uB;
+  float sl = length(sum);
+  vec2 dir = (hasA && hasB && sl > 0.2) ? sum / sl : (hasB ? uB : uA);
 
   // Right of travel, which is the side the band is offset to and the side the trains take.
   vec2 nR = vec2(dir.y, -dir.x);
@@ -74,10 +93,10 @@ void main() {
   /*
    * The miter, which is what makes an offset line a parallel curve rather than a set of displaced
    * segments. Both the band offset and the half width are perpendicular displacements at a joint,
-   * so both get the same correction; clamped, because the correction goes to infinity as a turn
-   * approaches a fold and a spike is worse than a truncation.
+   * so both get the same correction — limited to two, because past about a hundred and twenty
+   * degrees the spike is longer than the join is wide and a notch is the smaller artefact.
    */
-  float mlen = 1.0 / max(dot(nR, nA), 0.25);
+  float mlen = 1.0 / max(dot(nR, nA), 0.5);
 
   /*
    * Two instances rather than two draws: instance 0 is the casing, instance 1 the line on top of
@@ -210,9 +229,12 @@ export class LineLayer implements CustomLayerInterface {
 
   /** Show only these services, or all of them for `null`. No buffer is touched. */
   setVisible(routes: Set<string> | null) {
+    // A diamond service has no line of its own, so asking for it lights its parent's — otherwise
+    // filtering to the express would empty the map of the line the express runs on.
+    const drawn = routes && new Set([...routes].map(drawnAs));
     let lo = 0, hi = 0;
     this.mesh.routes.forEach((r, i) => {
-      if (routes && !routes.has(r)) return;
+      if (drawn && !drawn.has(r)) return;
       if (i < 32) lo |= 1 << i; else hi |= 1 << (i - 32);
     });
     this.mask = routes ? [lo >>> 0, hi >>> 0] : [0xffffffff, 0xffffffff];

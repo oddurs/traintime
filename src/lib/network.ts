@@ -9,7 +9,7 @@ export const parentOf = (id: string) => id.replace(/[NS]$/, "");
 const APPROACH_M = 400;
 
 // Drawing lives in ./layout. Re-exported so a caller has one import for the map.
-export { TRACK_M, RAMP_M, fanAt, metresPerPixel, lineWidthAt, casingWidthAt, LineEngine, type Stroke } from "./layout";
+export { TRACK_M, RAMP_M, fanAt, metresPerPixel, lineWidthAt, casingWidthAt, DRAWN_AS, drawnAs, LineEngine, type Stroke } from "./layout";
 
 /** Indexed, query-friendly view of network.json shared by server and client. */
 export class NetworkIndex {
