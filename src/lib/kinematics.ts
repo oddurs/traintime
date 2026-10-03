@@ -117,7 +117,7 @@ export class Kinematics {
       const path = this.net.pathBetween(st.route, st.prevStop, st.nextStop);
       const L = path.length;
       const runTime = st.runTime ?? Math.max(60, L / 12);
-      const vMax = Math.min(this.opts.vMaxAbs, Math.max(6, (1.35 * L) / runTime));
+      const vMax = this.cruiseFor(L, runTime);
       const departed = body && (body.key === `at:${parentOf(st.prevStop)}` || parentOf(this.keyNext(body.key)) === parentOf(st.prevStop));
       // The drawn heading carries across a replacement too, or the arrow snaps to wherever the
       // new body happens to point the moment it is created.
@@ -192,6 +192,29 @@ export class Kinematics {
       if (free !== undefined) target = Math.min(target, Math.sqrt(2 * brake * Math.max(0, free)));
     }
     return target;
+  }
+
+  /**
+   * The speed a train has to hold to cover this stretch in the time it is given.
+   *
+   * A run between two platforms is a trapezoid: accelerate at `accel`, hold, brake at `brake`. The
+   * time that takes is t = L/v + v·k/2, where k = 1/accel + 1/brake is what the two ends cost
+   * together, so the cruise speed is the smaller root of v²·k/2 − v·t + L = 0. Where the stretch
+   * is too long to be run in the time at any speed — the schedule is tighter than the physics —
+   * there is no real root, and the answer is the peak of a triangle with no cruise in it at all.
+   *
+   * This used to be `1.35 × L / runTime`: the average speed, marked up by a constant for the ends.
+   * The markup is not a constant, though — it is 1.28 on a nine-hundred-metre run and 1.5 on a
+   * four-hundred-metre one, because the ends cost the same seconds either way and there are fewer
+   * of them to spread over. Fixing it at 1.35 made every short hop too fast and every long one too
+   * slow, so a train crossed its stretch on the wrong curve even when it left and arrived on time,
+   * which is exactly the part of a position that no arrival event can correct.
+   */
+  private cruiseFor(L: number, runTime: number): number {
+    const k = 1 / this.opts.accel + 1 / this.opts.brake;
+    const disc = runTime * runTime - 2 * k * L;
+    const v = disc > 0 ? (runTime - Math.sqrt(disc)) / k : Math.sqrt((2 * L) / k);
+    return Math.min(this.opts.vMaxAbs, Math.max(6, v));
   }
 
   /**
