@@ -94,7 +94,11 @@ const claimed = new Set<string>();
 export function markTiming(name: "readable" | "map") {
   if (typeof performance === "undefined" || claimed.has(name)) return;
   claimed.add(name);
-  const at = () => { marks[name] = Math.round(performance.now()); };
+  const at = () => {
+    marks[name] = Math.round(performance.now());
+    // The same moment as a standard mark, so a lab measurement reads exactly what real visits report.
+    try { performance.mark(`tt:${name}`); } catch { /* marks are optional; the report above is not */ }
+  };
   if (typeof requestAnimationFrame !== "function") return at();
   requestAnimationFrame(() => requestAnimationFrame(at));
 }
