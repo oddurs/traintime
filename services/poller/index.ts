@@ -21,6 +21,7 @@ import { ContextRecorder } from "./context";
 import { cleanTemp, compact, diskUsage, enforceBudget, prune } from "./retention";
 import { rollup, rollupStatus } from "./rollup";
 import { learnOnce, modelTrainingReady, msUntilNightly, type LearnOutcome } from "./learn";
+import { containerLimitBytes, PEAK_BYTES } from "./memory";
 import { checkInvariants, isFailure } from "../../src/lib/invariants";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -89,6 +90,15 @@ async function main() {
     modelReady = r;
     console.log(`[learn] model retraining ${r.ready ? "available" : "unavailable"}: ${r.detail}`);
   });
+
+  // Said at start-up rather than discovered at 03:20: the per-process limits were sized for one
+  // plan's container, and the last time the container and the assumption disagreed it cost a
+  // crash a night for six weeks.
+  const containerBytes = containerLimitBytes();
+  if (containerBytes !== null && PEAK_BYTES > containerBytes) {
+    console.warn(`[memory] the learn pass may use ${(PEAK_BYTES / 1e9).toFixed(1)} GB and this container allows ` +
+      `${(containerBytes / 1e9).toFixed(1)} GB — lower BUDGET in services/poller/memory.ts`);
+  }
 
   const live: { server?: PollerServer } = {};
   const server = new PollerServer({

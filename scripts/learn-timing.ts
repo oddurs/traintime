@@ -3,17 +3,24 @@
  * recorded station events, and write data/timing.json for the poller (hot-reloaded).
  *
  *   npx tsx scripts/learn-timing.ts [--from ISO] [--to ISO] [--out data/timing.json] [--no-flush]
+ *
+ * It runs nightly beside a live recorder, so it is written to hold as little as it can: DuckDB
+ * does the filtering and the counting, rows are streamed a chunk at a time, and what does have to
+ * reach JS — the ten million runs and dwells the hierarchies are fitted on — is kept as numbers.
+ * It used to read every stop event in history as an object, 21 million of them twice over beside
+ * 20 million observations, and keep a tenth: 16.8 GB at 80 days of history, growing by the day.
  */
-import { DuckDBInstance } from "@duckdb/node-api";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { DuckDBConnection } from "@duckdb/node-api";
 import type { ResidualStat, Stat, TimingTables } from "../src/lib/types";
-import { horizonBucket, runKeys, dwellKeys, RUN_LEVELS, DWELL_LEVELS, type Conditions } from "../src/lib/timing";
-import { add as addToHistogram, stat as statFromHistogram, type Histogram } from "../src/lib/histogram";
-import { buildHierarchy, estimate, hierarchySize } from "../src/lib/hierarchy";
+import { HORIZONS, runKeys, dwellKeys, RUN_LEVELS, DWELL_LEVELS, type Conditions } from "../src/lib/timing";
+import { BUCKET_S, stat as statFromHistogram, type Histogram } from "../src/lib/histogram";
+import { buildHierarchy, estimate, hierarchySize, type Sample } from "../src/lib/hierarchy";
 import { band, calendarRow, type WeatherBand } from "../src/lib/calendar";
 import { nyHourDow } from "../src/lib/tracker";
 import { parquetGlob, REC_DIR } from "../services/poller/recorder";
+import { BUDGET, openDuckDB } from "../services/poller/memory";
 
 const ROOT = join(import.meta.dirname, "..");
 const args = new Map<string, string>();
@@ -33,210 +40,314 @@ const quantile = (xs: number[], p: number) => {
   return s[Math.min(s.length - 1, Math.floor(p * s.length))];
 };
 const stat = (xs: number[]): Stat => ({ p50: quantile(xs, 0.5), p16: quantile(xs, 0.16), p84: quantile(xs, 0.84), n: xs.length });
-function group<T>(rows: T[], key: (r: T) => string | undefined, val: (r: T) => number): Record<string, number[]> {
-  const out: Record<string, number[]> = {};
-  for (const r of rows) {
-    const k = key(r);
-    if (k === undefined) continue;
-    (out[k] ??= []).push(val(r));
+
+/** Streams a query's rows a chunk at a time, so no result is ever held whole in memory. */
+async function eachRow(conn: DuckDBConnection, sql: string, fn: (row: unknown[]) => void): Promise<void> {
+  const result = await conn.stream(sql);
+  for await (const rows of result.yieldRowsJs()) for (const r of rows) fn(r);
+}
+
+/** Each distinct string once, as a small integer. Ten million rows name a few thousand stops. */
+class Dict {
+  private codes = new Map<string, number>();
+  readonly names: string[] = [];
+  code(s: string): number {
+    let c = this.codes.get(s);
+    if (c === undefined) {
+      c = this.names.length;
+      this.codes.set(s, c);
+      this.names.push(s);
+    }
+    return c;
+  }
+}
+
+/** Collects values under a numeric key and summarises each group with at least `min` of them. */
+function statsBy(keys: number[], values: number[], name: (key: number) => string, min = 3): Record<string, Stat> {
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < keys.length; i++) {
+    const g = groups.get(keys[i]);
+    if (g) g.push(values[i]);
+    else groups.set(keys[i], [values[i]]);
+  }
+  const out: Record<string, Stat> = {};
+  for (const [k, v] of groups) if (v.length >= min) out[name(k)] = stat(v);
+  return out;
+}
+
+/**
+ * One sample per row, with rows that have the same keys sharing one array. `keyOf` returns a
+ * numeric identity for the row's keys and a way to build them the first time that identity is seen,
+ * so ten million samples point at a few hundred thousand arrays instead of building five strings each.
+ */
+function samplesOf(n: number, value: (i: number) => number, keyOf: (i: number) => [number, () => (string | undefined)[]]): Sample[] {
+  const shared = new Map<number, (string | undefined)[]>();
+  const out: Sample[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const [id, build] = keyOf(i);
+    let keys = shared.get(id);
+    if (!keys) {
+      keys = build();
+      shared.set(id, keys);
+    }
+    out[i] = { value: value(i), keys };
   }
   return out;
 }
-const mapStats = (g: Record<string, number[]>, min = 3) => Object.fromEntries(Object.entries(g).filter(([, v]) => v.length >= min).map(([k, v]) => [k, stat(v)]));
+
+/**
+ * Build the hierarchy, then earn the right to use it. A candidate is fitted on the older
+ * three quarters of the observations and scored against the newest quarter, alongside the
+ * plain per-cell median that the flat tables already provide. Several shrinkage constants are
+ * tried and the best is kept — but only if it beats the simple estimator outright. Extra model
+ * complexity has to pay for itself on data it has not seen.
+ *
+ * `samples` must arrive in time order; the queries that produce them sort by time.
+ */
+function gatedHierarchy(
+  levels: string[],
+  samples: Sample[],
+  /** Which level holds the plain per-cell estimate the hierarchy has to beat. */
+  flatLevel: number,
+) {
+  const cut = Math.floor(samples.length * 0.75);
+  const train = samples.slice(0, cut), test = samples.slice(cut);
+
+  // The incumbent: the median of each flat cell, falling back to the overall median. Each cell's
+  // median is taken once — it used to be re-sorted for every held-out row that looked it up.
+  const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
+  const flatCells = new Map<string, number[]>();
+  for (const s of train) {
+    const key = s.keys[flatLevel];
+    if (key === undefined) continue;
+    const cell = flatCells.get(key);
+    if (cell) cell.push(s.value);
+    else flatCells.set(key, [s.value]);
+  }
+  const flatMedian = new Map<string, number>();
+  for (const [key, cell] of flatCells) if (cell.length >= 3) flatMedian.set(key, med(cell));
+  flatCells.clear();
+  const globalMed = med(train.map((s) => s.value));
+  const flatOf = (s: Sample) => {
+    const key = s.keys[flatLevel];
+    return (key === undefined ? undefined : flatMedian.get(key)) ?? globalMed;
+  };
+  const mae = (f: (s: Sample) => number) => (test.length ? test.reduce((sum, s) => sum + Math.abs(s.value - f(s)), 0) / test.length : Infinity);
+  const flatMae = mae(flatOf);
+
+  // Candidate shapes: a flat evidence bar, and ones that rise with how finely a cell slices
+  // the data, so a handful of observations in a narrow cell cannot outvote a well-measured
+  // parent. Whichever scores best on the held-out window is the one considered.
+  const shapes: { label: string; k: number; kByLevel?: number[] }[] = [
+    { label: "flat-4", k: 4 },
+    { label: "flat-15", k: 15 },
+    { label: "rising", k: 8, kByLevel: [6, 6, 20, 60, 60] },
+    { label: "steep", k: 8, kByLevel: [8, 8, 40, 150, 150] },
+  ];
+  let best: { label: string; k: number; hierMae: number; opts: Parameters<typeof buildHierarchy>[2] } = {
+    label: "none", k: 0, hierMae: Infinity, opts: { k: HIER_K, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT },
+  };
+  for (const shape of shapes) {
+    const opts = { k: shape.k, kByLevel: shape.kByLevel, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT };
+    const fitted = buildHierarchy(levels, train, opts);
+    const m = mae((s) => estimate(fitted, s.keys).value);
+    if (m < best.hierMae) best = { label: shape.label, k: shape.k, hierMae: m, opts };
+  }
+  // Refitted on everything once, for the winner only, rather than every time the lead changed hands.
+  const hier = buildHierarchy(levels, samples, best.opts);
+  const active = best.hierMae < flatMae;
+  return { hier, gate: { active, k: best.k, shape: best.label, flatMae, hierMae: best.hierMae, testRows: test.length } };
+}
 
 async function main() {
   if (!args.get("no-flush")) { try { await fetch("http://localhost:7118/flush"); } catch { /* fine */ } }
   const from = toEpoch(args.get("from"));
   const to = toEpoch(args.get("to"));
   const out = args.get("out") ?? join(process.env.TRAINTIME_DATA_DIR ?? join(ROOT, "data"), "timing.json");
-  const db = await DuckDBInstance.create(":memory:");
+  const db = await openDuckDB(BUDGET.learnerDuckdb);
   const conn = await db.connect();
   const range = [from ? `ts >= ${from}` : "", to ? `ts <= ${to}` : ""].filter(Boolean).join(" AND ") || "true";
   await conn.run(`CREATE VIEW ev AS SELECT * FROM read_parquet('${parquetGlob("events")}', union_by_name=true) WHERE ${range}`);
   await conn.run(`CREATE VIEW eo AS SELECT * FROM read_parquet('${parquetGlob("eta_obs")}', union_by_name=true) WHERE ${range.replace(/\bts\b/g, "obs_ts")}`);
 
-  // Consecutive events per trip; `incoming` is excluded from the stop-to-stop sequence so a
-  // departure pairs with the following arrival even when an approach event sits between them.
-  type Pair = { ts: number; route: string; direction: string; stop_id: string; kind: string; track: string | null; estimated: boolean; next_ts: number | null; next_stop: string | null; next_kind: string | null; next_track: string | null; next_est: boolean | null };
-  const consecutive = async (kinds: string[]) => (await conn.runAndReadAll(`
-    SELECT ts::DOUBLE AS ts, route, direction, stop_id, kind, track, estimated,
+  /*
+   * Consecutive events per trip; `incoming` is excluded from the stop-to-stop sequence so a
+   * departure pairs with the following arrival even when an approach event sits between them.
+   * Two events of one trip can share a second, and the feed repeats some outright; everything
+   * else in the row breaks the tie, so that two builds over the same history pair the same events
+   * and sort them the same way — the gate compares tables, and a comparison is only as good as
+   * its inputs are repeatable.
+   * The coalesces keep the JS truthiness these filters used to be written in: a file recorded
+   * before `estimated` existed reads as not estimated.
+   */
+  const consecutive = (kinds: string[]) => `
+    SELECT ts::DOUBLE AS ts, route, stop_id, kind, coalesce(estimated, false) AS est,
            (lead(ts) OVER w)::DOUBLE AS next_ts, lead(stop_id) OVER w AS next_stop, lead(kind) OVER w AS next_kind,
-           lead(track) OVER w AS next_track, lead(estimated) OVER w AS next_est
+           lead(track) OVER w AS next_track, coalesce(lead(estimated) OVER w, false) AS next_est
     FROM ev WHERE kind IN (${kinds.map((k) => `'${k}'`).join(",")})
-    WINDOW w AS (PARTITION BY trip_id ORDER BY ts, CASE kind WHEN 'arrive' THEN 0 WHEN 'incoming' THEN 0 ELSE 1 END)
-  `)).getRowObjectsJS() as Pair[];
-  const stopPairs = await consecutive(["arrive", "depart", "pass"]);
-  const pairs = await consecutive(["arrive", "depart", "pass", "incoming"]);
+    WINDOW w AS (PARTITION BY trip_id ORDER BY ts, CASE kind WHEN 'arrive' THEN 0 WHEN 'incoming' THEN 0 ELSE 1 END, stop_id, kind, track, estimated)`;
+  const STOP_KINDS = ["arrive", "depart", "pass"];
 
-  const runs = stopPairs.filter((p) => (p.kind === "depart" || p.kind === "pass") && (p.next_kind === "arrive" || p.next_kind === "pass") && p.next_stop && p.next_stop !== p.stop_id && !p.estimated && !p.next_est && p.next_ts! - p.ts > 10 && p.next_ts! - p.ts < 1800);
-  const dwells = stopPairs.filter((p) => p.kind === "arrive" && p.next_kind === "depart" && p.next_stop === p.stop_id && !p.estimated && !p.next_est && p.next_ts! - p.ts >= 5 && p.next_ts! - p.ts < 900);
-  const approaches = pairs.filter((p) => p.kind === "incoming" && p.next_kind === "arrive" && p.next_stop === p.stop_id && !p.estimated && !p.next_est && p.next_ts! - p.ts > 0 && p.next_ts! - p.ts < 600);
-  const hourOf = (ts: number) => nyHourDow(ts).hour;
-
-  const runTime = mapStats(group(runs, (p) => `${p.stop_id}>${p.next_stop}`, (p) => p.next_ts! - p.ts));
-  const runTimeHour = mapStats(group(runs, (p) => `${p.stop_id}>${p.next_stop}@${hourOf(p.ts)}`, (p) => p.next_ts! - p.ts));
-  const dwell = mapStats(group(dwells, (p) => p.stop_id, (p) => p.next_ts! - p.ts));
-  const dwellHour = mapStats(group(dwells, (p) => `${p.stop_id}@${hourOf(p.ts)}`, (p) => p.next_ts! - p.ts));
-  const approach = mapStats(group(approaches, (p) => p.stop_id, (p) => p.next_ts! - p.ts));
-
-  // Arrival-to-arrival between consecutive arrivals of the same trip: observable on every feed.
-  const arrivals = (await conn.runAndReadAll(`
-    SELECT ts::DOUBLE AS ts, stop_id, (lead(ts) OVER w)::DOUBLE AS next_ts, lead(stop_id) OVER w AS next_stop
-    FROM ev WHERE kind = 'arrive' AND NOT estimated WINDOW w AS (PARTITION BY trip_id ORDER BY ts)
-  `)).getRowObjectsJS() as { ts: number; stop_id: string; next_ts: number | null; next_stop: string | null }[];
-  const a2aPairs = arrivals.filter((p) => p.next_stop && p.next_stop !== p.stop_id && p.next_ts! - p.ts > 20 && p.next_ts! - p.ts < 1800);
-  const a2a = mapStats(group(a2aPairs, (p) => `${p.stop_id}>${p.next_stop}`, (p) => p.next_ts! - p.ts));
-  const dwellMedians = Object.values(dwell).map((s) => s.p50);
-  const dwellGlobal = dwellMedians.length >= 5 ? quantile(dwellMedians, 0.5) : 35;
-
-  // --- Conditional hierarchies -------------------------------------------------
   // Weather is recorded hourly and joined here. It only started being recorded when the
   // context recorder first ran, so early history simply has no weather level — the hierarchy
   // skips levels it has nothing for.
   const bandByHour = new Map<number, WeatherBand>();
   try {
-    const wrows = (await conn.runAndReadAll(
-      `SELECT hour::DOUBLE AS hour, precip_mm, snow_cm, code FROM read_parquet('${parquetGlob("weather")}', union_by_name=true)`,
-    )).getRowObjectsJS() as { hour: number; precip_mm: number; snow_cm: number; code: number }[];
-    for (const w of wrows) bandByHour.set(w.hour, band(w));
+    await eachRow(conn, `SELECT hour::DOUBLE, precip_mm, snow_cm, code FROM read_parquet('${parquetGlob("weather")}', union_by_name=true)`,
+      ([hour, precip_mm, snow_cm, code]) => bandByHour.set(hour as number, band({ precip_mm, snow_cm, code } as Parameters<typeof band>[0])));
   } catch { /* no weather recorded yet */ }
 
-  const condOf = (ts: number): Conditions => {
-    const c = calendarRow(ts);
-    return {
-      hourOfWeek: c.hour_of_week, daypart: c.daypart, season: c.season,
-      weather: bandByHour.get(Math.floor(ts / 3600) * 3600),
-    };
+  /*
+   * Everything a row's conditions depend on is fixed for the hour: New York's offset is a whole
+   * number of hours, so its local hours start on UTC ones, and weather is recorded by the hour.
+   * So it is computed once an hour rather than once a row a fit — `calendarRow` is an Intl call,
+   * and the gated fit made it about ten times for each of ten million rows.
+   */
+  const COND_SPACE = 1 << 15;
+  const conds = new Dict();
+  const byHour = new Map<number, { hour: number; cond: number; c: Conditions }>();
+  const hourInfo = (ts: number) => {
+    const h = Math.floor(ts / 3600);
+    let info = byHour.get(h);
+    if (!info) {
+      const cal = calendarRow(ts);
+      const c: Conditions = { hourOfWeek: cal.hour_of_week, daypart: cal.daypart, season: cal.season, weather: bandByHour.get(h * 3600) };
+      const cond = conds.code(`${c.hourOfWeek}|${c.daypart}|${c.season}|${c.weather ?? ""}`);
+      if (cond >= COND_SPACE) throw new Error(`more than ${COND_SPACE} distinct conditions; widen COND_SPACE`);
+      info = { hour: nyHourDow(ts).hour, cond, c };
+      byHour.set(h, info);
+    }
+    return info;
   };
 
-  /**
-   * Build the hierarchy, then earn the right to use it. A candidate is fitted on the older
-   * three quarters of the observations and scored against the newest quarter, alongside the
-   * plain per-cell median that the flat tables already provide. Several shrinkage constants are
-   * tried and the best is kept — but only if it beats the simple estimator outright. Extra model
-   * complexity has to pay for itself on data it has not seen.
-   */
-  function gatedHierarchy<T extends { ts: number }>(
-    levels: string[],
-    rows: T[],
-    value: (r: T) => number,
-    keysOf: (r: T) => (string | undefined)[],
-    /** Which level holds the plain per-cell estimate the hierarchy has to beat. */
-    flatLevel: number,
-  ) {
-    const sorted = [...rows].sort((a, b) => a.ts - b.ts);
-    const cut = Math.floor(sorted.length * 0.75);
-    const train = sorted.slice(0, cut), test = sorted.slice(cut);
-    const asSample = (r: T) => ({ value: value(r), keys: keysOf(r) });
-
-    // The incumbent: the median of each flat cell, falling back to the overall median.
-    const flatCells = new Map<string, number[]>();
-    for (const r of train) {
-      const key = keysOf(r)[flatLevel];
-      if (key === undefined) continue;
-      (flatCells.get(key) ?? flatCells.set(key, []).get(key)!).push(value(r));
-    }
-    const med = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] ?? 0;
-    const globalMed = med(train.map(value));
-    const flatOf = (r: T) => {
-      const key = keysOf(r)[flatLevel];
-      const cell = key === undefined ? undefined : flatCells.get(key);
-      return cell && cell.length >= 3 ? med(cell) : globalMed;
-    };
-    const mae = (f: (r: T) => number) => (test.length ? test.reduce((s, r) => s + Math.abs(value(r) - f(r)), 0) / test.length : Infinity);
-    const flatMae = mae(flatOf);
-
-    // Candidate shapes: a flat evidence bar, and ones that rise with how finely a cell slices
-    // the data, so a handful of observations in a narrow cell cannot outvote a well-measured
-    // parent. Whichever scores best on the held-out window is the one considered.
-    const shapes: { label: string; k: number; kByLevel?: number[] }[] = [
-      { label: "flat-4", k: 4 },
-      { label: "flat-15", k: 15 },
-      { label: "rising", k: 8, kByLevel: [6, 6, 20, 60, 60] },
-      { label: "steep", k: 8, kByLevel: [8, 8, 40, 150, 150] },
-    ];
-    let best: { label: string; k: number; hierMae: number; hier: ReturnType<typeof buildHierarchy> } = {
-      label: "none", k: 0, hierMae: Infinity,
-      hier: buildHierarchy(levels, rows.map(asSample), { k: HIER_K, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT }),
-    };
-    for (const shape of shapes) {
-      const opts = { k: shape.k, kByLevel: shape.kByLevel, minN: HIER_MIN_N, minLift: HIER_MIN_LIFT };
-      const fitted = buildHierarchy(levels, train.map(asSample), opts);
-      const m = mae((r) => estimate(fitted, keysOf(r)).value);
-      if (m < best.hierMae) best = { label: shape.label, k: shape.k, hierMae: m, hier: buildHierarchy(levels, rows.map(asSample), opts) };
-    }
-    const active = best.hierMae < flatMae;
-    return { hier: best.hier, gate: { active, k: best.k, shape: best.label, flatMae, hierMae: best.hierMae, testRows: test.length } };
-  }
-
-  const runFit = gatedHierarchy(
-    RUN_LEVELS, runs.filter((p) => p.next_stop),
-    (p) => p.next_ts! - p.ts,
-    (p) => runKeys(p.route, p.stop_id, p.next_stop!, condOf(p.ts)),
-    1, // "seg"
-  );
-  const dwellFit = gatedHierarchy(
-    DWELL_LEVELS, dwells,
-    (p) => p.next_ts! - p.ts,
-    (p) => dwellKeys(p.stop_id, condOf(p.ts)),
-    1, // "stop"
-  );
-  const runHier = runFit.hier, dwellHier = dwellFit.hier;
-
-  const prevByTrack: Record<string, Record<string, number>> = {};
-  for (const p of runs) {
-    if (!p.next_track) continue;
-    const k = `${p.route}|${p.next_stop}|${p.next_track}`;
-    (prevByTrack[k] ??= {})[p.stop_id] = ((prevByTrack[k] ??= {})[p.stop_id] ?? 0) + 1;
-  }
-
-  // ETA residuals: every observation joined to the actual (non-estimated) arrival at that stop.
-  const obs = (await conn.runAndReadAll(`
-    SELECT eo.obs_ts::DOUBLE AS obs_ts, eo.predicted::DOUBLE AS predicted, eo.prev_stop, eo.route, eo.stop_id, ev.ts::DOUBLE AS actual
-    FROM eo JOIN ev ON ev.trip_id = eo.trip_id AND ev.stop_id = eo.stop_id AND ev.kind = 'arrive' AND NOT ev.estimated
-    WHERE ev.ts >= eo.obs_ts - 5 AND eo.predicted - eo.obs_ts >= -30
-  `)).getRowObjectsJS() as { obs_ts: number; predicted: number; prev_stop: string | null; route: string; stop_id: string; actual: number }[];
-  const clean = obs.filter((o) => Math.abs(o.actual - o.predicted) < 900);
-  const resid = (o: (typeof clean)[number]) => o.actual - o.predicted;
-  const bucket = (o: (typeof clean)[number]) => horizonBucket(o.predicted - o.obs_ts);
+  const stops = new Dict(), routes = new Dict(), segs = new Dict(), tracks = new Dict();
 
   /*
+   * Runs and dwells come from one pass over the stop-to-stop sequence, the costliest query here:
+   * a run is a departure or pass to the next arrival or pass, a dwell an arrival to the departure
+   * from the same stop. Both arrive in time order, which is what the gated fit splits on.
+   */
+  const run = { ts: [] as number[], dt: [] as number[], route: [] as number[], stop: [] as number[], next: [] as number[], seg: [] as number[], track: [] as number[] };
+  const dwl = { ts: [] as number[], dt: [] as number[], stop: [] as number[] };
+  await eachRow(conn, `
+    SELECT kind = 'arrive' AS is_dwell, ts, next_ts - ts, route, stop_id, next_stop, next_track FROM (${consecutive(STOP_KINDS)})
+    WHERE NOT est AND NOT next_est AND (
+      (kind IN ('depart', 'pass') AND next_kind IN ('arrive', 'pass') AND next_stop <> '' AND next_stop <> stop_id
+        AND next_ts - ts > 10 AND next_ts - ts < 1800)
+      OR (kind = 'arrive' AND next_kind = 'depart' AND next_stop = stop_id AND next_ts - ts >= 5 AND next_ts - ts < 900))
+    ORDER BY ts, stop_id, next_stop, route, next_track, next_ts`, ([isDwell, ts, dt, route, stop, next, track]) => {
+    if (isDwell) {
+      dwl.ts.push(ts as number);
+      dwl.dt.push(dt as number);
+      dwl.stop.push(stops.code(stop as string));
+      return;
+    }
+    run.ts.push(ts as number);
+    run.dt.push(dt as number);
+    run.route.push(routes.code(route as string));
+    run.stop.push(stops.code(stop as string));
+    run.next.push(stops.code(next as string));
+    run.seg.push(segs.code(`${stop}>${next}`));
+    run.track.push(track ? tracks.code(track as string) : -1);
+  });
+  const nRuns = run.ts.length;
+  const runTime = statsBy(run.seg, run.dt, (k) => segs.names[k]);
+  const runTimeHour = statsBy(run.seg.map((sg, i) => sg * 24 + hourInfo(run.ts[i]).hour), run.dt, (k) => `${segs.names[Math.floor(k / 24)]}@${k % 24}`);
+
+  const prevByTrack: Record<string, Record<string, number>> = {};
+  for (let i = 0; i < nRuns; i++) {
+    if (run.track[i] < 0) continue;
+    const k = `${routes.names[run.route[i]]}|${stops.names[run.next[i]]}|${tracks.names[run.track[i]]}`;
+    const prev = stops.names[run.stop[i]];
+    const counts = (prevByTrack[k] ??= {});
+    counts[prev] = (counts[prev] ?? 0) + 1;
+  }
+
+  const nRoutes = routes.names.length;
+  const runFit = gatedHierarchy(RUN_LEVELS, samplesOf(nRuns, (i) => run.dt[i], (i) => {
+    const h = hourInfo(run.ts[i]);
+    return [(run.seg[i] * nRoutes + run.route[i]) * COND_SPACE + h.cond,
+      () => runKeys(routes.names[run.route[i]], stops.names[run.stop[i]], stops.names[run.next[i]], h.c)];
+  }), 1); // "seg"
+
+  const nDwells = dwl.ts.length;
+  const dwell = statsBy(dwl.stop, dwl.dt, (k) => stops.names[k]);
+  const dwellHour = statsBy(dwl.stop.map((st, i) => st * 24 + hourInfo(dwl.ts[i]).hour), dwl.dt, (k) => `${stops.names[Math.floor(k / 24)]}@${k % 24}`);
+  const dwellFit = gatedHierarchy(DWELL_LEVELS, samplesOf(nDwells, (i) => dwl.dt[i], (i) => {
+    const h = hourInfo(dwl.ts[i]);
+    return [dwl.stop[i] * COND_SPACE + h.cond, () => dwellKeys(stops.names[dwl.stop[i]], h.c)];
+  }), 1); // "stop"
+  const runHier = runFit.hier, dwellHier = dwellFit.hier;
+  const dwellMedians = Object.values(dwell).map((s) => s.p50);
+  const dwellGlobal = dwellMedians.length >= 5 ? quantile(dwellMedians, 0.5) : 35;
+
+  // --- Summaries that need no row in JS at all -----------------------------------------------
+  const listStats = async (sql: string) => {
+    const stats: Record<string, Stat> = {};
+    let rows = 0;
+    await eachRow(conn, sql, ([k, v]) => {
+      stats[k as string] = stat(v as number[]);
+      rows += (v as number[]).length;
+    });
+    return { stats, rows };
+  };
+  const { stats: approach, rows: nApproaches } = await listStats(`
+    SELECT stop_id, list(next_ts - ts) FROM (${consecutive([...STOP_KINDS, "incoming"])})
+    WHERE kind = 'incoming' AND next_kind = 'arrive' AND next_stop = stop_id
+      AND NOT est AND NOT next_est AND next_ts - ts > 0 AND next_ts - ts < 600
+    GROUP BY 1 HAVING count(*) >= 3`);
+  // Arrival-to-arrival between consecutive arrivals of the same trip: observable on every feed.
+  const { stats: a2a } = await listStats(`
+    SELECT stop_id || '>' || next_stop, list(next_ts - ts) FROM (
+      SELECT ts::DOUBLE AS ts, stop_id, (lead(ts) OVER w)::DOUBLE AS next_ts, lead(stop_id) OVER w AS next_stop
+      FROM ev WHERE kind = 'arrive' AND NOT estimated WINDOW w AS (PARTITION BY trip_id ORDER BY ts, stop_id))
+    WHERE next_stop <> '' AND next_stop <> stop_id AND next_ts - ts > 20 AND next_ts - ts < 1800
+    GROUP BY 1 HAVING count(*) >= 3`);
+
+  /*
+   * ETA residuals: every observation joined to the actual (non-estimated) arrival at that stop,
+   * counted straight into histograms.
+   *
    * Residuals are counted into histograms rather than collected as rows, so that observations
-   * summarised months ago count exactly as much as this morning's.
+   * summarised months ago count exactly as much as this morning's — which also lets DuckDB do the
+   * counting and return a few hundred buckets a cell instead of twenty million observations.
    *
    * Every level the lookup backs off through gets its own histogram: a coarse cell cannot be
    * recovered from the fine ones once the rows are gone, so `route:` and `all|` are accumulated
    * alongside `seg:` and `orig:` rather than derived.
    */
+  const horizon = `CASE ${HORIZONS.map((h, i) => `WHEN eo.predicted::DOUBLE - eo.obs_ts::DOUBLE < ${h} THEN 'h${i}'`).join(" ")} ELSE 'h${HORIZONS.length}' END`;
   const hists = new Map<string, Histogram>();
-  const into = (key: string | undefined, seconds: number) => {
-    if (!key) return;
-    const h = hists.get(key) ?? hists.set(key, new Map()).get(key)!;
-    addToHistogram(h, seconds);
+  const into = (cell: string, bucket: number, n: number) => {
+    const h = hists.get(cell) ?? hists.set(cell, new Map()).get(cell)!;
+    h.set(bucket, (h.get(bucket) ?? 0) + n);
   };
-  for (const o of clean) {
-    const b = bucket(o), r = resid(o);
-    into(o.prev_stop ? `seg:${o.prev_stop}>${o.stop_id}|${b}` : undefined, r);
-    into(o.prev_stop ? undefined : `orig:${o.stop_id}|${b}`, r);
-    into(`route:${o.route}|${b}`, r);
-    into(`all|${b}`, r);
-  }
+  let cleanObs = 0;
+  await eachRow(conn, `
+    WITH o AS MATERIALIZED (
+      SELECT eo.prev_stop, eo.stop_id, eo.route, ${horizon} AS b,
+             floor((ev.ts::DOUBLE - eo.predicted::DOUBLE) / ${BUCKET_S}) AS bucket
+      FROM eo JOIN ev ON ev.trip_id = eo.trip_id AND ev.stop_id = eo.stop_id AND ev.kind = 'arrive' AND NOT ev.estimated
+      WHERE ev.ts >= eo.obs_ts - 5 AND eo.predicted - eo.obs_ts >= -30 AND abs(ev.ts::DOUBLE - eo.predicted::DOUBLE) < 900)
+    SELECT cell, bucket, count(*)::DOUBLE FROM (
+      SELECT CASE WHEN coalesce(prev_stop, '') <> '' THEN 'seg:' || prev_stop || '>' || stop_id ELSE 'orig:' || stop_id END || '|' || b AS cell, bucket FROM o
+      UNION ALL SELECT 'route:' || route || '|' || b, bucket FROM o
+      UNION ALL SELECT 'all|' || b, bucket FROM o)
+    GROUP BY 1, 2`, ([cell, bucket, n]) => {
+    into(cell as string, bucket as number, n as number);
+    if ((cell as string).startsWith("all|")) cleanObs += n as number;
+  });
 
   // Everything already summarised. These are the months the raw rows no longer exist for.
   let rolledObs = 0;
   const rollupDir = join(REC_DIR, "rollups");
   const rollupGlob = join(rollupDir, "*.parquet");
   if (existsSync(rollupDir) && readdirSync(rollupDir).some((f) => f.endsWith(".parquet"))) {
-    const rows = (await conn.runAndReadAll(
-      `SELECT cell, bucket, sum(n) AS n FROM read_parquet('${rollupGlob}', union_by_name=true)
-       WHERE kind = 'resid' GROUP BY 1, 2`,
-    )).getRowObjectsJS() as { cell: string; bucket: number; n: number }[];
-    for (const r of rows) {
-      const h = hists.get(r.cell) ?? hists.set(r.cell, new Map()).get(r.cell)!;
-      const b = Number(r.bucket), n = Number(r.n);
-      h.set(b, (h.get(b) ?? 0) + n);
-      rolledObs += n;
-    }
+    await eachRow(conn, `SELECT cell, bucket::DOUBLE, sum(n)::DOUBLE FROM read_parquet('${rollupGlob}', union_by_name=true)
+       WHERE kind = 'resid' GROUP BY 1, 2`, ([cell, bucket, n]) => {
+      into(cell as string, bucket as number, n as number);
+      rolledObs += n as number;
+    });
   }
 
   const residual: Record<string, ResidualStat> = {};
@@ -247,14 +358,16 @@ async function main() {
   const tables: TimingTables = {
     generatedAt: new Date().toISOString(),
     window: { from: new Date(Number(window.a) * 1000).toISOString(), to: new Date(Number(window.b) * 1000).toISOString() },
-    samples: { events: nEvents, etaObs: clean.length + rolledObs },
+    samples: { events: nEvents, etaObs: cleanObs + rolledObs },
     runHier, dwellHier, hierGate: { run: runFit.gate, dwell: dwellFit.gate },
     runTime, runTimeHour, a2a, dwellGlobal, dwell, dwellHour, approach, residual, prevByTrack,
   };
   mkdirSync(join(out, ".."), { recursive: true });
-  writeFileSync(out, JSON.stringify(tables));
+  // Atomic: the poller watches the live tables and reloads them, so they must never be half-written.
+  writeFileSync(`${out}.tmp`, JSON.stringify(tables));
+  renameSync(`${out}.tmp`, out);
 
-  console.log(`events ${nEvents} · runs ${runs.length} · dwells ${dwells.length} · approaches ${approaches.length} · eta obs ${clean.length}`);
+  console.log(`events ${nEvents} · runs ${nRuns} · dwells ${nDwells} · approaches ${nApproaches} · eta obs ${cleanObs}`);
   const rs = hierarchySize(runHier), ds = hierarchySize(dwellHier);
   console.log(`run hierarchy: ${rs.nodes} cells ${JSON.stringify(rs.byLevel)} (prior ${runHier.prior.v}s over ${runHier.prior.n})`);
   console.log(`dwell hierarchy: ${ds.nodes} cells ${JSON.stringify(ds.byLevel)} (prior ${dwellHier.prior.v}s over ${dwellHier.prior.n})`);
