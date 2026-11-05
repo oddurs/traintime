@@ -183,6 +183,52 @@ In normal operation none of this is reachable — `rollup` consumes a day at `ob
 `prune` nothing to find. It exists for the case where the summariser fell behind, which is precisely
 when the loss would be permanent.
 
+## The learn pass that killed the recorder
+
+Measured 5 November 2026. From 15 September the poller was killed for memory at 03:20 New York
+time on most nights: 25 seconds into the nightly learn pass, against Hobby's 8 GB. Railway restarted
+it each time, and on 27 October deployment `5fc4d361` used its tenth restart and stayed down for
+nine days. Nothing in the logs said so. The last line was `[learn] starting nightly rebuild`, the
+one-minute memory samples read 0.68 GB, and only the project event log (`events` in the GraphQL
+API) recorded `oom_killed`.
+
+There were three causes, and the plan change fixed none of them:
+
+1. **Three DuckDB instances, each assuming it owned the machine.** The recorder, `learnOnce` and
+   the learner child it spawns all opened DuckDB with no `memory_limit`, so each took 80% of the
+   container as its own and ran a thread per core. On Pro that is 48 threads.
+2. **The learner held the whole history as JS objects.** It read every stop event twice over, 21
+   million of them, plus 20 million observations, and then kept a tenth. On Pro's 24 GB one run
+   took the container from 338 MB to 16.8 GB and died of its own 4.3 GB heap. The tables have not
+   been rebuilt since September.
+3. **ON_FAILURE gives up after ten restarts.** At one crash a night, that is under a fortnight.
+
+What changed:
+
+- Every DuckDB the poller's process tree opens goes through `openDuckDB` in
+  `services/poller/memory.ts`, with a limit and four threads.
+- The learner child gets a heap cap, and a test fails if the limits added together stop fitting
+  the container.
+- The learner filters and counts in DuckDB. Rows arrive a chunk at a time, and the runs and dwells
+  it fits on are kept as numbers.
+- The hierarchy builder stopped repeating work the four candidate shapes share.
+- `learnOnce` scores both table sets in one streamed pass instead of holding the held-out quarter
+  in the poller's heap.
+- The service restarts ALWAYS.
+
+| over 80 days of history | before | after |
+|---|---|---|
+| learner peak RSS | 16.8 GB, then a heap crash | 4.0 GB |
+| learner run time | never finished | 280 s |
+| whole learn pass (candidate, scoring, rebuild) | never finished | 351 s, 4.6 GB |
+| four days only | 351 s, 4.3 GB | 17 s, 2.0 GB |
+
+The output is the same up to the old learner's own nondeterminism. Two events of one trip can share
+a second, and nothing broke the tie, so two runs of the old learner on the same four days agreed on
+86% of the run hierarchy. The new one agrees with the old about as well as the old agrees with
+itself. It is now fully repeatable, because ties break on everything else in the row. Residuals,
+which never depended on that order, are identical.
+
 ---
 
 # Not built yet

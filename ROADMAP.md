@@ -57,9 +57,13 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`··········` 0% · 0 of 1 done
+`··········` 0% · 0 of 2 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
+
+### in progress
+
+- [ ] `0021` Poller is OOM-killed by the nightly learn pass <sup>bug · p0</sup>
 
