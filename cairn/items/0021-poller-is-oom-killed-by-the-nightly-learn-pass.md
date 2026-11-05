@@ -45,8 +45,8 @@ visible but never turns into a permanent outage.
 - [x] Every DuckDB instance in the poller and the scripts it spawns sets `memory_limit` and `threads`
 - [x] A test fails if the configured limits add up to more than the container budget
 - [x] `.railway/railway.ts` matches the live project: the volume is in `us-east4-eqdc4a`, `railway config plan` shows no destructive change
-- [ ] The restart policy is `ALWAYS`
-- [ ] The poller is redeployed and `/health` reports 8/8 feeds
+- [x] The restart policy is `ALWAYS`
+- [x] The poller is redeployed and `/health` reports 8/8 feeds
 - [ ] One nightly learn pass completes on the new deploy without an `oom_killed` event
 - [x] The learner over the full history peaks under 5 GB and finishes in under ten minutes
 - [x] Two learner runs over the same history write identical tables
