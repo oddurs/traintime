@@ -126,3 +126,9 @@ console.log(`  map canvas on screen        ${mapAt ? mapAt + " ms" : "not within
 console.log("\n  what arrived before the page was readable:");
 for (const f of finished.filter((f) => f.at <= readable + 50).sort((a, b) => b.kb - a.kb).slice(0, 8))
   console.log(`    ${String(Math.round(f.kb)).padStart(5)} KB  at ${String(Math.round(f.at)).padStart(6)} ms  ${f.url.split("/").pop().slice(0, 46)}`);
+// The map is the slowest thing on screen, and what it waited for is mostly not what the page did.
+if (mapAt) {
+  console.log("\n  what arrived after that and before the map:");
+  for (const f of finished.filter((f) => f.at > readable + 50 && f.at <= mapAt + 50).sort((a, b) => b.kb - a.kb).slice(0, 8))
+    console.log(`    ${String(Math.round(f.kb)).padStart(5)} KB  at ${String(Math.round(f.at)).padStart(6)} ms  ${f.url.split("/").pop().slice(0, 46)}`);
+}
