@@ -62,15 +62,16 @@ export function estimate(h: Hierarchy, keys: (string | undefined)[]): Estimate {
   return { value: v, spread: s, n, level };
 }
 
-function quantile(sorted: number[], p: number): number {
+function quantile(sorted: ArrayLike<number>, p: number): number {
   if (sorted.length === 0) return 0;
   return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
 }
 
-function node(values: number[]): HNode {
-  const sorted = [...values].sort((a, b) => a - b);
+/** A typed array sorts numerically with no comparator, which is most of what a build costs. */
+function node(values: ArrayLike<number>): HNode {
+  const sorted = Float64Array.from(values).sort();
   const v = quantile(sorted, 0.5);
-  const s = quantile(sorted.map((x) => Math.abs(x - v)).sort((a, b) => a - b), 0.68);
+  const s = quantile(sorted.map((x) => Math.abs(x - v)).sort(), 0.68);
   return { v, s, n: values.length };
 }
 
@@ -96,6 +97,64 @@ export interface Sample {
 }
 
 /**
+ * The cells a set of samples supports before any pruning: every key with at least `minN`
+ * observations, capped per level, summarised — and the first sample seen with each key.
+ *
+ * None of this depends on the shrinkage, so the gated fit, which tries four shapes on one training
+ * set, reuses it rather than sorting ten million values into the same cells four times.
+ */
+interface Cells {
+  levels: string[];
+  minN: number;
+  maxPerLevel: number;
+  prior: HNode;
+  nodes: Record<string, Record<string, HNode>>;
+  /**
+   * The parent key a cell inherits from. Keys are built as level-specific strings, so the parent
+   * cannot be derived by truncation in general; the first sample that produced the cell is consulted.
+   */
+  first: Map<string, Sample>[];
+}
+const cellCache = new WeakMap<Sample[], Cells>();
+
+function cellsOf(levels: string[], samples: Sample[], minN: number, maxPerLevel: number): Cells {
+  const hit = cellCache.get(samples);
+  if (hit && hit.levels === levels && hit.minN === minN && hit.maxPerLevel === maxPerLevel) return hit;
+
+  const buckets = levels.map(() => new Map<string, number[]>());
+  const first = levels.map(() => new Map<string, Sample>());
+  const all = new Float64Array(samples.length);
+  for (let j = 0; j < samples.length; j++) {
+    const s = samples[j];
+    all[j] = s.value;
+    for (let i = 0; i < levels.length; i++) {
+      const key = s.keys[i];
+      if (key === undefined) continue;
+      const values = buckets[i].get(key);
+      if (values) values.push(s.value);
+      else {
+        buckets[i].set(key, [s.value]);
+        first[i].set(key, s);
+      }
+    }
+  }
+
+  const nodes: Record<string, Record<string, HNode>> = {};
+  for (let i = 0; i < levels.length; i++) {
+    const kept: Record<string, HNode> = {};
+    const entries = [...buckets[i].entries()]
+      .filter(([, v]) => v.length >= minN)
+      .sort((a, b) => b[1].length - a[1].length)
+      .slice(0, maxPerLevel);
+    for (const [key, values] of entries) kept[key] = node(values);
+    nodes[levels[i]] = kept;
+  }
+  const cells: Cells = { levels, minN, maxPerLevel, prior: node(all), nodes, first };
+  cellCache.set(samples, cells);
+  return cells;
+}
+
+/**
  * Build the hierarchy, then drop every cell that does not earn its place: too few observations,
  * or too close to what its parents already predicted.
  */
@@ -106,63 +165,23 @@ export function buildHierarchy(levels: string[], samples: Sample[], opts: BuildO
   const minLift = opts.minLift ?? 1.5;
   const maxPerLevel = opts.maxPerLevel ?? 40_000;
 
-  const buckets: Record<string, Map<string, number[]>> = {};
-  for (const level of levels) buckets[level] = new Map();
-  const all: number[] = [];
-  for (const s of samples) {
-    all.push(s.value);
-    for (let i = 0; i < levels.length; i++) {
-      const key = s.keys[i];
-      if (key === undefined) continue;
-      const m = buckets[levels[i]];
-      (m.get(key) ?? m.set(key, []).get(key)!).push(s.value);
-    }
-  }
-
-  const h: Hierarchy = { k, kByLevel, prior: node(all), levels, nodes: {} };
-  for (const level of levels) {
-    const kept: Record<string, HNode> = {};
-    const entries = [...buckets[level].entries()]
-      .filter(([, v]) => v.length >= minN)
-      .sort((a, b) => b[1].length - a[1].length)
-      .slice(0, maxPerLevel);
-    for (const [key, values] of entries) kept[key] = node(values);
-    h.nodes[level] = kept;
-  }
+  const cells = cellsOf(levels, samples, minN, maxPerLevel);
+  const h: Hierarchy = { k, kByLevel, prior: cells.prior, levels, nodes: { ...cells.nodes } };
 
   // Second pass: with the full chain in place, discard cells that do not change the answer.
   for (let i = 0; i < levels.length; i++) {
     const level = levels[i];
+    const withoutLevel = { ...h, nodes: { ...h.nodes, [level]: {} } };
     const kept: Record<string, HNode> = {};
     for (const [key, n] of Object.entries(h.nodes[level])) {
-      const parentKeys = levels.map((_, j) => (j < i ? keyOfSample(samples, levels, i, key, j) : undefined));
-      const parent = estimate({ ...h, nodes: { ...h.nodes, [level]: {} } }, parentKeys);
+      const from = cells.first[i].get(key);
+      const parentKeys = levels.map((_, j) => (j < i ? from?.keys[j] : undefined));
+      const parent = estimate(withoutLevel, parentKeys);
       if (Math.abs(n.v - parent.value) >= minLift) kept[key] = n;
     }
     h.nodes[level] = kept;
   }
   return h;
-}
-
-/**
- * The parent key a cell inherits from. Keys are built as level-specific strings, so the parent
- * cannot be derived by truncation in general; the sample that produced this cell is consulted.
- * Cheap because it is only done once per surviving cell at build time.
- */
-const sampleIndex = new WeakMap<Sample[], Map<string, Sample>>();
-function keyOfSample(samples: Sample[], levels: string[], level: number, key: string, wanted: number): string | undefined {
-  let index = sampleIndex.get(samples);
-  if (!index) {
-    index = new Map();
-    for (const s of samples) {
-      for (let i = 0; i < levels.length; i++) {
-        const k2 = s.keys[i];
-        if (k2 !== undefined && !index.has(`${i}|${k2}`)) index.set(`${i}|${k2}`, s);
-      }
-    }
-    sampleIndex.set(samples, index);
-  }
-  return index.get(`${level}|${key}`)?.keys[wanted];
 }
 
 /** Rough byte cost, for keeping an eye on what gets shipped to the browser. */
