@@ -1,5 +1,6 @@
 ---
 id: 16
+uid: 88d9c3f9-9eb1-4697-837e-a702632fa12b
 title: Make (segment, s) the wire format for a train position
 type: feature
 status: done

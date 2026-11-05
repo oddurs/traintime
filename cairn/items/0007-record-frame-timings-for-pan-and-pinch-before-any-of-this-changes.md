@@ -1,5 +1,6 @@
 ---
 id: 7
+uid: eda588ac-95b2-49fd-872e-88c32d8fe69a
 title: Record frame timings for pan and pinch, before any of this changes
 type: chore
 status: done

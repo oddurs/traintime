@@ -1,5 +1,6 @@
 ---
 id: 19
+uid: 53c33e4c-91e0-43fb-b1e6-482790f4a943
 title: The drawn fan strays four pixels from the real one at the reveal
 type: bug
 status: done

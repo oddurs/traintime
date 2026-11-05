@@ -1,5 +1,6 @@
 ---
 id: 10
+uid: d39dd3ba-736f-4dd3-a47e-9df3c73e3b05
 title: A train is offset from its heading where its line is offset from its tangent
 type: bug
 status: done

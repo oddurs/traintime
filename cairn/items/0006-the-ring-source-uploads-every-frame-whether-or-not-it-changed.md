@@ -1,5 +1,6 @@
 ---
 id: 6
+uid: b815d05b-bee5-4d4c-a128-c1ff95f47515
 title: The ring source uploads every frame whether or not it changed
 type: bug
 status: done

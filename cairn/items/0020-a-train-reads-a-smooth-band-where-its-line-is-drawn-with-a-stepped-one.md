@@ -1,5 +1,6 @@
 ---
 id: 20
+uid: 7215d848-48ae-4b04-b611-a5bdc823bd21
 title: A train reads a smooth band where its line is drawn with a stepped one
 type: bug
 status: backlog
