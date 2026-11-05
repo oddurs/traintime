@@ -21,10 +21,14 @@ import { defineRailway, preserve, project, service, volume } from "railway/iac";
  */
 
 /*
- * Two things railway.json used to carry are deliberately not here: the builder and the restart
- * policy. Railway derives the builder from the Dockerfile each service points at, and ON_FAILURE
- * is already its default, so it records neither — set them and every `railway config plan` shows
- * the same phantom diff for ever, which is how a plan stops being read.
+ * The builder is deliberately not here: Railway derives it from the Dockerfile each service points
+ * at and records nothing, so setting it makes every `railway config plan` show the same phantom
+ * diff for ever, which is how a plan stops being read.
+ *
+ * The poller's restart policy is here, and is ALWAYS rather than the default ON_FAILURE. ON_FAILURE
+ * gives up after ten restarts per deployment, and a crash once a night spends ten in under a
+ * fortnight: on 2026-10-27 it spent the last one and the poller recorded nothing for nine days
+ * while reporting CRASHED to nobody. Unlimited restarts need the Pro plan.
  */
 
 /**
@@ -49,8 +53,18 @@ const WATCH = [
   "package-lock.json",
 ];
 
+/**
+ * Where the poller and its volume live. They have to be the same place: a volume is attached in
+ * one region, and a service asked to run somewhere else migrates its volume there on deploy.
+ *
+ * Both moved here from us-west2 with the 2026-10-14 deploy, and this file went on saying us-west2.
+ * The plan then showed only the volume half of that diff, so `config apply` would have
+ * migrated five gigabytes of recordings back across the country as a side effect.
+ */
+const POLLER_REGION = "us-east4-eqdc4a";
+
 export default defineRailway(() => {
-  const traintimeVolume = volume("traintime-volume", { alerts: { usage: { "100": {}, "80": {}, "95": {} } }, allowOnlineResize: true, region: "us-west2", sizeMB: 5000 });
+  const traintimeVolume = volume("traintime-volume", { alerts: { usage: { "100": {}, "80": {}, "95": {} } }, allowOnlineResize: true, region: POLLER_REGION, sizeMB: 5000 });
   const traintimeSite = service("traintime-site", {
     replicas: { "us-west2": 1 },
     env: { POLLER_URL: preserve(), RAILWAY_DOCKERFILE_PATH: preserve() },
@@ -59,7 +73,8 @@ export default defineRailway(() => {
     build: { watchPatterns: WATCH },
   });
   const traintime = service("traintime", {
-    replicas: { "us-west2": 1 },
+    replicas: { [POLLER_REGION]: 1 },
+    deploy: { restartPolicyType: "ALWAYS" },
     volumeMounts: { "/data": traintimeVolume },
     env: { RAILWAY_DOCKERFILE_PATH: preserve() },
     healthcheck: "/health",

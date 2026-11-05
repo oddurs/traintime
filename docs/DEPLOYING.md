@@ -45,6 +45,11 @@ To put the automatic deploys back:
 railway service source connect --repo oddurs/traintime --branch main --service traintime
 ```
 
+The poller runs in `us-east4-eqdc4a`, beside its volume, on the Pro plan: 24 GB and a restart
+policy of ALWAYS. ON_FAILURE, the default, stops after ten restarts per deployment, which is how a
+crash a night became nine days of nothing recorded. Both settings are in `.railway/railway.ts`;
+`railway config plan` should show no changes, and must never show the volume moving region.
+
 Disconnecting the source does not stop the running deployment — the service kept serving through
 it, and `/health` is the way to confirm that after any change:
 
