@@ -54,7 +54,8 @@ export function openDuckDB(limitBytes: number): Promise<DuckDBInstance> {
   return DuckDBInstance.create(":memory:", {
     memory_limit: `${Math.floor(limitBytes / MB)}MB`,
     // Pro reports 48 cores to `nproc`, and DuckDB's working memory grows with its thread count.
-    // Measured on the learner's heaviest query, eight threads beat four by a few seconds in thirty.
+    // Measured in production over 80 days of history, the whole learner took 60 s with four threads
+    // and 67 s with eight: the JS fit, not DuckDB, is what the extra threads would wait on.
     threads: "4",
   });
 }

@@ -218,10 +218,22 @@ What changed:
 
 | over 80 days of history | before | after |
 |---|---|---|
-| learner peak RSS | 16.8 GB, then a heap crash | 4.0 GB |
-| learner run time | never finished | 280 s |
-| whole learn pass (candidate, scoring, rebuild) | never finished | 351 s, 4.6 GB |
-| four days only | 351 s, 4.3 GB | 17 s, 2.0 GB |
+| learner, in production | 16.8 GB, then a heap crash | **60 s**, container peak 7.0 GB anon |
+| learner, laptop | never finished | 63–121 s, 3.8 GB (a busy machine; take the band) |
+| `learnOnce`, candidate path, laptop | never finished | 132 s, 3.85 GB |
+| four days, laptop | 351 s, 4.3 GB | 7 s |
+
+The second pass profiled again before changing anything. One window now serves runs, dwells and
+approaches, and the next stop event comes from a struct led with `IGNORE NULLS`. Codes cross into
+JS instead of strings. The side queries run while the hierarchies fit, a cell's median is a
+selection rather than a sort, and output is identical to the first pass's over all 80 days.
+
+## The live stream
+
+Measured against production on 5 November: 3.6 MB a minute, a 945 KB snapshot once a minute plus
+a 46 KB delta each feed tick. That is more than slow 4G carries. It is now gzipped per connection
+and flushed per event: 453 KB a minute on the wire, measured through Railway's edge. `/state` went
+from 955 KB to 111 KB.
 
 The output is the same up to the old learner's own nondeterminism. Two events of one trip can share
 a second, and nothing broke the tie, so two runs of the old learner on the same four days agreed on
