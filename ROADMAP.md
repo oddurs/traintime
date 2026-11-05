@@ -57,11 +57,15 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`#######···` 67% · 2 of 3 done
+`#####·····` 50% · 2 of 4 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
+
+### in progress
+
+- [ ] `0023` Front-end: measure and cut load and gesture cost <sup>chore · p2</sup>
 
 ### done
 
