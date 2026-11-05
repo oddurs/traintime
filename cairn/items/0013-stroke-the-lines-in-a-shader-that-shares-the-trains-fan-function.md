@@ -1,5 +1,6 @@
 ---
 id: 13
+uid: a0fc4c6e-65ee-4c03-b3c2-7669b8e10f06
 title: Stroke the lines in a shader that shares the trains' fan function
 type: feature
 status: done

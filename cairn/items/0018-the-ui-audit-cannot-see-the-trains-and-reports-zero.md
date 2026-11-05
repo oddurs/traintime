@@ -1,5 +1,6 @@
 ---
 id: 18
+uid: e16d0682-b32b-41ac-97c5-50ee7ca5ed4a
 title: The UI audit cannot see the trains and reports zero
 type: bug
 status: backlog

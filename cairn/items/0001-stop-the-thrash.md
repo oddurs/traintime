@@ -1,5 +1,6 @@
 ---
 id: 1
+uid: b36a5ab2-33a9-4c90-8db7-258cd7dd200f
 key: render-1
 title: Stop the thrash
 type: milestone

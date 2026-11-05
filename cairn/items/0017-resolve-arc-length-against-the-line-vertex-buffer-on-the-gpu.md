@@ -1,5 +1,6 @@
 ---
 id: 17
+uid: 6479b1a1-de28-4aab-bec6-e53fd2547ba8
 title: Resolve arc-length against the line vertex buffer on the GPU
 type: feature
 status: backlog

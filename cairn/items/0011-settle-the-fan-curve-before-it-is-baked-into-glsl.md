@@ -1,5 +1,6 @@
 ---
 id: 11
+uid: 740e5daf-d387-4747-bbd8-f5425909cc10
 title: Settle the fan curve before it is baked into GLSL
 type: docs
 status: done

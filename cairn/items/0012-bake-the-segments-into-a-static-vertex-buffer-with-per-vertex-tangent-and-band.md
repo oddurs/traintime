@@ -1,5 +1,6 @@
 ---
 id: 12
+uid: a588b1a0-195c-46db-9409-b23d8eb0adee
 title: Bake the segments into a static vertex buffer with per-vertex tangent and band
 type: feature
 status: done

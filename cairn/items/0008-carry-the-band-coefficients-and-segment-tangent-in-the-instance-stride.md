@@ -1,5 +1,6 @@
 ---
 id: 8
+uid: 506243f5-5417-4528-80c9-3ce9b16c6780
 title: Carry the band coefficients and segment tangent in the instance stride
 type: feature
 status: done

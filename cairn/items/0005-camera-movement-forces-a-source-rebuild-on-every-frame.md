@@ -1,5 +1,6 @@
 ---
 id: 5
+uid: 8000542a-e0c4-4ca3-9de2-9d83883af92d
 title: Camera movement forces a source rebuild on every frame
 type: bug
 status: done

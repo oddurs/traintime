@@ -1,5 +1,6 @@
 ---
 id: 15
+uid: 247f1eb9-2214-483c-98e2-45b4387e5994
 title: Casing margin drifts because width and offset sample different curves
 type: bug
 status: dropped

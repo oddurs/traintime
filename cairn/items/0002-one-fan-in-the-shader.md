@@ -1,5 +1,6 @@
 ---
 id: 2
+uid: 30d62b3e-4d41-46df-bc43-a0bd69069bd8
 key: render-2
 title: One fan, in the shader
 type: milestone

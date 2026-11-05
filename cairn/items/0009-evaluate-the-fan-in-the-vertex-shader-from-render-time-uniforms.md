@@ -1,5 +1,6 @@
 ---
 id: 9
+uid: 8f13a4e8-883f-4cc3-80c9-fb06a7440950
 title: Evaluate the fan in the vertex shader from render-time uniforms
 type: feature
 status: done
