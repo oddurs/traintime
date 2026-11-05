@@ -101,9 +101,11 @@ const LEVELS = ["route.daypart", "seg", "seg.daypart", "seg.how", "seg.weather"]
  * parent depends on which sample reached it first; conditions that repeat; a weather level that
  * is often missing; values with ties, which is where a different sort would show.
  */
-function samples(seed: number, n: number): Sample[] {
+function samples(seed: number, n: number, share = false): Sample[] {
   const r = rng(seed);
   const out: Sample[] = [];
+  // The learner hands rows with the same keys one shared array; the builder groups by it.
+  const arrays = new Map<string, Sample["keys"]>();
   for (let i = 0; i < n; i++) {
     const seg = `S${Math.floor(r() * 40)}>S${Math.floor(r() * 3)}`;
     const route = ["A", "C", "E"][Math.floor(r() * 3)];
@@ -112,7 +114,10 @@ function samples(seed: number, n: number): Sample[] {
     const weather = r() < 0.4 ? undefined : ["clear", "rain"][Math.floor(r() * 2)];
     const base = 60 + (seg.length * 7) % 40 + (daypart === "pm" ? 15 : 0);
     const value = Math.round(base + (r() - 0.5) * 30 + (weather === "rain" ? 8 : 0));
-    out.push({ value, keys: [`${route}|${daypart}`, seg, `${seg}|${daypart}`, `${seg}|h${how}`, weather ? `${seg}|${weather}` : undefined] });
+    const keys = [`${route}|${daypart}`, seg, `${seg}|${daypart}`, `${seg}|h${how}`, weather ? `${seg}|${weather}` : undefined];
+    const id = keys.join("/");
+    if (share && !arrays.has(id)) arrays.set(id, keys);
+    out.push({ value, keys: share ? arrays.get(id)! : keys });
   }
   return out;
 }
@@ -133,6 +138,13 @@ test("the hierarchy is built exactly as it was before, for every shape the gated
     for (const opts of SHAPES) {
       assert.deepEqual(buildHierarchy(LEVELS, shared, opts), referenceBuild(LEVELS, shared, opts), `seed ${seed}, ${JSON.stringify(opts)}`);
     }
+  }
+});
+
+test("rows that share one keys array build exactly what separate arrays did", () => {
+  for (const seed of [4, 5]) {
+    const shared = samples(seed, 6000, true);
+    for (const opts of SHAPES) assert.deepEqual(buildHierarchy(LEVELS, shared, opts), referenceBuild(LEVELS, shared, opts), `seed ${seed}, ${JSON.stringify(opts)}`);
   }
 });
 
