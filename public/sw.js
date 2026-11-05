@@ -20,8 +20,14 @@
 const CACHE = "traintime-__BUILD__";
 const SCOPE = new URL(self.registration.scope).pathname;
 
+/*
+ * Only the shell is fetched at install. network.json used to be too, which on a first visit sent it
+ * twice — once here, once when the page asked for it, a revalidation of the copy this had just
+ * stored — 105 KB of a slow link spent beside the map engine the page was waiting for. The page
+ * always asks for it, and the stale-while-revalidate rule below keeps the copy it gets.
+ */
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll([SCOPE, `${SCOPE}data/network.json`]).catch(() => {})).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll([SCOPE]).catch(() => {})).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (e) => {
@@ -32,19 +38,21 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-/** Hashed build assets: the URL changes when the contents do, so the cache can be trusted. */
-const isImmutable = (url) => url.pathname.startsWith(`${SCOPE}_next/static/`);
+/**
+ * Hashed build assets, and the map engine under its version number: the URL changes when the
+ * contents do, so the cache can be trusted.
+ */
+const isImmutable = (url) => url.pathname.startsWith(`${SCOPE}_next/static/`) || url.pathname.startsWith(`${SCOPE}maplibre/`);
 
 /**
  * Files whose URL stays the same while their contents change with a deploy: the network the map is
- * drawn from, the timing tables, the feed schema, the map engine's worker. Served from cache for
+ * drawn from, the timing tables, the feed schema. Served from cache for
  * speed and replaced in the background, so a deploy reaches a returning visitor on their next load
  * rather than never.
  */
 const isData = (url) => url.pathname.endsWith("/data/network.json")
   || url.pathname.endsWith("/data/network-lite.json")
-  || url.pathname.endsWith("/data/timing.json") || url.pathname.endsWith("/data/nyct-subway.proto")
-  || url.pathname.endsWith("/maplibre/maplibre-gl-worker.mjs");
+  || url.pathname.endsWith("/data/timing.json") || url.pathname.endsWith("/data/nyct-subway.proto");
 
 const store = (request, res) => {
   if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(request, copy)); }

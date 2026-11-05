@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { loadTrainMap } from "@/components/loadTrainMap";
 import type { Network, Selection, TrainPosition } from "@/lib/types";
 import { NetworkIndex } from "@/lib/network";
 import { useTrainStream } from "@/lib/useTrainStream";
@@ -11,7 +12,7 @@ import { directionLabel, fmtMin } from "@/lib/format";
 import { asset, BASE_PATH } from "@/lib/basePath";
 import { RouteBullet } from "@/components/brand";
 
-const TrainMap = dynamic(() => import("@/components/TrainMap"), { ssr: false });
+const TrainMap = dynamic(loadTrainMap, { ssr: false });
 
 interface Options { station?: string; route?: string; board: boolean }
 

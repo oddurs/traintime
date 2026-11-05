@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as maplibregl from "maplibre-gl";
-import type { GeoJSONSource, MapMouseEvent } from "maplibre-gl";
+import type { GeoJSONSource, Map as MapLibreMap, MapGeoJSONFeature, MapMouseEvent, Point } from "maplibre-gl";
+import { maplibregl } from "@/lib/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { markTiming } from "@/lib/clientHealth";
 import type { LonLat, Selection, TrainPosition, TrainState } from "@/lib/types";
@@ -15,14 +15,10 @@ import { STRIDE, TrainLayer, mercatorPerMetre, mercatorX, mercatorY, writeMark }
 import { BOX } from "@/lib/roundel";
 import { STALLED_S } from "@/lib/format";
 import { paint } from "@/lib/mapTheme";
-import { asset } from "@/lib/basePath";
 import { readHash } from "@/lib/urlState";
 import { frameTook, installFramePerf, perfOn, sourceUploaded } from "@/lib/framePerf";
 
 const STYLE = "https://tiles.openfreemap.org/styles/dark";
-// MapLibre's module worker URL doesn't survive Next's bundler; serve a copy from /public instead
-// (see the prepare:assets script in package.json).
-maplibregl.setWorkerUrl(asset("/maplibre/maplibre-gl-worker.mjs"));
 
 /** Shared by the line layer and the train layer so both read one number. */
 const fanScale = { current: 1 };
@@ -101,6 +97,8 @@ interface Props {
   onView?: (v: View) => void;
   reducedMotion: boolean;
   minimal?: boolean;
+  /** Called once, when the style has loaded and there is a map to look at. */
+  onReady?: () => void;
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -146,7 +144,7 @@ function stationPoints(index: NetworkIndex, visible: Set<string> | null): GeoJSO
  * get more room.
  */
 function applyVisibilityFactory(applied: { scale: number | null; served: string | null }) {
-  const apply = (map: maplibregl.Map, index: NetworkIndex, visible: Set<string> | null, attempt = 0) => {
+  const apply = (map: MapLibreMap, index: NetworkIndex, visible: Set<string> | null, attempt = 0) => {
     if (!lineLayer.current) return;
     // The layer can exist while the style is still settling its sprites and glyphs, and MapLibre
     // throws rather than queueing. Waiting for "idle" is no good here — the train layer updates
@@ -185,10 +183,10 @@ function applyVisibilityFactory(applied: { scale: number | null; served: string 
 
 export default function TrainMap(props: Props) {
   const { index, statesRef, positionsRef, clock, speed, visibleRoutes, showRibbons, selection, onSelect,
-    follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal } = props;
+    follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal, onReady } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
   // Holds the lane convention currently uploaded, so lines are only rebuilt when it changes.
   const applyVisibility = useMemo(() => applyVisibilityFactory({ scale: null, served: null }), []);
   /** The band each train was last riding, so one standing at a platform keeps its lane. */
@@ -219,10 +217,10 @@ export default function TrainMap(props: Props) {
   const [layersReady, setLayersReady] = useState(false);
 
   // Live props the animation loop reads without re-subscribing.
-  const live = useRef({ visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd });
+  const live = useRef({ visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd, onReady });
   useEffect(() => {
-    live.current = { visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd };
-  }, [visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd]);
+    live.current = { visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd, onReady };
+  }, [visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd, onReady]);
 
   // --- map creation (once)
   useEffect(() => {
@@ -244,7 +242,7 @@ export default function TrainMap(props: Props) {
     }
     if (!minimal) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
 
-    map.once("style.load", () => { readyRef.current = true; markTiming("map"); });
+    map.once("style.load", () => { readyRef.current = true; markTiming("map"); live.current.onReady?.(); });
     map.on("dragstart", () => { if (live.current.follow) live.current.onFollowEnd(); });
     map.on("moveend", () => {
       if (!onView) return;
@@ -686,7 +684,7 @@ export default function TrainMap(props: Props) {
        * for them.
        */
       const HIT_PX = 14;
-      const pickTrain = (point: maplibregl.Point): string | null => {
+      const pickTrain = (point: Point): string | null => {
         let best: string | null = null;
         let bestD = HIT_PX * HIT_PX;
         // The fan is the shader's now, so the drawn position has to be rebuilt here from the same
@@ -722,7 +720,7 @@ export default function TrainMap(props: Props) {
         }
       });
 
-      const pickStation = (e: MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+      const pickStation = (e: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
         // A train drawn over a station wins, the way it did when the renderer decided.
         if (pickTrain(e.point)) return;
         const f = e.features?.[0];

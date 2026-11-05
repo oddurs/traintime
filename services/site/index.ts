@@ -77,9 +77,9 @@ const server = createServer((req, res) => {
   res.writeHead(200, {
     "content-type": hit.type,
     ...(hit.encoding ? { "content-encoding": hit.encoding } : {}),
-    // Hashed asset names may be cached forever; everything else has to be revalidated or a
-    // deploy would never reach anybody.
-    "cache-control": /\/_next\/static\//.test(file) ? "public, max-age=31536000, immutable" : "public, max-age=0, must-revalidate",
+    // Hashed asset names, and the map engine under its version number, may be cached forever;
+    // everything else has to be revalidated or a deploy would never reach anybody.
+    "cache-control": /\/_next\/static\/|\/maplibre\/\d/.test(file) ? "public, max-age=31536000, immutable" : "public, max-age=0, must-revalidate",
     vary: "accept-encoding",
     "x-content-type-options": "nosniff",
   });
