@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { loadTrainMap } from "@/components/loadTrainMap";
 import Panel from "@/components/Panel";
 import type { Network, Selection, TrainPosition } from "@/lib/types";
 import { NetworkIndex } from "@/lib/network";
@@ -15,7 +16,14 @@ import { readHash, writeHash } from "@/lib/urlState";
 import { asset } from "@/lib/basePath";
 import type { View } from "@/components/TrainMap";
 
-const TrainMap = dynamic(() => import("@/components/TrainMap"), { ssr: false });
+/*
+ * The map engine, as a load that can be started before it is rendered. The map needs two downloads,
+ * the engine and the network's geometry, and it used to ask for them one after the other: the
+ * geometry, then — once it had arrived and been parsed and React had rendered — the engine. On a
+ * slow link that was 105 KB, a stretch of CPU with the link idle, and then 260 KB. Asked for
+ * together, they share the link and the parse happens while the engine is still arriving.
+ */
+const TrainMap = dynamic(loadTrainMap, { ssr: false });
 
 /**
  * Hold the map back until the panel has painted.
@@ -45,8 +53,13 @@ function useDeferredMap(ready: boolean): boolean {
 }
 
 const ALERTS_EVERY = 120_000;
-/** How long alerts will wait for the map before loading anyway. */
-const ALERTS_LATEST = 12_000;
+/**
+ * How long alerts will wait for the map before loading anyway — long enough for a slow link to
+ * finish the map, and still bounded, because a list of planned closures should not wait on a map
+ * that is never going to load. At 12 s the deadline fell inside the map engine's own download on
+ * slow 4G and the alerts took a third of the link from it.
+ */
+const ALERTS_LATEST = 30_000;
 
 function App({ index }: { index: NetworkIndex | null }) {
   const [mode, setMode] = useState<StreamMode>({ kind: "live" });
@@ -57,6 +70,7 @@ function App({ index }: { index: NetworkIndex | null }) {
   const [focusKey, setFocusKey] = useState(0);
   const [fitRoute, setFitRoute] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<AlertIndex | null>(null);
+  const [mapDrawn, setMapDrawn] = useState(false);
   const [view, setView] = useState<View | undefined>(undefined);
   const [hydrated, setHydrated] = useState(false);
   const [nearby, setNearby] = useState(false);
@@ -97,6 +111,7 @@ function App({ index }: { index: NetworkIndex | null }) {
   const [mapIndex, setMapIndex] = useState<NetworkIndex | null>(null);
   useEffect(() => {
     if (!mapReady || mapIndex) return;
+    void loadTrainMap();
     fetch(asset("/data/network.json"))
       .then((r) => r.json())
       .then((n: Network) => setMapIndex(new NetworkIndex(n)))
@@ -112,8 +127,9 @@ function App({ index }: { index: NetworkIndex | null }) {
    * the countdown 13.6 seconds away; loaded with the map it did the same to the geometry, holding
    * the map off the screen for the length of its own download.
    *
-   * So it goes last, after the map has what it needs — with a deadline, because a list of planned
-   * closures should not be hostage to a map that failed to load at all.
+   * So it goes last, after the map is on screen — not merely after its geometry has arrived, which
+   * left the engine's own 260 KB still on the wire beside it — with a deadline, because a list of
+   * planned closures should not be hostage to a map that failed to load at all.
    */
   useEffect(() => {
     if (!index) return;
@@ -125,10 +141,10 @@ function App({ index }: { index: NetworkIndex | null }) {
       load();
       id = setInterval(load, ALERTS_EVERY);
     };
-    if (mapIndex) start();
+    if (mapDrawn) start();
     const late = setTimeout(start, ALERTS_LATEST);
     return () => { ctl.abort(); clearTimeout(late); if (id !== undefined) clearInterval(id); };
-  }, [index, mapIndex]);
+  }, [index, mapDrawn]);
 
   // Every view is a link.
   useEffect(() => {
@@ -264,6 +280,7 @@ function App({ index }: { index: NetworkIndex | null }) {
         fitRoute={fitRoute}
         onView={setView}
         reducedMotion={reducedMotion}
+        onReady={() => setMapDrawn(true)}
       />}
       {index && (
         <Panel
