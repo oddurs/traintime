@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { gunzipSync } from "node:zlib";
+import { constants, createGzip, gunzipSync, gzipSync, type Gzip } from "node:zlib";
 import type { DuckDBConnection } from "@duckdb/node-api";
 import type { FeedTick } from "../../src/lib/types";
 import { Tracker } from "../../src/lib/tracker";
@@ -40,21 +40,81 @@ export function emptyClientReport() {
   return { lastHour: 0, recent: [] as string[], timing: new Rum().report(0) };
 }
 
-type SseClient = ServerResponse;
-
-function sse(res: ServerResponse) {
-  res.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    "access-control-allow-origin": "*",
-    "x-accel-buffering": "no",
-  });
-  res.write(": connected\n\n");
+/** Every browser sends this; `curl` without `--compressed` does not, and gets plain text. */
+function acceptsGzip(req: IncomingMessage | undefined): boolean {
+  return /\bgzip\b/.test(String(req?.headers["accept-encoding"] ?? ""));
 }
 
-function send(res: ServerResponse, event: string, data: unknown) {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+/**
+ * One open event stream, gzipped when the client can take it.
+ *
+ * The live stream was 3.6 MB a minute: a full snapshot of every train with its remaining stops
+ * once a minute, and a delta each feed tick. That is more than a slow 4G link carries, and a
+ * phone left on the map spent a couple of hundred megabytes an hour on it. The same JSON
+ * compresses about seven times, and one deflate context per connection keeps the dictionary
+ * warm across events, so each delta compresses against the ones before it.
+ *
+ * Every event is flushed as it is written — an event held back in a compressor is as late as one
+ * never sent. And a client that stops reading is let go rather than buffered for: a phone that
+ * went into a tunnel would otherwise hold the poller's memory hostage for as long as it stayed
+ * connected. It reconnects, and the reconnect starts with a fresh snapshot.
+ */
+export class EventStream {
+  /** More unsent than this and the client is behind by minutes: drop it. */
+  static readonly MAX_BACKLOG = 4 * 1024 * 1024;
+  private gz: Gzip | null;
+  closed = false;
+
+  constructor(private res: ServerResponse, gzip: boolean) {
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "access-control-allow-origin": "*",
+      "x-accel-buffering": "no",
+      vary: "accept-encoding",
+      ...(gzip ? { "content-encoding": "gzip" } : {}),
+    });
+    this.gz = gzip ? createGzip({ level: 6 }) : null;
+    // The compressor's own errors end the stream; they must not end the process.
+    this.gz?.on("error", () => this.end());
+    this.gz?.pipe(res);
+    res.on("close", () => {
+      this.closed = true;
+      this.gz?.destroy();
+    });
+    this.write(": connected\n\n");
+  }
+
+  write(chunk: string): void {
+    if (this.closed) return;
+    // What the socket has not sent, plus what the compressor has not handed it yet.
+    if (this.res.writableLength + (this.gz?.writableLength ?? 0) > EventStream.MAX_BACKLOG) return this.end();
+    if (this.gz) {
+      this.gz.write(chunk);
+      this.gz.flush(constants.Z_SYNC_FLUSH);
+    } else this.res.write(chunk);
+  }
+
+  end(): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.gz) this.gz.end();
+    else this.res.end();
+  }
+}
+
+function sse(req: IncomingMessage, res: ServerResponse): EventStream {
+  return new EventStream(res, acceptsGzip(req));
+}
+
+/** An event, serialised once however many clients it goes to. */
+function frame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function send(stream: EventStream, event: string, data: unknown) {
+  stream.write(frame(event, data));
 }
 
 /**
@@ -73,13 +133,20 @@ function readBody(req: IncomingMessage, limit = 4096): Promise<string> {
 }
 
 function json(res: ServerResponse, body: unknown, status = 200) {
-  res.writeHead(status, { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-store" });
-  res.end(JSON.stringify(body));
+  const text = JSON.stringify(body);
+  const headers: Record<string, string> = { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-store", vary: "accept-encoding" };
+  // /state is a megabyte of JSON that gzips to an eighth of that; a 200-byte answer is not worth the header.
+  if (text.length > 1024 && acceptsGzip(res.req)) {
+    res.writeHead(status, { ...headers, "content-encoding": "gzip" });
+    return res.end(gzipSync(text, { level: 6 }));
+  }
+  res.writeHead(status, headers);
+  res.end(text);
 }
 
 /** HTTP + SSE front door for the poller: live state, live stream, replay, timing, metrics. */
 export class PollerServer {
-  private clients = new Set<SseClient>();
+  private clients = new Set<EventStream>();
   private lastSnapshotAt = 0;
 
   constructor(private deps: ServerDeps) {}
@@ -98,7 +165,11 @@ export class PollerServer {
     const payload = full ? this.deps.tracker.snapshot(now) : this.deps.tracker.delta(now);
     if (full) this.lastSnapshotAt = now;
     else if (payload.trains.length === 0 && (payload as { removed: string[] }).removed.length === 0) return;
-    for (const c of this.clients) send(c, full ? "snapshot" : "delta", payload);
+    const event = frame(full ? "snapshot" : "delta", payload);
+    for (const c of this.clients) {
+      c.write(event);
+      if (c.closed) this.clients.delete(c);
+    }
   }
 
   /**
@@ -183,10 +254,10 @@ export class PollerServer {
       case "/flush":
         return json(res, await this.deps.flush());
       case "/stream": {
-        sse(res);
-        this.clients.add(res);
-        send(res, "snapshot", this.deps.tracker.snapshot(now));
-        req.on("close", () => this.clients.delete(res));
+        const stream = sse(req, res);
+        this.clients.add(stream);
+        send(stream, "snapshot", this.deps.tracker.snapshot(now));
+        req.on("close", () => this.clients.delete(stream));
         return;
       }
       case "/replay":
@@ -234,6 +305,44 @@ export class PollerServer {
   }
 
   /**
+   * What each line's headway usually is, like-for-like: the same daypart, on the same kind of
+   * day, excluding the window being measured so a bad hour cannot quietly become its own baseline.
+   *
+   * It is a median over months of history — a window over every arrival ever recorded, 3.5 s of
+   * the recorder's own connection, which records nothing while it runs — and it changes by a few
+   * hours' worth of data in a day. So it is kept per daypart, kind of day and hour range, with the
+   * exclusion widened to whole hours so that the key says exactly what was left out. The map's
+   * default "last hour" view then computes it once an hour rather than on every request.
+   */
+  private baselines = new Map<string, Map<string, number>>();
+  private async baseline(from: number, to: number): Promise<Map<string, number>> {
+    const { daypart, is_weekend, is_holiday } = calendarRow(to);
+    const lo = Math.floor(from / 3600) * 3600, hi = Math.ceil(to / 3600) * 3600;
+    const key = `${daypart}|${is_weekend || is_holiday}|${lo}|${hi}`;
+    const hit = this.baselines.get(key);
+    if (hit) return hit;
+    const ev = source("events", "ts, route, direction, stop_id, kind, estimated");
+    const rows = (await this.deps.conn().runAndReadAll(
+      `WITH cal AS (SELECT * FROM ${source("calendar", "hour, daypart, is_weekend, is_holiday")}
+                    WHERE daypart = '${daypart}' AND is_weekend = ${is_weekend || is_holiday}),
+            a AS (
+              SELECT e.route, e.stop_id, e.direction, e.ts::DOUBLE AS ts
+              FROM ${ev} e JOIN cal ON cal.hour = (e.ts // 3600) * 3600
+              WHERE e.kind = 'arrive' AND NOT e.estimated AND NOT (e.ts >= ${lo} AND e.ts < ${hi})
+            ), gaps AS (
+              SELECT route, ts - lag(ts) OVER (PARTITION BY route, stop_id, direction ORDER BY ts) AS gap FROM a
+            )
+       SELECT route, quantile_cont(gap, 0.5) AS headway, count(*) AS n
+       FROM gaps WHERE gap BETWEEN 30 AND 3600 GROUP BY route`,
+    )).getRowObjectsJS() as { route: string; headway: number | null; n: number }[];
+    const baseline = new Map(rows.filter((r) => Number(r.n) >= 20).map((r) => [r.route, Math.round(Number(r.headway))]));
+    // Bounded: a scrubber dragged across a week asks for a new range every hour it passes.
+    if (this.baselines.size >= 32) this.baselines.delete(this.baselines.keys().next().value!);
+    this.baselines.set(key, baseline);
+    return baseline;
+  }
+
+  /**
    * Per-route service quality over a window, next to what that line normally does at this time
    * of week. "Every 9 minutes" means nothing on its own; "every 9 minutes, usually 5" is the
    * whole point of having kept the history.
@@ -242,23 +351,8 @@ export class PollerServer {
     const to = Number(url.searchParams.get("to") ?? Math.floor(Date.now() / 1000));
     const from = Number(url.searchParams.get("from") ?? to - 3600);
     const ev = source("events", "ts, trip_id, route, direction, stop_id, kind, estimated");
-    // The comparison is like-for-like: the same daypart, on the same kind of day, excluding the
-    // window being measured so a bad hour cannot quietly become its own baseline.
-    const { daypart: nowDaypart, is_weekend, is_holiday } = calendarRow(to);
-    const baselineRows = (await this.deps.conn().runAndReadAll(
-      `WITH cal AS (SELECT * FROM ${source("calendar", "hour, daypart, is_weekend, is_holiday")}
-                    WHERE daypart = '${nowDaypart}' AND is_weekend = ${is_weekend || is_holiday}),
-            a AS (
-              SELECT e.route, e.stop_id, e.direction, e.ts::DOUBLE AS ts
-              FROM ${ev} e JOIN cal ON cal.hour = (e.ts // 3600) * 3600
-              WHERE e.kind = 'arrive' AND NOT e.estimated AND NOT (e.ts BETWEEN ${from} AND ${to})
-            ), gaps AS (
-              SELECT route, ts - lag(ts) OVER (PARTITION BY route, stop_id, direction ORDER BY ts) AS gap FROM a
-            )
-       SELECT route, quantile_cont(gap, 0.5) AS headway, count(*) AS n
-       FROM gaps WHERE gap BETWEEN 30 AND 3600 GROUP BY route`,
-    )).getRowObjectsJS() as { route: string; headway: number | null; n: number }[];
-    const baseline = new Map(baselineRows.filter((r) => Number(r.n) >= 20).map((r) => [r.route, Math.round(Number(r.headway))]));
+    const { daypart: nowDaypart } = calendarRow(to);
+    const baseline = await this.baseline(from, to);
     const rows = (await this.deps.conn().runAndReadAll(
       `WITH a AS (
          SELECT route, stop_id, direction, ts::DOUBLE AS ts FROM ${ev}
@@ -316,10 +410,8 @@ export class PollerServer {
     const ticks = rows.getRowObjects() as { feed: string; ts: bigint; fetched_at: bigint; raw: { bytes: Uint8Array } | Uint8Array }[];
     if (ticks.length === 0) return json(res, { error: "no recordings in that window" }, 404);
 
-    sse(res);
+    const stream = sse(req, res);
     const tracker = new Tracker(this.deps.net, this.deps.timing);
-    let closed = false;
-    req.on("close", () => (closed = true));
     let i = 0;
     let lastTs = 0;
     const decode = (raw: { bytes: Uint8Array } | Uint8Array): FeedTick | null => {
@@ -330,16 +422,16 @@ export class PollerServer {
       } catch { return null; }
     };
     const pump = () => {
-      if (closed) return;
-      if (i >= ticks.length) { send(res, "end", { ts: lastTs }); res.end(); return; }
+      if (stream.closed) return;
+      if (i >= ticks.length) { send(stream, "end", { ts: lastTs }); stream.end(); return; }
       const ts = Number(ticks[i].ts);
       const tick = decode(ticks[i].raw);
       if (tick) {
         tracker.ingest(tick);
         tracker.expire(ts);
         if (ts >= from) {
-          if (lastTs === 0 || ts - lastTs >= 60) send(res, "snapshot", tracker.snapshot(ts, false));
-          else send(res, "delta", tracker.delta(ts, false));
+          if (lastTs === 0 || ts - lastTs >= 60) send(stream, "snapshot", tracker.snapshot(ts, false));
+          else send(stream, "delta", tracker.delta(ts, false));
           if (lastTs === 0 || ts - lastTs >= 60) lastTs = ts;
         }
       }
@@ -348,7 +440,7 @@ export class PollerServer {
       const wait = ts < from ? 0 : Math.max(0, (nextTs - ts) * 1000 / speed);
       setTimeout(pump, wait);
     };
-    send(res, "replay", { from, to, speed, ticks: ticks.length });
+    send(stream, "replay", { from, to, speed, ticks: ticks.length });
     pump();
   }
 }
