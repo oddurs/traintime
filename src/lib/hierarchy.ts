@@ -62,17 +62,44 @@ export function estimate(h: Hierarchy, keys: (string | undefined)[]): Estimate {
   return { value: v, spread: s, n, level };
 }
 
-function quantile(sorted: ArrayLike<number>, p: number): number {
-  if (sorted.length === 0) return 0;
-  return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+/**
+ * The k-th smallest value, rearranging `a` in place — what `quantile` reads from a sorted array,
+ * without sorting it. Hoare's selection: linear on average, and the integer seconds these cells
+ * hold, full of ties, partition evenly around a pivot equal to many of them.
+ */
+function select(a: Float64Array, k: number): number {
+  let lo = 0, hi = a.length - 1;
+  while (lo < hi) {
+    const x = a[lo], y = a[(lo + hi) >>> 1], z = a[hi];
+    const pivot = x < y ? (y < z ? y : x < z ? z : x) : (x < z ? x : y < z ? z : y);
+    let i = lo, j = hi;
+    while (i <= j) {
+      while (a[i] < pivot) i++;
+      while (a[j] > pivot) j--;
+      if (i <= j) {
+        const t = a[i];
+        a[i] = a[j];
+        a[j] = t;
+        i++;
+        j--;
+      }
+    }
+    if (k <= j) hi = j;
+    else if (k >= i) lo = i;
+    else return a[k];
+  }
+  return a[k];
 }
 
-/** A typed array sorts numerically with no comparator, which is most of what a build costs. */
+/** Median and robust spread of a cell — two selections, where it used to be two full sorts. */
 function node(values: ArrayLike<number>): HNode {
-  const sorted = Float64Array.from(values).sort();
-  const v = quantile(sorted, 0.5);
-  const s = quantile(sorted.map((x) => Math.abs(x - v)).sort(), 0.68);
-  return { v, s, n: values.length };
+  const n = values.length;
+  if (n === 0) return { v: 0, s: 0, n: 0 };
+  const rank = (p: number) => Math.min(n - 1, Math.floor(p * n));
+  const a = Float64Array.from(values);
+  const v = select(a, rank(0.5));
+  for (let i = 0; i < n; i++) a[i] = Math.abs(a[i] - v);
+  return { v, s: select(a, rank(0.68)), n };
 }
 
 export interface BuildOptions {
@@ -111,9 +138,10 @@ interface Cells {
   nodes: Record<string, Record<string, HNode>>;
   /**
    * The parent key a cell inherits from. Keys are built as level-specific strings, so the parent
-   * cannot be derived by truncation in general; the first sample that produced the cell is consulted.
+   * cannot be derived by truncation in general; the keys of the first sample that produced the
+   * cell are consulted.
    */
-  first: Map<string, Sample>[];
+  first: Map<string, Sample["keys"]>[];
 }
 const cellCache = new WeakMap<Sample[], Cells>();
 
@@ -121,23 +149,34 @@ function cellsOf(levels: string[], samples: Sample[], minN: number, maxPerLevel:
   const hit = cellCache.get(samples);
   if (hit && hit.levels === levels && hit.minN === minN && hit.maxPerLevel === maxPerLevel) return hit;
 
-  const buckets = levels.map(() => new Map<string, number[]>());
-  const first = levels.map(() => new Map<string, Sample>());
+  // Samples that share a keys array share every cell, so each array is looked up once rather than
+  // each sample: the learner's ten million samples point at a few hundred thousand arrays. Arrays
+  // are visited in the order they first appear, which is the order their keys first appear, so the
+  // first sample of each cell — and the cap's tie-break, which goes by it — are what they were.
   const all = new Float64Array(samples.length);
+  const byKeys = new Map<Sample["keys"], number[]>();
   for (let j = 0; j < samples.length; j++) {
     const s = samples[j];
     all[j] = s.value;
+    const values = byKeys.get(s.keys);
+    if (values) values.push(s.value);
+    else byKeys.set(s.keys, [s.value]);
+  }
+  const buckets = levels.map(() => new Map<string, number[]>());
+  const first = levels.map(() => new Map<string, Sample["keys"]>());
+  for (const [keys, values] of byKeys) {
     for (let i = 0; i < levels.length; i++) {
-      const key = s.keys[i];
+      const key = keys[i];
       if (key === undefined) continue;
-      const values = buckets[i].get(key);
-      if (values) values.push(s.value);
+      const bucket = buckets[i].get(key);
+      if (bucket) for (const v of values) bucket.push(v);
       else {
-        buckets[i].set(key, [s.value]);
-        first[i].set(key, s);
+        buckets[i].set(key, values.slice());
+        first[i].set(key, keys);
       }
     }
   }
+  byKeys.clear();
 
   const nodes: Record<string, Record<string, HNode>> = {};
   for (let i = 0; i < levels.length; i++) {
@@ -175,7 +214,7 @@ export function buildHierarchy(levels: string[], samples: Sample[], opts: BuildO
     const kept: Record<string, HNode> = {};
     for (const [key, n] of Object.entries(h.nodes[level])) {
       const from = cells.first[i].get(key);
-      const parentKeys = levels.map((_, j) => (j < i ? from?.keys[j] : undefined));
+      const parentKeys = levels.map((_, j) => (j < i ? from?.[j] : undefined));
       const parent = estimate(withoutLevel, parentKeys);
       if (Math.abs(n.v - parent.value) >= minLift) kept[key] = n;
     }
