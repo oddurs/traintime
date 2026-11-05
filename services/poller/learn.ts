@@ -8,13 +8,14 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { DuckDBInstance } from "@duckdb/node-api";
 import type { TimingTables } from "../../src/lib/types";
 import { NetworkIndex } from "../../src/lib/network";
 import { Timing } from "../../src/lib/timing";
 import { nyHourDow } from "../../src/lib/tracker";
 import { DATA_DIR } from "./recorder";
 import { parquetGlob } from "./recorder";
+import type { DuckDBConnection } from "@duckdb/node-api";
+import { BUDGET, learnerNodeOptions, openDuckDB } from "./memory";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 
@@ -40,7 +41,10 @@ export interface LearnOutcome {
 
 function run(args: string[]): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const p = spawn("npx", ["tsx", ...args], { cwd: ROOT, env: process.env });
+    // The heap cap reaches every node in the npx → tsx → script chain, so the learner fails itself
+    // with a heap error long before the container runs out.
+    const env = { ...process.env, NODE_OPTIONS: [process.env.NODE_OPTIONS, learnerNodeOptions].filter(Boolean).join(" ") };
+    const p = spawn("npx", ["tsx", ...args], { cwd: ROOT, env });
     let out = "";
     p.stdout.on("data", (d) => (out += d));
     p.stderr.on("data", (d) => (out += d));
@@ -50,27 +54,41 @@ function run(args: string[]): Promise<{ code: number; out: string }> {
 
 interface TestRow { obs_ts: number; predicted: number; prev_stop: string | null; route: string; stop_id: string; departed_at: number | null; actual: number }
 
-/** Mean absolute error of a table set's corrected arrival times over held-out observations. */
-function score(net: NetworkIndex, tables: TimingTables | null, rows: TestRow[]): number {
-  const timing = new Timing(net, tables, null);
-  let sum = 0;
-  for (const r of rows) {
-    const { hour, dow } = nyHourDow(r.obs_ts);
-    const { eta } = timing.adjustEta({
-      raw: r.predicted, now: r.obs_ts, route: r.route,
-      prev: r.prev_stop ?? undefined, next: r.stop_id,
-      departedAt: r.departed_at ?? undefined, hour, dow,
-    });
-    sum += Math.abs(r.actual - eta);
+/**
+ * Mean absolute error of each table set's corrected arrival times over the held-out observations.
+ *
+ * Streamed, and every table set scored in the same pass: the held-out quarter used to be read
+ * whole into the poller's own heap and kept there while the learner child built the candidate,
+ * which is the one moment the container had least room to spare.
+ */
+async function score(conn: DuckDBConnection, sql: string, net: NetworkIndex, tableSets: (TimingTables | null)[]): Promise<{ mae: number[]; rows: number }> {
+  const timings = tableSets.map((t) => new Timing(net, t, null));
+  const sums = timings.map(() => 0);
+  // The hour and weekday are fixed for an hour; nyHourDow is an Intl call.
+  const hours = new Map<number, { hour: number; dow: number }>();
+  let rows = 0;
+  const result = await conn.stream(sql);
+  for await (const chunk of result.yieldRowObjectJs()) {
+    for (const r of chunk as unknown as TestRow[]) {
+      const h = Math.floor(r.obs_ts / 3600);
+      const when = hours.get(h) ?? hours.set(h, nyHourDow(r.obs_ts)).get(h)!;
+      const input = {
+        raw: r.predicted, now: r.obs_ts, route: r.route,
+        prev: r.prev_stop ?? undefined, next: r.stop_id,
+        departedAt: r.departed_at ?? undefined, hour: when.hour, dow: when.dow,
+      };
+      for (let i = 0; i < timings.length; i++) sums[i] += Math.abs(r.actual - timings[i].adjustEta(input).eta);
+      rows++;
+    }
   }
-  return rows.length ? sum / rows.length : Infinity;
+  return { mae: sums.map((s) => (rows ? s / rows : Infinity)), rows };
 }
 
 export async function learnOnce(net: NetworkIndex): Promise<LearnOutcome> {
   const at = Math.floor(Date.now() / 1000);
   const live = join(DATA_DIR, "timing.json");
   const candidatePath = join(DATA_DIR, "timing.candidate.json");
-  const db = await DuckDBInstance.create(":memory:");
+  const db = await openDuckDB(BUDGET.learnDuckdb);
   const conn = await db.connect();
   try {
     const joined = `
@@ -89,7 +107,6 @@ export async function learnOnce(net: NetworkIndex): Promise<LearnOutcome> {
       return { at, ok: true, adopted: false, reason: `only ${total} scored observations; need 4000`, testRows: total };
     }
     const split = Math.floor(Number(bounds[0].split));
-    const rows = (await conn.runAndReadAll(`SELECT * FROM (${joined}) WHERE obs_ts > ${split}`)).getRowObjectsJS() as unknown as TestRow[];
 
     // Candidate is built only from what precedes the held-out window.
     const build = await run(["scripts/learn-timing.ts", "--no-flush", "--to", String(split), "--out", candidatePath]);
@@ -99,12 +116,13 @@ export async function learnOnce(net: NetworkIndex): Promise<LearnOutcome> {
     const candidate = JSON.parse(readFileSync(candidatePath, "utf8")) as TimingTables;
     const incumbent = existsSync(live) ? (JSON.parse(readFileSync(live, "utf8")) as TimingTables) : null;
 
-    const candidateMae = score(net, candidate, rows);
-    const incumbentMae = score(net, incumbent, rows);
+    const scored = await score(conn, `SELECT * FROM (${joined}) WHERE obs_ts > ${split}`, net, [candidate, incumbent]);
+    const [candidateMae, incumbentMae] = scored.mae;
+    const testRows = scored.rows;
     unlinkSync(candidatePath);
 
     if (!(candidateMae <= incumbentMae)) {
-      return { at, ok: true, adopted: false, reason: "candidate did not beat the incumbent on held-out data", incumbentMae, candidateMae, testRows: rows.length };
+      return { at, ok: true, adopted: false, reason: "candidate did not beat the incumbent on held-out data", incumbentMae, candidateMae, testRows };
     }
     // It wins, so rebuild over the whole history — including the held-out window — and adopt.
     const full = await run(["scripts/learn-timing.ts", "--no-flush", "--out", live]);
@@ -115,8 +133,8 @@ export async function learnOnce(net: NetworkIndex): Promise<LearnOutcome> {
     const model = await retrainModel(live);
     return {
       at, ok: true, adopted: true,
-      reason: `adopted: ${candidateMae.toFixed(1)}s vs ${incumbentMae.toFixed(1)}s on ${rows.length} held-out observations`,
-      incumbentMae, candidateMae, testRows: rows.length, events: adoptedTables.samples.events, model,
+      reason: `adopted: ${candidateMae.toFixed(1)}s vs ${incumbentMae.toFixed(1)}s on ${testRows} held-out observations`,
+      incumbentMae, candidateMae, testRows, events: adoptedTables.samples.events, model,
     };
   } catch (e) {
     return { at, ok: false, adopted: false, reason: e instanceof Error ? e.message : String(e) };

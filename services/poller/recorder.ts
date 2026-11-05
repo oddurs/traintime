@@ -1,9 +1,10 @@
-import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
+import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { gzipSync } from "node:zlib";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { FeedTick } from "../../src/lib/types";
 import type { EtaObservation, StationEvent } from "../../src/lib/tracker";
+import { BUDGET, openDuckDB } from "./memory";
 
 /**
  * Where recordings are written. On a platform with a mounted volume (Railway, Fly), point
@@ -41,7 +42,7 @@ export class Recorder {
 
   static async open(): Promise<Recorder> {
     const r = new Recorder();
-    r.instance = await DuckDBInstance.create(":memory:");
+    r.instance = await openDuckDB(BUDGET.recorderDuckdb);
     r.conn = await r.instance.connect();
     await r.conn.run(SCHEMA);
     for (const t of TABLES) mkdirSync(join(REC_DIR, t), { recursive: true });
