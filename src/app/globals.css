@@ -254,7 +254,25 @@ a { color: inherit; }
 
 .app { position: fixed; inset: 0; }
 .map { position: absolute !important; inset: 0; width: 100%; height: 100%; }
-.booting { position: absolute; inset: auto 0 var(--s5) 0; text-align: center; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); pointer-events: none; }
+/*
+ * The loading poster: the network at the home view, drawn ahead of time (scripts/build-poster.ts).
+ * It sizes itself and is centred, which puts it exactly under the map that will open there. Dimmed,
+ * because it is a picture of the subway rather than the subway: no trains, nothing to press.
+ */
+.poster {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  max-width: none; opacity: 0.55; pointer-events: none; user-select: none;
+  transition: opacity var(--slow) var(--ease);
+}
+.poster.is-gone { opacity: 0; }
+/* The map arrives whole, over the poster, rather than as lines on black and then the streets. */
+.map { transition: opacity var(--slow) var(--ease); }
+.map[data-shown="false"] { opacity: 0; }
+.map-notice {
+  position: absolute; top: var(--s4); left: 50%; transform: translateX(-50%);
+  padding: var(--s2) var(--s3); border-radius: var(--r-chip);
+  background: var(--mat-regular); box-shadow: var(--shadow-3);
+}
 
 /* ===========================================================================
    Primitives — the whole control vocabulary. Nothing above this line invents
@@ -427,21 +445,24 @@ a { color: inherit; }
 .notice { display: flex; align-items: flex-start; gap: var(--s2); font: var(--t-caption); letter-spacing: var(--tr-caption); line-height: 1.45; color: var(--label-2); }
 .notice-pip { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--label-3); }
 .notice .notice-pip { margin-top: var(--s1); }
+.notice.has-action { align-items: center; }
+.notice.has-action .notice-pip { margin-top: 0; }
+.notice-action { margin-left: auto; flex: none; }
 .notice--plain .notice-pip { background: var(--label-3); }
 .notice--ok .notice-pip { background: var(--green); }
 .notice--warn .notice-pip { background: var(--amber); }
 .notice--bad .notice-pip { background: var(--red); }
 .notice--warn { color: var(--amber); }
 
-/* ---- Skeleton: what is shown while the first state is still arriving ---- */
-.skeleton { display: flex; flex-direction: column; gap: var(--s3); }
-.skeleton i {
-  display: block; height: var(--s3); border-radius: var(--r-inner);
+/*
+ * A line of text that has not arrived, in the line box it will occupy — inline, and an em tall, so
+ * the row is already its final height and nothing moves when the words replace it.
+ */
+.skel-text {
+  display: inline-block; width: 9em; height: 0.8em; vertical-align: middle; border-radius: var(--r-inner);
   background: linear-gradient(90deg, var(--fill) 25%, var(--fill-2) 37%, var(--fill) 63%);
   background-size: 400% 100%; animation: shimmer var(--ambient) var(--ease) infinite;
 }
-.skeleton i:nth-child(2) { width: 72%; }
-.skeleton i:nth-child(3) { width: 54%; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 
 /* ---- Countdown: the signature element, and the only fluid type in the system ---- */
@@ -622,6 +643,15 @@ button.roundel:active { transform: scale(0.98); }
 
 /* ---- Legend ---- */
 .legend { display: flex; flex-direction: column; gap: var(--s3); }
+/* Dismissed on an earlier visit: hidden from the first paint, not removed at hydration (firstPaint.ts). */
+.legend-dismissed .legend { display: none; }
+/* The saved list's space, held from the first paint until storage has been read (firstPaint.ts). */
+.saved-reserve { display: none; }
+.has-saved .saved-reserve {
+  display: block; height: var(--saved-h); border-radius: var(--r-inner);
+  background: linear-gradient(90deg, var(--fill) 25%, var(--fill-2) 37%, var(--fill) 63%);
+  background-size: 400% 100%; animation: shimmer var(--ambient) var(--ease) infinite;
+}
 .legend-rows { display: flex; flex-direction: column; gap: var(--s2); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .legend-row { display: flex; align-items: center; gap: var(--s2); }
 .swatch { width: var(--icon); height: var(--icon); flex: none; border-radius: 50%; display: inline-block; }

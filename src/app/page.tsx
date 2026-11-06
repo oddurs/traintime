@@ -7,13 +7,15 @@ import Panel from "@/components/Panel";
 import type { Network, Selection, TrainPosition } from "@/lib/types";
 import { NetworkIndex } from "@/lib/network";
 import { useTrainStream, type StreamMode } from "@/lib/useTrainStream";
-import { useIsMobile, useReducedMotion, useTicker } from "@/lib/hooks";
+import { useReducedMotion, useTicker } from "@/lib/hooks";
 import { fetchAlerts, type AlertIndex } from "@/lib/alerts";
 import { useGeolocation, useWakeLock } from "@/lib/geolocation";
 import { nearestStations } from "@/lib/arrivals";
 import { usePlaces } from "@/lib/places";
 import { readHash, writeHash } from "@/lib/urlState";
 import { asset } from "@/lib/basePath";
+import { posterTransform } from "@/lib/home";
+import { Button, Notice } from "@/components/ui";
 import type { View } from "@/components/TrainMap";
 
 /*
@@ -61,7 +63,36 @@ const ALERTS_EVERY = 120_000;
  */
 const ALERTS_LATEST = 30_000;
 
-function App({ index }: { index: NetworkIndex | null }) {
+/**
+ * A fetch of one of the network's two halves, that can fail visibly and be tried again.
+ *
+ * Both used to end in `.catch(() => {})`: a dropped connection on the way in left "loading the
+ * network…" on screen for good, or a map that simply never arrived, with nothing to press. Coming
+ * back online retries by itself, because on a train that is how the connection comes back.
+ */
+function useNetworkFile(path: string, enabled: boolean) {
+  const [index, setIndex] = useState<NetworkIndex | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => { setFailed(false); setAttempt((a) => a + 1); }, []);
+  useEffect(() => {
+    if (!enabled || index) return;
+    const ctl = new AbortController();
+    fetch(asset(path), { signal: ctl.signal })
+      .then((r) => { if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`); return r.json(); })
+      .then((n: Network) => setIndex(new NetworkIndex(n)))
+      .catch((e: unknown) => { if (!ctl.signal.aborted) { console.error(e); setFailed(true); } });
+    return () => ctl.abort();
+  }, [path, enabled, index, attempt]);
+  useEffect(() => {
+    if (!failed) return;
+    window.addEventListener("online", retry);
+    return () => window.removeEventListener("online", retry);
+  }, [failed, retry]);
+  return { index, failed, retry };
+}
+
+function App({ index, failed }: { index: NetworkIndex | null; failed?: () => void }) {
   const [mode, setMode] = useState<StreamMode>({ kind: "live" });
   const [visible, setVisible] = useState<Set<string> | null>(null);
   const [showRibbons, setShowRibbons] = useState(true);
@@ -71,6 +102,8 @@ function App({ index }: { index: NetworkIndex | null }) {
   const [fitRoute, setFitRoute] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<AlertIndex | null>(null);
   const [mapDrawn, setMapDrawn] = useState(false);
+  const [mapShown, setMapShown] = useState(false);
+  const [posterGone, setPosterGone] = useState(false);
   const [view, setView] = useState<View | undefined>(undefined);
   const [hydrated, setHydrated] = useState(false);
   const [nearby, setNearby] = useState(false);
@@ -95,7 +128,6 @@ function App({ index }: { index: NetworkIndex | null }) {
   const geo = useGeolocation(nearby);
   useWakeLock(follow);
   const { places, loaded: placesLoaded, toggle: togglePlace, touch: touchPlace, isSaved } = usePlaces();
-  const mobile = useIsMobile();
   const reducedMotion = useReducedMotion();
   const now = useTicker(clock, 2);
   const wallNow = useTicker(() => Date.now() / 1000, 1);
@@ -108,15 +140,12 @@ function App({ index }: { index: NetworkIndex | null }) {
    * polylines and the band layout derived from them, and none of it is needed to tell somebody
    * when their train is coming.
    */
-  const [mapIndex, setMapIndex] = useState<NetworkIndex | null>(null);
+  const { index: mapIndex, failed: mapFailed, retry: retryMap } = useNetworkFile("/data/network.json", mapReady);
+  const [engineFailed, setEngineFailed] = useState(false);
   useEffect(() => {
-    if (!mapReady || mapIndex) return;
-    void loadTrainMap();
-    fetch(asset("/data/network.json"))
-      .then((r) => r.json())
-      .then((n: Network) => setMapIndex(new NetworkIndex(n)))
-      .catch(() => {});
-  }, [mapReady, mapIndex]);
+    if (!mapReady) return;
+    loadTrainMap().catch((e: unknown) => { console.error(e); setEngineFailed(true); });
+  }, [mapReady]);
 
   /*
    * Service alerts, refreshed slowly — they change on the order of minutes.
@@ -261,9 +290,24 @@ function App({ index }: { index: NetworkIndex | null }) {
     return ids;
   }, [selection, trains]);
 
+  // Where the poster stands in for the map, which is home unless a shared link says otherwise.
+  const poster = hydrated ? posterTransform(view) : "";
+
   return (
     <main className="app">
-      {mapIndex && <TrainMap
+      {poster !== null && !posterGone && (
+        // eslint-disable-next-line @next/next/no-img-element -- a static SVG in the first paint; next/image would hold it back for hydration
+        <img
+          className={`poster${mapShown ? " is-gone" : ""}`}
+          src={asset("/data/poster.svg")}
+          // Low: it is a stand-in, and on a slow link it was taking bandwidth from the stylesheet the
+          // first paint is blocked on.
+          alt="" aria-hidden="true" decoding="async" fetchPriority="low"
+          style={poster ? { transform: `translate(-50%, -50%) ${poster}` } : undefined}
+          onTransitionEnd={() => mapShown && setPosterGone(true)}
+        />
+      )}
+      {mapIndex && !engineFailed && <TrainMap
         index={mapIndex}
         statesRef={statesRef}
         positionsRef={positionsRef}
@@ -281,36 +325,34 @@ function App({ index }: { index: NetworkIndex | null }) {
         onView={setView}
         reducedMotion={reducedMotion}
         onReady={() => setMapDrawn(true)}
+        onShown={() => setMapShown(true)}
       />}
-      {index && (
-        <Panel
-          index={index} trains={trains} byId={byId} positionsRef={positionsRef} feeds={feeds}
+      {(mapFailed || engineFailed) && (
+        <div className="map-notice">
+          {/* The engine is a module import, and a failed import stays failed for the page's life. */}
+          <Notice tone="bad" action={<Button variant="ghost" onClick={() => (engineFailed ? location.reload() : retryMap())}>Try again</Button>}>
+            The map couldn’t load.
+          </Notice>
+        </div>
+      )}
+      <Panel
+          index={index} failed={failed} trains={trains} byId={byId} positionsRef={positionsRef} feeds={feeds}
           status={status} now={now} wallNow={wallNow} alerts={alerts}
           selection={selection} onSelect={select} follow={follow} onFollow={setFollow}
           visible={visible} onToggle={onToggle} onAll={onAll}
           showRibbons={showRibbons} onRibbons={setShowRibbons}
-          mode={mode} onMode={setMode} mobile={mobile}
+          mode={mode} onMode={setMode}
           nearby={nearby} onNearby={() => setNearby((n) => !n)}
           locating={geo.status === "asking"} distance={selectedDistance}
           destination={destination} onDestination={(id) => setDestination(id ?? undefined)}
-          places={places} onToggleSave={togglePlace} isSaved={isSaved}
-        />
-      )}
-      {!index && <div className="booting">loading the network…</div>}
+          places={places} placesLoaded={placesLoaded} onToggleSave={togglePlace} isSaved={isSaved}
+      />
     </main>
   );
 }
 
 export default function Home() {
-  const [index, setIndex] = useState<NetworkIndex | null>(null);
-
   // The board's half of the network: names, routes and complexes, without a single polyline.
-  useEffect(() => {
-    fetch(asset("/data/network-lite.json"))
-      .then((r) => r.json())
-      .then((n: Network) => setIndex(new NetworkIndex(n)))
-      .catch(() => {});
-  }, []);
-
-  return <App index={index} />;
+  const { index, failed, retry } = useNetworkFile("/data/network-lite.json", true);
+  return <App index={index} failed={failed ? retry : undefined} />;
 }

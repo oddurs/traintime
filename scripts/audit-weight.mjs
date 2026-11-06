@@ -117,13 +117,15 @@ await send("Page.navigate",{url:`${target}/?v=${Date.now()}`});
 // Time until something a rider can read is on screen.
 let readable = 0;
 for (let i = 0; i < 400; i++) {
-  const ok = await js(`!!document.querySelector('.list .row, .board, .field input')`);
+  // The app's own mark, as real visits report it. The search field is in the first paint now, so
+  // its presence no longer says the stations have arrived.
+  const ok = await js(`!!performance.getEntriesByName('tt:readable')[0]`);
   if (ok) { readable = Date.now() - started; break; }
   await sleep(100);
 }
 // When nothing readable turned up, say what was actually on screen rather than only that it
 // wasn't: a slow network and a broken selector look identical from the outside.
-const onScreen = readable ? "" : await js(`JSON.stringify({panel:!!document.querySelector('.panel'), field:!!document.querySelector('.field'), booting:!!document.querySelector('.booting'), text:(document.body.innerText||'').slice(0,120)})`);
+const onScreen = readable ? "" : await js(`JSON.stringify({panel:!!document.querySelector('.panel'), field:!!document.querySelector('.field'), text:(document.body.innerText||'').slice(0,120)})`);
 // When does the map itself appear? It is deliberately held back so the board wins the link, and
 // how long that costs is worth knowing rather than assuming.
 let mapAt = 0;
@@ -132,7 +134,8 @@ for (let i = 0; i < 400; i++) {
   await sleep(100);
 }
 // A canvas element exists long before there is a map in it: the style, and the worker's own
-// download, come after. `tt:map` is set when the style has loaded, the moment real visits report.
+// download, come after. `tt:map` is set when the map fades in over the poster — lines, trains and
+// basemap together — the moment real visits report.
 let readyAt = 0;
 for (let i = 0; i < 400 && mapAt; i++) {
   const t = await js(`(performance.getEntriesByName('tt:map')[0] || {}).startTime || 0`);
@@ -149,7 +152,7 @@ console.log(`  first contentful paint      ${firstPaint ? firstPaint + " ms" : "
 console.log(`  something readable on screen ${readable ? readable + " ms" : "not within 40 s — " + onScreen}`);
 console.log(`  transferred                 ${kb(total)} over ${bytes.size} requests${args.includes("--no-sw") ? "" : " (not counting what the service worker fetched; --no-sw to)"}`);
 console.log(`  map canvas on screen        ${mapAt ? mapAt + " ms" : "not within 40 s"}`);
-console.log(`  map ready (style loaded)    ${readyAt ? readyAt + " ms" : "not seen"}`);
+console.log(`  map shown (tt:map)         ${readyAt ? readyAt + " ms" : "not seen"}`);
 if (args.includes("--serve")) console.log(`  served from the site         ${kb(served.reduce((a, f) => a + f.bytes, 0))} in ${served.length} responses, counting workers`);
 if (args.includes("--waterfall") && args.includes("--serve")) {
   const byPath = new Map();

@@ -52,6 +52,7 @@ const isImmutable = (url) => url.pathname.startsWith(`${SCOPE}_next/static/`) ||
  */
 const isData = (url) => url.pathname.endsWith("/data/network.json")
   || url.pathname.endsWith("/data/network-lite.json")
+  || url.pathname.endsWith("/data/poster.svg")
   || url.pathname.endsWith("/data/timing.json") || url.pathname.endsWith("/data/nyct-subway.proto");
 
 const store = (request, res) => {

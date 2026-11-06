@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { PLACES_KEY } from "./firstPaint";
 
 /**
  * The stations someone actually uses. A commuter takes the same two or three trains every day,
@@ -16,7 +17,8 @@ export interface SavedPlace {
   direction?: "N" | "S";
 }
 
-const KEY = "tt.places.v1";
+// Read before React runs as well, by the first-paint script, so the name lives with it.
+const KEY = PLACES_KEY;
 
 function read(): SavedPlace[] {
   try {
