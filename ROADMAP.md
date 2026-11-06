@@ -57,7 +57,7 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`#####·····` 50% · 2 of 4 done
+`####······` 40% · 2 of 5 done
 
 ### backlog
 
@@ -66,6 +66,7 @@ Give a train no position of its own, so it cannot leave its line.
 ### in progress
 
 - [ ] `0023` Front-end: measure and cut load and gesture cost <sup>chore · p2</sup>
+- [ ] `0024` Name what each train is doing: one status, decided by the tracker <sup>feature · p1</sup>
 
 ### done
 

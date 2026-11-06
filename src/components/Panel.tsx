@@ -178,7 +178,7 @@ export default function Panel(props: Props) {
           destination={destination}
           onDestination={onDestination}
           stale={status.live && !status.connected && status.clockTs ? wallNow - status.clockTs : undefined}
-          onSelect={onSelect} onClose={() => onSelect({ kind: "none" })} positionsRef={positionsRef}
+          onSelect={onSelect} onClose={() => onSelect({ kind: "none" })}
         />
       )}
 

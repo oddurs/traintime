@@ -54,7 +54,7 @@ export function betterConnection(
   let best: Change | undefined;
   for (const other of all) {
     if (other.id === riding.id || other.route === riding.route) continue;
-    if (other.stale || other.phase === "unstarted") continue;
+    if (other.status === "scheduled" || other.status === "lost") continue;
     const theirs = calls(other);
     const arrival = theirs.get(dest);
     if (arrival === undefined || arrival >= mine - WORTH_SAYING_S) continue;

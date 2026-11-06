@@ -1,6 +1,7 @@
 import type {
-  Direction, FeedStatus, FeedTick, StateDelta, StateSnapshot, StopPrediction, TrainState, TrainUpdate, VehicleStatus,
+  Direction, FeedStatus, FeedTick, StateDelta, StateSnapshot, StopPrediction, TrainState, TrainStatus, TrainUpdate, VehicleStatus,
 } from "./types";
+import { HELD_S } from "./types";
 import { NetworkIndex, parentOf } from "./network";
 import { Timing, conditionsAt, type Conditions } from "./timing";
 
@@ -108,7 +109,34 @@ const MIN_DWELL_S = 10;
  * at a stop it never reached.
  */
 const MAX_DWELL_S = 1800;
+/** How far ahead of its trip a train can be making ready for it. */
+const PREPARING_WITHIN_S = 7200;
 const MAX_OVERDUE_S = 600;
+
+/**
+ * When a NYCT trip is scheduled to leave its first stop, from its id — which starts with that time
+ * in hundredths of a minute past midnight of the service day: `122300_C..S04R` leaves at 20:23.
+ * Service days run past midnight, so the instance nearest `now` is the one meant. `localSecs` is
+ * the New York wall clock at `now`, in seconds past midnight; trip times are wall-clock times too,
+ * which leaves the two hours a year the clocks change an hour out. Undefined for an id in any
+ * other form.
+ */
+export function tripStart(id: string, now: number, localSecs: number): number | undefined {
+  const m = /^(\d{6})_/.exec(id);
+  if (!m) return undefined;
+  let t = now - localSecs + (Number(m[1]) / 100) * 60;
+  while (t - now > 43_200) t -= 86_400;
+  while (now - t > 43_200) t += 86_400;
+  return t;
+}
+
+const nyClock = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23" });
+/** Seconds past midnight on New York's wall clock. */
+export function nySecondsOfDay(epochSec: number): number {
+  const p = nyClock.formatToParts(new Date(epochSec * 1000));
+  const get = (t: string) => Number(p.find((x) => x.type === t)?.value ?? 0);
+  return (get("hour") % 24) * 3600 + get("minute") * 60 + get("second");
+}
 
 const nyTime = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false, weekday: "short" });
 const DOW: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
@@ -355,28 +383,52 @@ export class Tracker {
     const withStops = opts.predictions !== false;
     const { hour, dow } = nyHourDow(now);
     const cond = conditionsAt(now, this.timing.weather);
+    const localSecs = nySecondsOfDay(now);
     const seen: { st: TrainState; lastSeen: number }[] = [];
     for (const m of this.mem.values()) {
-      const st = this.stateOf(m, now, hour, dow, cond, withStops);
+      const st = this.stateOf(m, now, hour, dow, cond, localSecs, withStops);
       if (st) seen.push({ st, lastSeen: m.lastSeen });
     }
     const out = this.dedupeByTrain(seen);
     const byId = this.assignLeaders(out);
     this.applyLeaderConstraint(out, byId, hour, cond);
-    // The feed keeps publishing some trains long after they stop doing anything — one had been
-    // "at a platform" for over three hours. It is still data, but it is not a running train, and
-    // presenting it as one is worse than admitting we have lost track of it.
-    for (const st of out) {
-      const parked = st.phase === "dwelling" && st.arrivedAt !== undefined && now - st.arrivedAt > MAX_DWELL_S;
-      // Our own eta is floored at the present — it never reads as past — so overdue-ness has to
-      // be judged against the feed's raw prediction, which is not clamped.
-      const overdue = st.phase === "moving" && st.etaRaw < now - MAX_OVERDUE_S;
-      if (parked || overdue) st.stale = true;
-    }
+    for (const st of out) this.classify(st, now);
     return out;
   }
 
-  private stateOf(m: Memory, now: number, hour: number, dow: number, cond: Conditions, withStops = true): TrainState | undefined {
+  /**
+   * The status of a train in service — see TrainStatus. `scheduled` and `preparing` are settled
+   * where the trip is first read, because they decide where it is drawn; these are what is left.
+   */
+  private classify(st: TrainState, now: number): void {
+    // The feed keeps publishing some trains long after they stop doing anything — one had been
+    // "at a platform" for over three hours. It is still data, but it is not a running train, and
+    // presenting it as one is worse than admitting we have lost track of it.
+    const parked = st.phase === "dwelling" && st.arrivedAt !== undefined && now - st.arrivedAt > MAX_DWELL_S;
+    // Our own eta is floored at the present — it never reads as past — so overdue-ness has to be
+    // judged against the feed's raw prediction, which is not clamped.
+    const overdue = st.phase === "moving" && st.etaRaw < now - MAX_OVERDUE_S;
+    if (parked || overdue) { st.status = "lost"; return; }
+    if (st.status === "scheduled" || st.status === "preparing") return;
+
+    if (st.phase === "dwelling") {
+      // A layover at the end of the line is the schedule, not a hold.
+      const terminal = st.destination !== undefined && parentOf(st.destination) === parentOf(st.nextStop);
+      const late = st.expectedDeparture !== undefined ? now - st.expectedDeparture : 0;
+      if (!terminal && late > HELD_S) { st.status = "held"; st.heldFor = late; return; }
+      st.status = "at-platform";
+      return;
+    }
+    // Between stations. Only a departure we saw, or modelled from an arrival we saw, says how long
+    // it has been out: a train first seen mid-segment has a guessed origin and no clock to judge.
+    if (st.departedAt !== undefined && st.runTime !== undefined && !st.prevInferred) {
+      const late = now - st.departedAt - st.runTime;
+      if (late > HELD_S) { st.status = "held"; st.heldFor = late; return; }
+    }
+    st.status = "running";
+  }
+
+  private stateOf(m: Memory, now: number, hour: number, dow: number, cond: Conditions, localSecs: number, withStops = true): TrainState | undefined {
     const u = m.u;
     const head = u.stops[0];
     if (!head) return undefined;
@@ -389,6 +441,8 @@ export class Tracker {
       // rather than putting an internal id where a station name belongs.
       destination: [...u.stops].reverse().find((x) => this.net.station(x.id))?.id,
       updatedAt: m.changedAt,
+      // In service until `classify` says otherwise; the two kinds of not-yet are decided below.
+      status: "running" as TrainStatus,
     };
 
     // STOPPED_AT. Transit feeds: dwelling until the vehicle goes IN_TRANSIT_TO. Heartbeat feeds:
@@ -448,9 +502,21 @@ export class Tracker {
     if (!this.net.station(next.id)) return undefined;
 
     const unstarted = !v && (!u.assigned || next.arrival - now > 60);
-    if (unstarted) {
+    // A vehicle heading for the first stop of a trip that has not begun: making ready, not running.
+    // It is parked at that stop rather than drawn on the track short of it, where it sat still and
+    // was ringed as stopped — a third of every train shown as moving.
+    const startsAt = v && !m.prevStop && m.departedAt === undefined ? tripStart(u.id, now, localSecs) : undefined;
+    // Bounded, because a train is not made ready hours ahead: the furthest seen is under an hour. A
+    // trip id that reads as starting much later belongs to a train first seen mid-route, after a
+    // restart, which has simply not been seen to leave anywhere yet.
+    const preparing = startsAt !== undefined && startsAt > now && startsAt - now < PREPARING_WITHIN_S;
+    if (unstarted || preparing) {
       const { eta, sigma } = this.timing.adjustEta({ raw: next.arrival, now, route: u.route, next: next.id, hour, dow });
-      return { ...base, phase: "unstarted", nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma, stops: withStops ? this.predictions(u, now, hour, dow, undefined, nextIdx) : [] };
+      return {
+        ...base, phase: "unstarted", status: preparing ? "preparing" : "scheduled", ...(preparing ? { startsAt } : {}),
+        nextStop: next.id, track: next.track, eta, etaRaw: next.arrival, sigma,
+        stops: withStops ? this.predictions(u, now, hour, dow, undefined, nextIdx) : [],
+      };
     }
 
     let prev = m.prevStop;

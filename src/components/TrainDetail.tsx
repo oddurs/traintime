@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Selection, TrainPosition, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
-import { etaProvenance, fmtIn, holdReason, kmh, provenance } from "@/lib/format";
+import { etaProvenance, fmtIn, kmh, provenance, statusLine } from "@/lib/format";
 import { Button, Callout, Card, IconButton, List, Meter, Notice, Row } from "./ui";
 import { BulletGroup, RouteBullet } from "./brand";
 import AlertList from "./AlertList";
@@ -45,7 +45,7 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
   const terminal = state.destination ?? state.stops[state.stops.length - 1]?.id;
   const dest = terminal && index.station(terminal) ? index.stationName(terminal) : null;
   const prov = provenance(index, state, now);
-  const hold = position ? holdReason(index, position, byId) : null;
+  const hold = statusLine(index, state, byId, now);
   const routeAlerts = useMemo(() => (alerts?.byRoute.get(state.route) ?? []).filter((a) => a.category === "delay"), [alerts, state.route]);
   const progress = position && position.length > 0 ? position.s / position.length : 0;
 

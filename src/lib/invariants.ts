@@ -47,8 +47,8 @@ export function checkInvariants(net: NetworkIndex, states: TrainState[], now: nu
     }
 
     // A dwelling train's eta is when it arrived, not a forecast, so only a moving one can be overdue.
-    if (t.phase === "moving" && t.etaRaw < now - MAX_OVERDUE_S && !t.stale) flag("high", "long overdue and not flagged", `${who} ${Math.round((now - t.etaRaw) / 60)}min`);
-    if (t.phase === "dwelling" && t.arrivedAt && now - t.arrivedAt > MAX_DWELL_S && !t.stale) {
+    if (t.phase === "moving" && t.etaRaw < now - MAX_OVERDUE_S && t.status !== "lost") flag("high", "long overdue and not flagged", `${who} ${Math.round((now - t.etaRaw) / 60)}min`);
+    if (t.phase === "dwelling" && t.arrivedAt && now - t.arrivedAt > MAX_DWELL_S && t.status !== "lost") {
       flag("high", "parked beyond any real layover, and not flagged", `${who} ${Math.round((now - t.arrivedAt) / 60)}min`);
     }
     if (t.eta > now + 7200) flag("medium", "arrival predicted absurdly far ahead", `${who} ${Math.round((t.eta - now) / 60)}min`);
@@ -56,7 +56,7 @@ export function checkInvariants(net: NetworkIndex, states: TrainState[], now: nu
     if (t.arrivedAt && t.arrivedAt > now + 5) flag("medium", "arrived in the future", who);
     if (t.phase === "moving" && t.prevStop && parentOf(t.prevStop) === parentOf(t.nextStop)) flag("medium", "moving between one stop and itself", who);
     if (t.runTime !== undefined && (t.runTime < 5 || t.runTime > 1800)) flag("low", "implausible run time", `${who} ${Math.round(t.runTime)}s`);
-    if (t.stale) flag("low", "train the feed has stopped updating", who);
+    if (t.status === "lost") flag("low", "train the feed has stopped updating", who);
     if (t.phase === "moving" && t.prevStop) {
       const a = parentOf(t.prevStop), b = parentOf(t.nextStop);
       const key = a < b ? `${a}-${b}` : `${b}-${a}`;

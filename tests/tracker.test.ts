@@ -87,10 +87,10 @@ test("a train long overdue at a stop it never reached is flagged, not drawn as i
   const tracker = fresh();
   const train = oneTrain(now);
   tracker.ingest(at(now, [train]));
-  assert.equal(tracker.states(now)[0].stale, undefined, "a fresh train is not stale");
+  assert.equal(tracker.states(now)[0].status, "running", "a fresh train is running");
   // The feed keeps republishing the same predictions while the clock runs past them.
   for (let i = 1; i <= 30; i++) tracker.ingest(at(now + i * 60, [train]));
-  assert.equal(tracker.states(now + 1800)[0].stale, true, "half an hour past its own arrival is not a running train");
+  assert.equal(tracker.states(now + 1800)[0].status, "lost", "half an hour past its own arrival is not a running train");
 });
 
 test("a train that is simply quiet is not mistaken for a ghost", () => {
@@ -106,7 +106,7 @@ test("a train that is simply quiet is not mistaken for a ghost", () => {
       ],
     })]));
   }
-  assert.equal(tracker.states(now + 600)[0].stale, undefined, "a quiet but progressing train is fine");
+  assert.equal(tracker.states(now + 600)[0].status, "running", "a quiet but progressing train is running");
 });
 
 test("a vehicle timestamp from the future is not taken at face value", () => {
@@ -135,9 +135,9 @@ test("a train parked at a platform far beyond any layover is flagged, even if it
     ],
   });
   tracker.ingest(at(now, [parked(now)]));
-  assert.equal(tracker.states(now)[0].stale, undefined, "a train that just arrived is not stale");
+  assert.equal(tracker.states(now)[0].status, "at-platform", "a train that just arrived is at the platform");
   for (let i = 1; i <= 45; i++) tracker.ingest(at(now + i * 60, [parked(now + i * 60)]));
-  assert.equal(tracker.states(now + 2700)[0].stale, true, "45 minutes at one platform is not a running train");
+  assert.equal(tracker.states(now + 2700)[0].status, "lost", "45 minutes at one platform is not a running train");
 });
 
 test("a dwelling train never reports having arrived later than now", () => {

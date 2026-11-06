@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { Selection, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
-import type { TrainPosition } from "@/lib/types";
 import { arrivalsAt } from "@/lib/arrivals";
-import { STALLED_S } from "@/lib/format";
 import { directionLabel, fmtClock } from "@/lib/format";
 import { walkSeconds } from "@/lib/places";
 import { IconButton, List, Row } from "./ui";
@@ -28,15 +26,12 @@ interface Props {
   destination?: string;
   onDestination?: (id: string | null) => void;
   onSelect: (s: Selection) => void;
-  /** Live positions, so a board can say that a train it is counting down has stopped moving. */
-  positionsRef?: React.RefObject<Map<string, TrainPosition>>;
   onClose: () => void;
 }
 
 /** Close enough that a number would be a lie. */
 const HERE_S = 30;
 /** How often the board re-reads the motion loop's positions to see what has stopped moving. */
-const STALL_POLL_MS = 5000;
 
 /** How a person would say it out loud, for a screen reader. */
 function spoken(index: NetworkIndex, route: string, dest: string, secs: number, atPlatform: boolean, sigma: number): string {
@@ -52,7 +47,7 @@ function spoken(index: NetworkIndex, route: string, dest: string, secs: number, 
  * The arrivals board for one station, computed from the same train states the map draws —
  * so what it says and what you see can never disagree.
  */
-export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, destination, onDestination, onSelect, onClose, positionsRef }: Props) {
+export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, destination, onDestination, onSelect, onClose }: Props) {
   const groups = useMemo(() => arrivalsAt(index, trains, station, 6, destination), [index, trains, station, destination]);
   // With a location we can say which trains are actually catchable on foot, which is the
   // difference between a timetable and advice.
@@ -70,28 +65,6 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
     return out;
   }, [alerts, station, routes, index]);
 
-  /*
-   * A countdown built on a train that has not moved in minutes is not a countdown. "Three stops
-   * away" is true and useless if the train has been stopped for six minutes; saying so is the
-   * difference between waiting and walking.
-   */
-  const [stalled, setStalled] = useState<Map<string, number>>(new Map());
-  useEffect(() => {
-    if (!positionsRef) return;
-    // Sampled rather than read during render: positions live in a ref that the motion loop writes
-    // every frame, and React may not read one while rendering.
-    const read = () => {
-      const out = new Map<string, number>();
-      for (const [id, p] of positionsRef.current ?? []) {
-        if (p.stalledFor >= STALLED_S) out.set(id, Math.max(1, Math.round(p.stalledFor / 60)));
-      }
-      setStalled((prev) => (prev.size === out.size && [...out].every(([k, v]) => prev.get(k) === v) ? prev : out));
-    };
-    read();
-    const t = setInterval(read, STALL_POLL_MS);
-    return () => clearInterval(t);
-  }, [positionsRef]);
-  const stalledMinutes = (id: string) => stalled.get(id) ?? null;
 
   /*
    * What a screen reader is told as the board changes.
@@ -164,14 +137,17 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
                 const secs = a.eta - now;
                 const here = a.atPlatform || secs < HERE_S;
                 const catchable = walk === undefined ? undefined : secs >= walk;
-                const stalledFor = stalledMinutes(a.id);
+                // A countdown built on a train that has been held for minutes is not a countdown:
+                // "three stops away" is true and useless, and saying so is the difference between
+                // waiting and walking. The tracker decides it, so it is right from the first look.
+                const held = a.state.status === "held" ? Math.max(1, Math.round((a.state.heldFor ?? 0) / 60)) : null;
                 const context =
                   a.rideSeconds !== undefined
                     ? `arrives ${fmtClock(a.destEta!)} · ${Math.round(a.rideSeconds / 60)} min ride`
                     : a.departing && a.atPlatform ? "at the platform, ready to leave"
                     : a.atPlatform ? "at the platform"
                     : catchable === false ? "too soon to reach on foot"
-                    : stalledFor !== null ? `stopped for ${stalledFor} min · ${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stops away`}`
+                    : held !== null ? `held ${held} min · ${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stops away`}`
                     : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`;
                 return (
                   <Row

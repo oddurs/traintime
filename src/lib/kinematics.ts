@@ -35,8 +35,6 @@ interface Body {
   motion: Motion;
   /** Extra closing speed currently being applied to reach a measured position, in m/s. */
   catchUp?: number;
-  /** Seconds this body has been between stations without advancing. */
-  stalled?: number;
   /** Smoothed compass heading, so the marker sweeps through curves instead of snapping. */
   heading: number;
   /**
@@ -140,20 +138,9 @@ export class Kinematics {
     const leader = st.leaderId ? byId.get(st.leaderId) : undefined;
     const leaderBody = leader ? this.bodies.get(leader.id) : undefined;
     const target = this.control(body, st, now, dt, leader && leaderBody ? { state: leader, body: leaderBody } : undefined);
-    const before = body.s;
     this.integrate(body, target, dt);
     this.applyApproachFix(body, st, dt);
     this.steer(body, dt);
-    /*
-     * A train between stations that is not advancing is stopped, and after a while that is the
-     * most important thing anyone can be told about it. The engine already holds the marker —
-     * creeping it forward against the feed's own arrival time would be worse — but it described
-     * twenty minutes of standing still as "moving".
-     */
-    if (st.phase === "moving" && body.L > 0) {
-      const moved = body.s - before;
-      body.stalled = moved < 0.5 * dt ? (body.stalled ?? 0) + dt : 0;
-    } else body.stalled = 0;
     return this.emit(st, body, now, dt);
   }
 
@@ -325,7 +312,7 @@ export class Kinematics {
     return {
       id: st.id, route: st.route, direction: st.direction, lon: p[0], lat: p[1], bearing: b.shown ?? b.heading, tangent,
       segment: b.key, band,
-      speed: b.v, phase: st.phase, motion: b.motion, s: b.s, length: b.L, stalledFor: b.stalled ?? 0, ribbon, state: st,
+      speed: b.v, phase: st.phase, motion: b.motion, s: b.s, length: b.L, ribbon, state: st,
     };
   }
 }
