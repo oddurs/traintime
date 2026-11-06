@@ -57,11 +57,15 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`#########·` 86% · 6 of 7 done
+`########··` 75% · 6 of 8 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
+
+### in progress
+
+- [ ] `0027` Loading: the map and the panel from the first paint <sup>feature · p2</sup>
 
 ### done
 
