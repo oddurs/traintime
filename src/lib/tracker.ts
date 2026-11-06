@@ -67,6 +67,12 @@ interface Memory {
   dirty: boolean;
   /** The segment this train was last called held on; it stays held there until it arrives. */
   heldOn?: string;
+  /** Platforms this trip has left, which it cannot be at again. See `regressed`. */
+  left: Set<string>;
+  /** When the feed started placing this trip somewhere it had already left. */
+  regressedSince?: number;
+  /** Evidence for the regression: where, and the newer vehicle timestamps seen standing there. */
+  regressedAt?: { stop: string; beats: number; firstTs: number; lastTs: number };
 }
 
 const EXPIRE_AFTER = 120;
@@ -111,6 +117,17 @@ const MIN_DWELL_S = 10;
  * at a stop it never reached.
  */
 const MAX_DWELL_S = 1800;
+/**
+ * How long the feed may keep placing a trip somewhere it has already left before we believe it.
+ *
+ * The lettered feeds briefly republish a trip's older position — a train at Bedford Park Blvd
+ * reported back at 205 St for two ticks, one at Kings Hwy reported at the stop before it with a
+ * vehicle timestamp a minute older — and then carry on from where it really was. Believed, every
+ * one of those jumped a train back along the line: 163 trips in 9.5 hours. A regression that lasts
+ * longer than this, on fresher evidence than the forward position, is no longer a glitch: it is the
+ * forward position that was wrong.
+ */
+const REGRESSION_HOLD_S = 300;
 /** How far ahead of its trip a train can be making ready for it. */
 const PREPARING_WITHIN_S = 7200;
 const MAX_OVERDUE_S = 600;
@@ -176,6 +193,9 @@ export class Tracker {
     public timing: Timing,
   ) {}
 
+  /** Trips the feed placed somewhere they had already left: ignored as a glitch, or accepted once it persisted. */
+  readonly regressions = { ignored: new Set<string>(), accepted: new Set<string>() };
+
   isHeartbeatFeed(feed: string): boolean {
     const f = this.feedStats.get(feed);
     return !!f && f.beats > f.transit;
@@ -217,8 +237,39 @@ export class Tracker {
           status: v?.status, stopId: v?.stopId, vehicleTs: v?.timestamp,
           arrivedAt: v?.status === "STOPPED_AT" ? v.timestamp : undefined,
           beats: 0, lastEta: new Map(), lastAdjusted: new Map(), bias: 0, biasN: 0, sig: "", changedAt: tick.ts, dirty: true,
+          left: new Set(),
         };
         this.mem.set(u.id, m);
+      } else if (this.regressed(m, u)) {
+        // Somewhere this trip has already left. Still listed, so not expired — but not moved.
+        m.lastSeen = tick.ts;
+        m.regressedSince ??= tick.ts;
+        // Persistence alone is not enough: the feed can go on republishing a stale record — one M was
+        // reported at Broadway–Lafayette for minutes on a vehicle timestamp nine minutes old. Only a
+        // report newer than everything we already know can overturn it.
+        const newer = v?.timestamp === undefined || m.vehicleTs === undefined || v.timestamp > m.vehicleTs;
+        // A heartbeat at the stop it has gone back to is the train standing there, now — evidence,
+        // where persistence is only patience. One B was reported a stop ahead for a single tick, then
+        // beat at the stop it had really never left for five minutes: drawn running away from it for
+        // all of them. Three newer beats over 45 s is the hold seen happening.
+        const here = u.vehicle?.stopId;
+        if (here && v?.status === "STOPPED_AT" && v.timestamp !== undefined && newer) {
+          const ev = m.regressedAt?.stop === here ? m.regressedAt : (m.regressedAt = { stop: here, beats: 0, firstTs: v.timestamp, lastTs: v.timestamp });
+          if (v.timestamp > ev.lastTs) { ev.beats++; ev.lastTs = v.timestamp; }
+        }
+        const beaten = !!m.regressedAt && m.regressedAt.beats >= 3 && m.regressedAt.lastTs - m.regressedAt.firstTs >= HEARTBEAT_SILENCE_S;
+        if (!beaten && (tick.ts - m.regressedSince < REGRESSION_HOLD_S || !newer)) { this.regressions.ignored.add(u.id); continue; }
+        // It has persisted: start the trip afresh from where the feed now insists it is.
+        this.regressions.accepted.add(u.id);
+        const fresh: Memory = {
+          u, feed: tick.feed, firstSeen: tick.ts, lastSeen: tick.ts,
+          status: v?.status, stopId: v?.stopId, vehicleTs: v?.timestamp,
+          arrivedAt: v?.status === "STOPPED_AT" ? v.timestamp : undefined,
+          beats: 0, lastEta: new Map(), lastAdjusted: new Map(), bias: 0, biasN: 0, sig: "", changedAt: tick.ts, dirty: true,
+          left: new Set(),
+        };
+        this.mem.set(u.id, fresh);
+        m = fresh;
       } else if (v && (v.stopId !== m.stopId || v.status !== m.status)) {
         // A wildly future timestamp is a feed error. A slightly future one is not: the lettered
         // lines deliberately push this value ahead as their own expected-departure estimate, and
@@ -256,6 +307,7 @@ export class Tracker {
             m.departedAt = depTs;
             m.departedEstimated = !tsChanged;
           }
+          m.left.add(m.stopId);
           m.prevStop = m.stopId;
           m.prevArrivedAt = m.arrivedAt;
           m.arrivedAt = undefined;
@@ -313,6 +365,8 @@ export class Tracker {
       m.u = u;
       m.feed = tick.feed;
       m.lastSeen = tick.ts;
+      m.regressedSince = undefined;
+      m.regressedAt = undefined;
     }
     return { events, etaObs, fresh: true };
   }
@@ -331,6 +385,16 @@ export class Tracker {
    * Whether this train's vehicle timestamp is a heartbeat we can read a departure out of: the
    * feed has to behave that way as a whole, and this train has to have actually beaten.
    */
+  /**
+   * Whether this update places the trip at a platform it has already left — the vehicle's stop, or
+   * with no vehicle, the head of its stop list. Stop ids carry their direction, so a trip never
+   * calls at one twice; at one it has left, the report is older than what we already know.
+   */
+  private regressed(m: Memory, u: TrainUpdate): boolean {
+    const at = u.vehicle?.stopId ?? u.stops[0]?.id;
+    return at !== undefined && at !== m.stopId && m.left.has(at);
+  }
+
   private beating(m: Memory): boolean {
     return m.beats > 0 && (this.isHeartbeatFeed(m.feed) || m.beats >= 2);
   }

@@ -57,12 +57,11 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`####······` 33% · 2 of 6 done
+`#####·····` 50% · 3 of 6 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
-- [ ] `0025` Trips that go backwards: the feed republishes a trip at an earlier stop after a gap <sup>bug · p2</sup>
 
 ### in progress
 
@@ -73,4 +72,5 @@ Give a train no position of its own, so it cannot leave its line.
 
 - [x] `0021` Poller is OOM-killed by the nightly learn pass <sup>bug · p0</sup>
 - [x] `0022` CI red on main since 2026-10-03: audit:layout reports four broken clauses <sup>bug · p1</sup>
+- [x] `0025` Trips that go backwards: the feed briefly republishes an older position <sup>bug · p2</sup>
 

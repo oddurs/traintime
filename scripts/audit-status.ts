@@ -113,10 +113,22 @@ async function main() {
    * ambiguous — so these are counted as an edge case of their own and left out of the scoring.
    */
   const backwards = new Set<string>();
+  let reused = 0;
   for (const [trip, xs] of seen) {
     const left: string[] = [];
+    let lastAt = 0;
     for (const x of xs) {
-      const p = x.st.phase === "moving" ? x.st.prevStop : undefined;
+      // Only stops it was seen to leave: a guessed origin for a train first seen mid-segment is not
+      // a position the feed gave, and a guess that lands behind the train is not it going backwards.
+      const p = x.st.phase === "moving" && !x.st.prevInferred ? x.st.prevStop : undefined;
+      // Gone longer than the tracker keeps a trip and back somewhere it had been: a new run as far as
+      // the tracker is concerned — the shuttles reuse a trip id for the next run this way, and a
+      // stale republish after a gap looks the same. Counted, not judged.
+      if (lastAt && x.at - lastAt > 120) {
+        if (x.st.phase === "moving" && x.st.prevStop && left.includes(x.st.prevStop)) reused++;
+        left.length = 0;
+      }
+      lastAt = x.at;
       if (!p || left[left.length - 1] === p) continue;
       if (left.includes(p)) { backwards.add(trip); break; }
       left.push(p);
@@ -133,6 +145,42 @@ async function main() {
     if (gap > 120) gapped++;
   }
   console.log(`backwards trips: ${renamed} of ${backwards.size} changed train id; ${gapped} had a gap of more than 2 min in the feed`);
+  if (args.get("backwards")) {
+    // Where each backwards trip was before the jump and after it, and what else was where it had been.
+    const stopsOf = (xs: Seen[]) => xs.map((x) => x.st.phase === "moving" ? x.st.prevStop : x.st.phase === "dwelling" ? x.st.nextStop : undefined);
+    const firstAt = new Map<string, number>();
+    for (const [t, xs] of seen) firstAt.set(t, xs[0].at);
+    let continued = 0, finishedSecond = 0, n = 0;
+    const gaps: number[] = [], back: number[] = [];
+    for (const t of backwards) {
+      // The tracker's own corrections are accounted for; these are the ones that are not.
+      if (tracker.regressions.accepted.has(t)) continue;
+      const xs = seen.get(t)!;
+      const st = stopsOf(xs);
+      const left: string[] = [];
+      let j = -1;
+      for (let i = 0; i < xs.length; i++) {
+        const p = st[i];
+        if (!p || left[left.length - 1] === p) continue;
+        if (left.includes(p)) { j = i; break; }
+        left.push(p);
+      }
+      if (j < 1) continue;
+      n++;
+      const before = xs[j - 1], after = xs[j];
+      gaps.push(after.at - before.at);
+      back.push(left.length - left.indexOf(st[j]!));
+      // Another trip first seen near the jump, at or just past where this one had got to.
+      const here = parentOf(before.st.nextStop);
+      const other = [...seen].find(([o, ys]) => o !== t && Math.abs(firstAt.get(o)! - after.at) < 600 && ys.some((y) => Math.abs(y.at - after.at) < 300 && (parentOf(y.st.nextStop) === here || parentOf(y.st.prevStop ?? "") === here)));
+      if (other) continued++;
+      // Does the second pass get further than the first did?
+      if (left.length < new Set(st.filter(Boolean)).size) finishedSecond++;
+      if (n <= 6) console.log(`  ${t}: at ${before.st.prevStop ?? "-"}>${before.st.nextStop} ${nyTime(before.at)}, then ${after.st.prevStop ?? "-"}>${after.st.nextStop} ${nyTime(after.at)} — gap ${Math.round(after.at - before.at)} s${other ? `; ${other[0]} appeared where it had been` : ""}`);
+    }
+    console.log(`  of ${n}: gap before the jump median ${Math.round(q(gaps, 0.5))} s; jumped back a median ${q(back, 0.5)} stops; another trip appeared where it had been in ${continued}; the second pass went further in ${finishedSecond}`);
+    process.exit(0);
+  }
   const traced = args.get("trace");
   for (const t of backwards) if (t !== traced) seen.delete(t);
   // Judging needs time for the outcome to happen: a claim made in the last 20 minutes is not scored.
@@ -142,6 +190,10 @@ async function main() {
   const totals = new Map<TrainStatus, number>();
   for (const xs of seen.values()) for (const x of xs) totals.set(x.st.status, (totals.get(x.st.status) ?? 0) + 1);
   const all = [...totals.values()].reduce((a, b) => a + b, 0);
+  console.log(`feed placed a trip somewhere it had already left: ${tracker.regressions.ignored.size} trips ignored as a glitch, ${tracker.regressions.accepted.size} accepted once it persisted`);
+  console.log(`back after more than 2 min, behind where last seen (a new run to the tracker): ${reused}`);
+  const corrected = [...backwards].filter((t) => tracker.regressions.accepted.has(t)).length;
+  console.log(`went backwards because the tracker corrected a forward glitch: ${corrected}; unexplained: ${backwards.size - corrected}`);
   console.log(`trips that went backwards (left out of the scoring): ${backwards.size}${backwards.size ? `, e.g. ${[...backwards][0]}` : ""}\n`);
   console.log("share of train-snapshots");
   for (const [s, n] of [...totals].sort((a, b) => b[1] - a[1])) console.log(`  ${s.padEnd(12)} ${pct(n, all).padStart(6)}`);
