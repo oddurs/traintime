@@ -3,9 +3,10 @@ id: 22
 uid: 32204366-c994-4c63-9cd6-320bea7d9fbd
 title: 'CI red on main since 2026-10-03: audit:layout reports four broken clauses'
 type: bug
-status: backlog
+status: done
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
+closed_at: 2026-11-06
 priority: p1
 area: map layout
 ---
@@ -32,5 +33,9 @@ The four clauses hold, or the audit is changed on purpose with the reason record
 
 ## Acceptance criteria
 
-- [ ] `npm run audit:layout` exits 0 on `main`
-- [ ] CI is green on `main`
+- [x] `npm run audit:layout` exits 0 on `main`
+- [x] CI is green on `main`
+
+## 2026-11-06
+
+Cause: cbd71ac draws 6X/7X/FX on their parent's line by design, but audit-layout still built strokes for them. The audit now skips DRAWN_AS services where it inspects drawn lines (PR #6). CI green on main at a79abb8, run 42254595454.
