@@ -370,3 +370,29 @@ search per vertex against a data texture, to save the ~0.5 ms the whole frame ca
 five hundred trains. The item stays open rather than dropped, because the arithmetic changes if the
 ring and the counts ever become instanced marks and the hit test is the only CPU reader left.
 
+## Ribbons on their own clock — before and after
+
+Measured 5 November 2026: a production build against a local poller on the live feeds. Each column
+is two alternating runs. The machine's load average went from 6 to 32 during the second pair,
+so treat the spread as noise, not signal.
+
+The ribbons were the last thing on the 0.4 px geometry clock, and at street zoom that clock is
+faster than a throttled phone draws frames. Every frame re-uploaded and re-tiled them on a worker.
+With ribbon uploads disabled outright, a 4× CPU at zoom 16 went from 38.6 to 14.5 ms of main
+thread a frame. Ribbons are now on a clock that moves them by their own 3 px blur, about three a
+second at zoom 16, and nothing is uploaded below the layer's minzoom or when nothing would show.
+
+```
+cpu  zoom  scenario    main ms/fr            ribbons/fr
+                       before      after     before      after
+4x   16    idle        38.6, 44.7  18.7, 33.5   1.00, 0.83  0.23, 0.36
+4x   16    pan         56.8, 57.9  31.9, 34.4   1.00, 0.95  0.34, 0.34
+4x   16    scroll in   32.1, 31.7  22.1, 29.5   0.79, 0.83  0.27, 0.29
+1x   16    pan         18.1, 24.3  10.2, 12.7   0.90, 0.93  0.30, 0.43
+1x   11    idle         5.2         5.1         0.33        0.00
+```
+
+After the change, a profile of a 4× pan at zoom 16 has the main thread 54.5% idle. MapLibre takes
+17% (label placement, collision, the worker's replies), native and GL work 13%, and this app 10%.
+No single function is above 1.2%. What is left is the software rasteriser's, not ours.
+

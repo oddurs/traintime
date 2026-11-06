@@ -57,7 +57,7 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`#####·····` 50% · 3 of 6 done
+`######····` 57% · 4 of 7 done
 
 ### backlog
 
@@ -73,4 +73,5 @@ Give a train no position of its own, so it cannot leave its line.
 - [x] `0021` Poller is OOM-killed by the nightly learn pass <sup>bug · p0</sup>
 - [x] `0022` CI red on main since 2026-10-03: audit:layout reports four broken clauses <sup>bug · p1</sup>
 - [x] `0025` Trips that go backwards: the feed briefly republishes an older position <sup>bug · p2</sup>
+- [x] `0026` Map: cut main-thread cost per frame <sup>chore · p2</sup>
 

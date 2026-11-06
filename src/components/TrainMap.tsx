@@ -69,10 +69,23 @@ const TRAIN_SPEED = 15;
 const MOVE_PX = 0.4;
 const MIN_HZ = 4;
 const MAX_HZ = 30;
-const drawInterval = (zoom: number) => {
+const drawInterval = (zoom: number, movePx = MOVE_PX) => {
   const pxPerSecond = TRAIN_SPEED / metresPerPixel(zoom);
-  return 1000 / Math.max(MIN_HZ, Math.min(MAX_HZ, pxPerSecond / MOVE_PX));
+  return 1000 / Math.max(MIN_HZ, Math.min(MAX_HZ, pxPerSecond / movePx));
 };
+
+/**
+ * The ribbons' own clock: a step the width of their blur.
+ *
+ * They were on the 0.4 px clock above, which at street zoom is twenty uploads a second — more
+ * than a throttled phone draws frames, so every frame re-tiled them on a worker, and that was half
+ * the main thread: 38.6 ms a frame at zoom 16 on a 4× CPU, 14.5 with no ribbons at all. A ribbon
+ * is a ±1σ band drawn at 30% opacity with a 3 px blur, and a step no wider than the blur does
+ * not read as a step. About three a second at zoom 16.
+ */
+const RIBBON_MOVE_PX = 3;
+/** Where the ribbon layer starts drawing; below it an upload is work nobody sees. */
+const RIBBON_MINZOOM = 12.5;
 
 export interface View { lat: number; lon: number; zoom: number }
 
@@ -253,6 +266,8 @@ export default function TrainMap(props: Props) {
     let raf = 0;
     let last = performance.now();
     let lastDraw = 0;
+    let lastRibbon = 0;
+    let ribbonsWereShown = false;
     /*
      * The callback is split in two so the work can be timed without a stopwatch threaded through
      * its early returns. `frame` re-arms and measures; `frameBody` is the work, unchanged.
@@ -303,6 +318,11 @@ export default function TrainMap(props: Props) {
       const geoDue = ts - lastDraw >= drawInterval(map.getZoom());
       if (geoDue) lastDraw = ts;
       const { visibleRoutes: vis, showRibbons: ribbons, selection: sel, highlight: hi, follow: fol } = live.current;
+      // Ribbons are drawn above RIBBON_MINZOOM, for every train or just a selected one. Outside
+      // that nothing is uploaded at all; on the way back in, they are drawn at once.
+      const ribbonsShown = map.getZoom() >= RIBBON_MINZOOM && (ribbons || sel.kind === "train");
+      const ribbonDue = ribbonsShown && (!ribbonsWereShown || ts - lastRibbon >= drawInterval(map.getZoom(), RIBBON_MOVE_PX));
+      if (ribbonDue) lastRibbon = ts;
       const bands: GeoJSON.Feature[] = [];
       const rings: GeoJSON.Feature[] = [];
       const stacks: GeoJSON.Feature[] = [];
@@ -453,7 +473,7 @@ export default function TrainMap(props: Props) {
             geometry: { type: "Point", coordinates: fannedLonLat(lon, lat, cb, mb, tanRad) },
           });
         }
-        if (geoDue && p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
+        if (ribbonDue && p.ribbon && p.ribbon.length >= 2 && (ribbons || selected)) {
           bands.push({
             type: "Feature",
             properties: { color: selected ? paint("--label") : idx.routeColor(p.route) },
@@ -487,9 +507,14 @@ export default function TrainMap(props: Props) {
         (map.getSource("trains") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: rings });
         sourceUploaded("trains");
       }
-      if (geoDue) {
+      // Uploaded on their own clock; and once, empty, when they stop being shown, so what comes back
+      // into view later is never a band left over from minutes ago.
+      if (ribbonDue || (ribbonsWereShown && !ribbonsShown)) {
         (map.getSource("ribbons") as GeoJSONSource | undefined)?.setData({ type: "FeatureCollection", features: bands });
         sourceUploaded("ribbons");
+      }
+      ribbonsWereShown = ribbonsShown;
+      if (geoDue) {
         // The counts sit at platforms and change only when a queue does, so they are handed over
         // when they differ rather than on a clock.
         const sig = `${Math.round(map.getZoom() * 10)}|${stacks.map((f) => `${f.properties!.stacked}@${(f.geometry as GeoJSON.Point).coordinates.join()}`).join(";")}`;
