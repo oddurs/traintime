@@ -57,15 +57,11 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`########··` 75% · 6 of 8 done
+`#########·` 88% · 7 of 8 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
-
-### in progress
-
-- [ ] `0027` Loading: the map and the panel from the first paint <sup>feature · p2</sup>
 
 ### done
 
@@ -75,4 +71,5 @@ Give a train no position of its own, so it cannot leave its line.
 - [x] `0024` Name what each train is doing: one status, decided by the tracker <sup>feature · p1</sup>
 - [x] `0025` Trips that go backwards: the feed briefly republishes an older position <sup>bug · p2</sup>
 - [x] `0026` Map: cut main-thread cost per frame <sup>chore · p2</sup>
+- [x] `0027` Loading: the map and the panel from the first paint <sup>feature · p2</sup>
 

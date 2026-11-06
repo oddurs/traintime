@@ -3,9 +3,10 @@ id: 27
 uid: 313faebd-7814-423c-b8fd-d3691d5336dc
 title: 'Loading: the map and the panel from the first paint'
 type: feature
-status: doing
+status: done
 created: 2026-11-06
 updated: 2026-11-06
+closed_at: 2026-11-06
 priority: p2
 area: front-end
 effort: m
@@ -37,4 +38,8 @@ A failed fetch of either network file ended in `.catch(() => {})`: "loading" for
 - [x] The foot and chip never claim live trains before the first snapshot (test)
 - [x] A failed stations or map fetch shows an error with Try again (filmed with the URL blocked)
 - [x] A returning visitor's saved list and dismissed legend do not move the sheet at hydration (filmed)
-- [ ] Deployed, and the slow-4G audit run against the live site
+- [x] Deployed, and the slow-4G audit run against the live site
+
+## 2026-11-06
+
+Live 2026-11-06, slow-4G, 4x CPU, --no-sw, three runs: first paint 2.2-2.5 s with the panel and poster, readable 5.2-5.3 s, map canvas 15.1-15.3 s, map shown 16.5-16.7 s, 513 KB over 25 requests. Filmed live: panel and poster from frame 1, sheet steady, Connecting to Live, map over the poster's lines.
