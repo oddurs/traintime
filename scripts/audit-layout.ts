@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { NetworkIndex, TRACK_M, fanAt, metresPerPixel } from "../src/lib/network";
+import { DRAWN_AS, NetworkIndex, TRACK_M, fanAt, metresPerPixel } from "../src/lib/network";
 import { Kinematics } from "../src/lib/kinematics";
 import { distM } from "../src/lib/geo";
 import type { LonLat, Network, StopPrediction, TrainState } from "../src/lib/types";
@@ -26,7 +26,15 @@ const fail = (clause: string, detail: string) => findings.push({ clause, detail 
 const t0 = performance.now();
 const idx = new NetworkIndex(net);
 const strokes: { route: string; stops: string[]; geom: LonLat[] }[] = [];
-for (const [route, runs] of Object.entries(net.routeRuns)) {
+/*
+ * The services the map draws. A diamond service (6X, 7X, FX) has no line of its own since cbd71ac:
+ * it rides its parent's, so its stretches are the parent's line cut at the express's stops. Held to
+ * the clauses below, that reads as a stroke stepping a band at every skipped station and as two
+ * services drawn 0 px apart, both of which are the design. Its trains are still checked, on screen,
+ * against the line they ride, further down.
+ */
+const drawnRuns = Object.entries(net.routeRuns).filter(([route]) => !DRAWN_AS[route]);
+for (const [route, runs] of drawnRuns) {
   for (const run of runs) {
     const geom: LonLat[] = [];
     for (let i = 0; i + 1 < run.stops.length; i++) {
@@ -104,7 +112,7 @@ if (wideJoints) fail("conjoined", `${wideJoints} of ${joints} band changes part 
 // the other clauses here could see it, because a mirrored stretch still joins its neighbours at
 // the *ends* of a stroke.
 let seams = 0, worstSeam = 0;
-for (const [route, runs] of Object.entries(net.routeRuns)) {
+for (const [route, runs] of drawnRuns) {
   for (const run of runs) {
     for (let i = 0; i + 2 < run.stops.length; i++) {
       const a = idx.lineSegment(route, run.stops[i], run.stops[i + 1]);
@@ -279,7 +287,7 @@ if (bend > 1.5) fail("proportioned", `the curve bends ${bend.toFixed(2)} px per 
 let closest = Infinity;
 let closestAt = "";
 for (const [key, byRoute] of Object.entries(net.bandParts ?? {})) {
-  const rs = Object.keys(byRoute as Record<string, number[]>);
+  const rs = Object.keys(byRoute as Record<string, number[]>).filter((r) => !DRAWN_AS[r]);
   if (rs.length < 2) continue;
   const [u, v] = key.split("-");
   const profiles = new Map<string, { colour: number[]; metric: number[] }>();
