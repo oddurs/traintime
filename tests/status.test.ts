@@ -111,3 +111,45 @@ test("trip ids read as the start time nearest now, across midnight", () => {
   assert.equal(tripStart("002000_1..S", midnight + 86_400 - 600, 86_400 - 600), midnight + 86_400 + 1200);
   assert.equal(tripStart("not-a-nyct-id", NOW, 0), undefined);
 });
+
+// ---------- the rules the replay audit changed (scripts/audit-status.ts) ----------
+
+test("a train overdue but still being revised is held, not lost; one the feed has stopped revising is lost", () => {
+  // Replayed over 9.5 h, "overdue" alone called 101 trains lost and 46 of them were moving again
+  // afterwards: a long hold at a signal is overdue too, and the feed goes on reporting it.
+  const run = (revised: boolean) => {
+    const tracker = fresh();
+    tracker.ingest(at(NOW, [train({ vehicle: { stopId: "119S", status: "STOPPED_AT", timestamp: NOW } })]));
+    const next = [{ id: "120S", arrival: NOW + 120, departure: NOW + 120 }, { id: "121S", arrival: NOW + 210, departure: NOW + 210 }];
+    for (let t = NOW + 30; t <= NOW + 1500; t += 60) {
+      tracker.ingest(at(t, [train({ vehicle: { stopId: "120S", status: "IN_TRANSIT_TO", timestamp: revised ? t : NOW + 30 }, stops: next })]));
+    }
+    return tracker.states(NOW + 1500)[0].status;
+  };
+  assert.equal(run(true), "held");
+  assert.equal(run(false), "lost");
+});
+
+test("on a heartbeat feed, a train is not called held at a platform once its heartbeat has stopped", () => {
+  // The lettered lines report a stand as a timestamp that advances every 16 s and freezes after
+  // the train leaves; STOPPED_AT outlives the departure. Replayed, 95% of the platform holds called
+  // there were trains that had already gone. A silent heartbeat is the train having left.
+  const tracker = fresh();
+  const end = NOW + 600;
+  for (let t = NOW; t <= end; t += 16) {
+    tracker.ingest({ feed: "gtfs-bdfm", ts: t, fetchedAt: t, trains: [train({
+      route: "D", vehicle: { stopId: "119S", status: "STOPPED_AT", timestamp: Math.min(t, NOW + 32) },
+    })] });
+  }
+  const st = tracker.states(end)[0];
+  // It is past due somewhere — but it left: dated from its last beat, it is between stations.
+  assert.equal(st.phase, "moving");
+  assert.ok(Math.abs((st.departedAt ?? 0) - (NOW + 32)) < 20, `departed ${st.departedAt! - NOW} s in, at the last beat`);
+});
+
+test("a trip with no train in it, a minute before its start, is scheduled rather than running", () => {
+  const tracker = fresh();
+  const start = NOW + 40;
+  tracker.ingest(at(NOW, [train({ id: tripId(start), stops: [{ id: "119S", arrival: start, departure: start }, { id: "120S", arrival: start + 90, departure: start + 90 }] })]));
+  assert.equal(tracker.states(NOW)[0].status, "scheduled");
+});

@@ -24,6 +24,7 @@
     "test": "tsx --test tests/*.test.ts",
     "audit": "tsx scripts/audit.ts",
     "audit:replay": "tsx scripts/audit-replay.ts",
+    "audit:status": "tsx scripts/audit-status.ts",
     "audit:design": "tsx scripts/audit-design.ts",
     "evaluate:day": "tsx scripts/evaluate-windows.ts",
     "audit:a11y": "node scripts/audit-a11y.mjs",

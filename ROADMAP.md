@@ -57,11 +57,12 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`####······` 40% · 2 of 5 done
+`####······` 33% · 2 of 6 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
+- [ ] `0025` Trips that go backwards: the feed republishes a trip at an earlier stop after a gap <sup>bug · p2</sup>
 
 ### in progress
 
