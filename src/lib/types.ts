@@ -115,7 +115,34 @@ export interface FeedStatus {
 // ---------------------------------------------------------------------------
 // Tracked state (what the server streams; what the client animates)
 
+/** Where the motion model puts a train: at a stop, between two, or parked before its trip. */
 export type TrainPhase = "moving" | "dwelling" | "unstarted";
+
+/**
+ * What a train is doing, in the words a rider would use. Decided in one place, the tracker, from
+ * what the feed shows; everything that draws or describes a train reads it from here.
+ *
+ *   scheduled    a trip in the feed with no train yet: no vehicle, or not assigned one
+ *   preparing    a train making ready for a trip it has not started — the feed reports it heading
+ *                to its first stop before the time the trip leaves. Positioning out of a yard, or
+ *                standing at the terminal. Not carrying anyone between stations yet.
+ *   at-platform  in service, at a station
+ *   running      in service, between stations, within what that stretch usually takes
+ *   held         in service and not where it should be by now: between stations for longer than
+ *                the stretch usually takes, or at a platform past its departure — by more than
+ *                HELD_S, which is long enough to be a hold rather than a slow signal
+ *   lost         the feed still lists it, but has stopped making sense of it: at a platform beyond
+ *                any real layover, or long overdue at a stop it never reached
+ *
+ * Before this there were five overlapping signals — the phase, `assigned`, a `stale` flag, the
+ * motion model's `holding`, and a stall clock each browser started from zero on page load — and
+ * nothing named their combinations. A third of the "moving" trains were in fact `preparing`,
+ * drawn mid-track short of their terminal and then ringed as stopped.
+ */
+export type TrainStatus = "scheduled" | "preparing" | "at-platform" | "running" | "held" | "lost";
+
+/** How far past due a train has to be before it is `held` rather than slow. */
+export const HELD_S = 120;
 
 export interface StopPrediction {
   id: string;
@@ -154,8 +181,12 @@ export interface TrainState {
   leaderId?: string;
   /** True when this train's arrival is limited by the one in front rather than by the track. */
   heldBehind?: boolean;
-  /** The feed still publishes it, but nothing about it has changed for far too long. */
-  stale?: boolean;
+  /** What it is doing; see TrainStatus. */
+  status: TrainStatus;
+  /** For `held`: how far past due, seconds — past the usual run time, or past its departure. */
+  heldFor?: number;
+  /** For `preparing`: when its trip is scheduled to leave its first stop. */
+  startsAt?: number;
   /**
    * The one observation the feed ever gives us from between two stations: the moment a train
    * entered its final approach, and how long that approach usually takes at this platform.
@@ -234,15 +265,6 @@ export interface TrainPosition {
    * be the one it was riding, which only the thing holding the train's history can know.
    */
   band: [number, number];
-  /**
-   * How long this train has been between stations without moving, in seconds.
-   *
-   * The engine holds a marker rather than creeping it forward when the feed's own arrival time
-   * says the train cannot be making progress — which is the right thing to draw, but for twenty
-   * minutes at a stretch it was still being described as "moving". Replaying an hour, 751 trains
-   * sat motionless mid-segment for a minute or more and 533 of them for over five.
-   */
-  stalledFor: number;
   /** Track geometry covering ±1σ of arrival time around the marker. */
   ribbon?: LonLat[];
   state: TrainState;

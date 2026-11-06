@@ -44,7 +44,7 @@ test("the model gives the same answer in TypeScript as it does in Python", () =>
 /** A train running between two stations the 1 actually serves. */
 const runStops = net.shapeStops[Object.keys(net.shapeStops).find((k) => k.startsWith("1.."))!];
 const moving = (over: Partial<TrainState> = {}): TrainState => ({
-  id: "T", route: "1", direction: "S", assigned: true, phase: "moving",
+  id: "T", route: "1", direction: "S", assigned: true, phase: "moving", status: "running",
   prevStop: runStops[3], nextStop: runStops[4],
   eta: NOW + 90, etaRaw: NOW + 90, sigma: 20, departedAt: NOW, runTime: 90,
   updatedAt: NOW, stops: [] as StopPrediction[], ...over,
@@ -261,11 +261,14 @@ test("a board lists the whole complex, soonest first", () => {
   assert.equal(all[0].id, "b", "the next train comes first");
 });
 
-test("a board never offers a train that has not started or has gone stale", () => {
+test("a board never offers a trip with no train yet, or a lost one", () => {
   const station = runStops[6].replace(/[NS]$/, "");
-  const dead = moving({ id: "ghost", stale: true, stops: stopsFrom(runStops.slice(6, 10), NOW + 120) } as Partial<TrainState>);
-  const notStarted = moving({ id: "unstarted", phase: "unstarted", stops: stopsFrom(runStops.slice(6, 10), NOW + 120) } as Partial<TrainState>);
+  const dead = moving({ id: "ghost", status: "lost", stops: stopsFrom(runStops.slice(6, 10), NOW + 120) });
+  const notStarted = moving({ id: "unstarted", phase: "unstarted", status: "scheduled", stops: stopsFrom(runStops.slice(6, 10), NOW + 120) });
   assert.equal(arrivalsAt(idx, [dead, notStarted], station).flatMap((g) => g.arrivals).length, 0);
+  // A train making ready for its trip is a train you can catch.
+  const preparing = moving({ id: "preparing", phase: "unstarted", status: "preparing", stops: stopsFrom(runStops.slice(6, 10), NOW + 120) });
+  assert.equal(arrivalsAt(idx, [preparing], station).flatMap((g) => g.arrivals).length, 1);
 });
 
 test("asking for a destination drops trains that never reach it, and times the ride", () => {

@@ -20,7 +20,7 @@ const line = net.shapeStops[Object.keys(net.shapeStops).find((k) => k.startsWith
 const [A, B, C] = [line[2], line[5], line[9]];
 
 const train = (id: string, route: string, stops: [string, number][]): TrainState => ({
-  id, route, direction: "S", assigned: true, phase: "moving",
+  id, route, direction: "S", assigned: true, phase: "moving", status: "running",
   prevStop: A, nextStop: stops[0][0], eta: stops[0][1], etaRaw: stops[0][1], sigma: 20,
   updatedAt: NOW,
   stops: stops.map(([sid, eta]): StopPrediction => ({ id: sid, eta, etaRaw: eta, sigma: 20 })),
@@ -61,8 +61,8 @@ test("it does not send you to another train on the line you are already on", () 
   assert.equal(betterConnection(idx, [mine, sameRoute], mine, C, NOW), undefined);
 });
 
-test("a stale or unstarted train is never offered as a connection", () => {
+test("a lost train is never offered as a connection", () => {
   const mine = train("local", "1", [[B, NOW + 300], [C, NOW + 900]]);
-  const ghost = { ...train("ghost", "2", [[B, NOW + 400], [C, NOW + 600]]), stale: true } as TrainState;
+  const ghost = { ...train("ghost", "2", [[B, NOW + 400], [C, NOW + 600]]), status: "lost" } as TrainState;
   assert.equal(betterConnection(idx, [mine, ghost], mine, C, NOW), undefined);
 });

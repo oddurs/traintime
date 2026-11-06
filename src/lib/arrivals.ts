@@ -53,9 +53,9 @@ export function arrivalsAt(
   const to = destination ? new Set(index.complexStations(destination)) : undefined;
   const found: Arrival[] = [];
   for (const st of states) {
-    // Neither a train that has not started nor one the feed has stopped updating belongs on a
-    // board: both would be presented as something a rider could catch.
-    if (st.phase === "unstarted" || st.stale) continue;
+    // A trip with no train yet, or a train the feed has lost track of, would be presented as
+    // something a rider could catch. One preparing for its trip is a train you can catch.
+    if (st.status === "scheduled" || st.status === "lost") continue;
     // Fall back to where it is heading next if the run's end is not a nameable station.
     const dest = st.destination ?? st.nextStop;
     if (st.phase === "dwelling" && target.has(parentOf(st.nextStop))) {

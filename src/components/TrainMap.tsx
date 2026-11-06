@@ -13,7 +13,6 @@ import { Kinematics } from "@/lib/kinematics";
 import { addRouteIcons, buildTrainAtlas, bulletId, chevronId } from "@/lib/icons";
 import { STRIDE, TrainLayer, mercatorPerMetre, mercatorX, mercatorY, writeMark } from "@/lib/trainLayer";
 import { BOX } from "@/lib/roundel";
-import { STALLED_S } from "@/lib/format";
 import { paint } from "@/lib/mapTheme";
 import { readHash } from "@/lib/urlState";
 import { frameTook, installFramePerf, perfOn, sourceUploaded } from "@/lib/framePerf";
@@ -381,7 +380,7 @@ export default function TrainMap(props: Props) {
         // A selected train is drawn wherever it is: the panel is showing it, and its ribbon and
         // highlight have to exist for the camera to be able to fly to it.
         if (!selected && (p.lon < west || p.lon > east || p.lat < south || p.lat > north)) continue;
-        const moving = p.phase === "moving" && p.speed > 0.6 && p.stalledFor < STALLED_S;
+        const moving = p.phase === "moving" && p.speed > 0.6;
         const stackKey = p.phase === "moving" ? "" : `${p.route}|${p.state.nextStop}|${p.phase}`;
         const stacked = stackKey ? (stackAt.get(stackKey) ?? 1) : 1;
         if (stackKey && stacked > 1 && !selected) {
@@ -411,11 +410,12 @@ export default function TrainMap(props: Props) {
           // here, so a rebuild that arrives late still draws it in the right place.
           const v = moving ? p.speed * mpu : 0;
           const vx = Math.sin(rad) * v, vy = -Math.cos(rad) * v;
-          const ghost = p.phase === "unstarted" || !p.state.assigned || !!p.state.stale;
+          // Not in service yet, or no longer to be trusted: drawn, but not vouched for.
+          const status = p.state.status;
+          const ghost = status === "scheduled" || status === "preparing" || status === "lost" || !p.state.assigned;
           const revised = Math.max(0, t - (p.state.updatedAt ?? t));
 
-          const bullet = atlas.rect(bulletId(p.route, p.phase === "unstarted" ? "parked"
-            : p.motion === "holding" || p.stalledFor >= STALLED_S ? "hold" : "plain"));
+          const bullet = atlas.rect(bulletId(p.route, p.phase === "unstarted" ? "parked" : status === "held" ? "hold" : "plain"));
           if (bullet) {
             // Full strength while the feed is still revising it; fading as the record goes quiet,
             // down to a train we are still drawing but no longer vouching for.

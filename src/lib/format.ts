@@ -1,4 +1,4 @@
-import type { Direction, TrainPosition, TrainState } from "./types";
+import type { Direction, TrainState } from "./types";
 import type { NetworkIndex } from "./network";
 import { parentOf } from "./network";
 
@@ -73,28 +73,33 @@ export function etaProvenance(eta: number, etaRaw: number, sigma: number): strin
   return `${spread} · MTA is usually ${Math.abs(drift)} s ${drift > 0 ? "late" : "early"} here`;
 }
 
-/** Why a train is not moving, when it isn't at a platform. */
-/** Long enough that "stopped" is the honest word, rather than a pause between signals. */
-export const STALLED_S = 120;
-
 /** Minutes, for a duration a rider reads at a glance. */
 const mins = (s: number) => `${Math.max(1, Math.round(s / 60))} min`;
 
-export function holdReason(index: NetworkIndex, t: TrainPosition, byId: Map<string, TrainState>): string | null {
-  // A train that has not moved for minutes is stopped, whatever the reason, and saying so comes
-  // before naming a cause we may not know.
-  if (t.stalledFor >= STALLED_S) {
-    const leader = t.state.leaderId ? byId.get(t.state.leaderId) : undefined;
-    const behind = leader ? ` behind the ${leader.route}` : "";
-    return `Stopped for ${mins(t.stalledFor)}${behind}, between ${index.stationName(t.state.prevStop ?? t.state.nextStop)} and ${index.stationName(t.state.nextStop)}`;
+/**
+ * What a train is doing, in a sentence — for every status but the two that need no explaining,
+ * running and at a platform. See TrainStatus for where each one comes from.
+ */
+export function statusLine(index: NetworkIndex, st: TrainState, byId: Map<string, TrainState>, now: number): string | null {
+  const name = (id: string) => index.stationName(id);
+  switch (st.status) {
+    case "held": {
+      const leader = st.leaderId ? byId.get(st.leaderId) : undefined;
+      const behind = leader ? `, behind the ${leader.route}` : "";
+      const late = mins(st.heldFor ?? 0);
+      return st.phase === "dwelling"
+        ? `Held at ${name(st.nextStop)} — ${late} past its departure${behind}`
+        : `Held between ${name(st.prevStop ?? st.nextStop)} and ${name(st.nextStop)} — ${late} longer than this usually takes${behind}`;
+    }
+    case "preparing":
+      return `Preparing for its trip — leaves ${name(st.nextStop)} at ${fmtClock(st.startsAt ?? st.eta)}`;
+    case "scheduled":
+      return st.assigned ? "Scheduled — no train reported for this trip yet" : "Scheduled — no train assigned to this trip yet";
+    case "lost":
+      return `Lost — the feed still lists it, but nothing about it has changed in ${mins(now - (st.updatedAt ?? now))}`;
+    default:
+      return null;
   }
-  if (t.motion !== "holding") return null;
-  const leader = t.state.leaderId ? byId.get(t.state.leaderId) : undefined;
-  if (leader) {
-    const where = leader.phase === "dwelling" ? `at ${index.stationName(leader.nextStop)}` : "ahead on this track";
-    return `Holding behind the ${leader.route} ${where}`;
-  }
-  return "Holding — the arrival estimate moved later";
 }
 
 /** Split MTA alert text on its [A][C] route bullets so the UI can render real bullets. */

@@ -6,14 +6,17 @@ interface Props {
   onDismiss: () => void;
 }
 
-/** The map's visual language, read once and dismissed for good. */
+/**
+ * The map's visual language, read once and dismissed for good. One row for each thing a train can
+ * be — the statuses in TrainStatus — plus the glow, which is about where it is rather than what.
+ */
 const ROWS: { swatch: string; text: string }[] = [
-  { swatch: "dot", text: "at a station — confirmed by the feed" },
-  { swatch: "chev", text: "moving — points the way it is going" },
+  { swatch: "dot", text: "at a platform — confirmed by the feed" },
+  { swatch: "chev", text: "running — points the way it is going" },
   { swatch: "glow", text: "glow — where it might be, ±1σ" },
-  { swatch: "hold", text: "amber ring — stopped: a signal, the train in front, or not moving at all" },
-  { swatch: "ghost", text: "faded — assigned but not yet in service" },
-  { swatch: "stalefade", text: "dimmed — the feed has stopped revising it" },
+  { swatch: "hold", text: "amber ring — held: 2 min or more past due, between stations or at a platform" },
+  { swatch: "ghost", text: "hollow — not in service yet: preparing for its trip at the terminal, or scheduled with no train" },
+  { swatch: "stalefade", text: "faded — lost: the feed still lists it, but has stopped making sense of it" },
 ];
 
 export default function Legend({ onDismiss }: Props) {
