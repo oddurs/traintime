@@ -21,6 +21,11 @@ interface Props {
   /** Metres from the viewer, when their location is known. */
   distance?: number;
   stale?: number;
+  /**
+   * The first trains have not arrived. An empty board then means "not yet", and saying "no trains
+   * approaching" — which a station opened from a saved place or a link says at once — is false.
+   */
+  waiting?: boolean;
   saved?: boolean;
   onToggleSave?: () => void;
   destination?: string;
@@ -47,7 +52,7 @@ function spoken(index: NetworkIndex, route: string, dest: string, secs: number, 
  * The arrivals board for one station, computed from the same train states the map draws —
  * so what it says and what you see can never disagree.
  */
-export default function StationBoard({ index, station, trains, now, alerts, distance, stale, saved, onToggleSave, destination, onDestination, onSelect, onClose }: Props) {
+export default function StationBoard({ index, station, trains, now, alerts, distance, stale, waiting, saved, onToggleSave, destination, onDestination, onSelect, onClose }: Props) {
   const groups = useMemo(() => arrivalsAt(index, trains, station, 6, destination), [index, trains, station, destination]);
   // With a location we can say which trains are actually catchable on foot, which is the
   // difference between a timetable and advice.
@@ -77,12 +82,12 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
   const spokenMinute = Math.round(now / 60);
   const spokenNext = useMemo(() => {
     const next = groups.flatMap((g) => g.arrivals).sort((a, b) => a.eta - b.eta)[0];
-    if (!next) return `No trains approaching ${name}.`;
+    if (!next) return waiting ? `Waiting for live trains at ${name}.` : `No trains approaching ${name}.`;
     const mins = Math.max(0, Math.round((next.eta - now) / 60));
     const dest = index.stationName(next.destination);
     const when = next.atPlatform ? "is at the platform" : mins <= 0 ? "is arriving now" : `in ${mins} minute${mins === 1 ? "" : "s"}`;
     return `Next at ${name}: ${next.route} to ${dest} ${when}.`;
-  }, [groups, name, index, spokenMinute]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [groups, name, index, spokenMinute, waiting]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="board" aria-label={`Arrivals at ${name}`}>
@@ -119,7 +124,8 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         */}
       {stationAlerts.length > 0 && <AlertList index={index} alerts={stationAlerts} limit={2} collapsed />}
 
-      {groups.length === 0 && (
+      {groups.length === 0 && waiting && <p className="muted" role="status">waiting for live trains…</p>}
+      {groups.length === 0 && !waiting && (
         <p className="muted">
           {destination ? `No trains from here to ${index.stationName(destination)} right now.` : "No trains approaching right now."}
         </p>

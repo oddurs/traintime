@@ -4,6 +4,7 @@ import ServiceWorker from "@/components/ServiceWorker";
 import { BASE_PATH } from "@/lib/basePath";
 import "./globals.css";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
+import { FIRST_PAINT_SCRIPT } from "@/lib/firstPaint";
 
 const title = `${BRAND_NAME} — ${BRAND_TAGLINE}`;
 const description = "Every New York City subway train, moving on a map, simulated from the MTA's realtime feeds and measured against what the trains actually did.";
@@ -34,8 +35,11 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // The class on <html> is set by FIRST_PAINT_SCRIPT before React runs, so it is expected to
+    // differ from the server's markup.
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: FIRST_PAINT_SCRIPT }} />
         {/*
           * The board's half of the network, asked for before the JavaScript that asks for it.
           *

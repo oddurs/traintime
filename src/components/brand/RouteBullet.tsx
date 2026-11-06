@@ -3,6 +3,7 @@
 import type { NetworkIndex } from "@/lib/network";
 import { paint } from "@/lib/mapTheme";
 import { isExpress, serviceLabel } from "@/lib/service";
+import { serviceColours } from "@/lib/trunks";
 import { BOX, CASING, FONT_STACK, FONT_WEIGHT, baseline, bulletBox, bulletOrigin, bulletPath, characterSize } from "@/lib/roundel";
 
 /**
@@ -18,7 +19,11 @@ import { BOX, CASING, FONT_STACK, FONT_WEIGHT, baseline, bulletBox, bulletOrigin
 export type BulletSize = "sm" | "md" | "lg" | "xl";
 
 interface Props {
-  index: NetworkIndex;
+  /**
+   * Null before the network has arrived. A bullet's colours are the trunk's, which are known
+   * without it, so the panel can draw every service in the first paint rather than grey discs.
+   */
+  index: NetworkIndex | null;
   route: string;
   size?: BulletSize;
   title?: string;
@@ -29,7 +34,7 @@ interface Props {
 }
 
 export default function RouteBullet({ index, route, size = "md", title, dim, onClick, children }: Props) {
-  const r = index.net.routes[route];
+  const r = index?.net.routes[route] ?? { ...serviceColours(route), name: undefined };
   const label = serviceLabel(route);
   const express = isExpress(route);
   // An express diamond is drawn wider than the circle beside it so its character can be the same

@@ -5,7 +5,6 @@ import { useRef, useState } from "react";
 export type SheetStop = "peek" | "half" | "full";
 
 interface Props {
-  mobile: boolean;
   /** Bumping this pulls a collapsed sheet up to `half` (e.g. a station was selected). */
   raiseOn?: string;
   header: React.ReactNode;
@@ -25,10 +24,16 @@ const ORDER: SheetStop[] = ["peek", "half", "full"];
  * On phones the panel is a bottom sheet you can drag between three stops; on wider screens it is
  * an ordinary side panel. One set of children either way.
  *
+ * Which of the two it is, the stylesheet decides: the markup is the sheet's in both cases, and
+ * everything that makes it a sheet — the grabber, the stops, the rounded top — is inside the
+ * phone media query. It used to be decided here, from a media query read in an effect, which is
+ * after the first paint: the page's server-rendered HTML always held the desktop panel, and a phone
+ * drew that, full width and pinned to the top, before snapping it into a sheet.
+ *
  * The heights themselves live in the stylesheet as `--sheet-half` and `--sheet-full`, reached
  * through the stop's class — they are a decision about the interface, not about this component.
  */
-export default function Sheet({ mobile, raiseOn, header, footer, children }: Props) {
+export default function Sheet({ raiseOn, header, footer, children }: Props) {
   const [stop, setStop] = useState<SheetStop>("peek");
   const [drag, setDrag] = useState<{ y0: number; dy: number } | null>(null);
   /**
@@ -41,10 +46,8 @@ export default function Sheet({ mobile, raiseOn, header, footer, children }: Pro
   const [lastRaise, setLastRaise] = useState<string | undefined>(undefined);
   const ref = useRef<HTMLElement>(null);
 
-  // A new selection pulls a collapsed sheet up so the answer is visible without a drag. This is
-  // not gated on `mobile`: the media query resolves in an effect, so on the first render it is
-  // still false and the transition would be consumed before it could be acted on. The stop is
-  // only read in the mobile branch below, so setting it early is harmless.
+  // A new selection pulls a collapsed sheet up so the answer is visible without a drag. On a wide
+  // screen the stop is carried but never styled, so raising it there is harmless.
   if (raiseOn !== lastRaise) {
     setLastRaise(raiseOn);
     if (raiseOn) setStop((s) => (s === "peek" ? "half" : s));
@@ -58,16 +61,6 @@ export default function Sheet({ mobile, raiseOn, header, footer, children }: Pro
   const scroll = (
     <div className="panel-scroll" onScroll={onScroll}>{children}</div>
   );
-
-  if (!mobile) {
-    return (
-      <aside className={`panel${scrolled ? " is-scrolled" : ""}`} ref={ref}>
-        {header}
-        {scroll}
-        {footer}
-      </aside>
-    );
-  }
 
   const onDown = (e: React.PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);

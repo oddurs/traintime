@@ -7,7 +7,12 @@ import { Button, Field, Row } from "./ui";
 import { BulletGroup } from "./brand";
 
 interface Props {
-  index: NetworkIndex;
+  /**
+   * Null while the stations are still arriving. The field is live from the first paint anyway:
+   * someone who knows where they are going starts typing, and what they typed is searched the
+   * moment the names land, in the same field, without losing focus.
+   */
+  index: NetworkIndex | null;
   onPick: (stationId: string) => void;
   onNearby: () => void;
   nearby: boolean;
@@ -24,7 +29,7 @@ export default function SearchBox({ index, onPick, onNearby, nearby, locating }:
   const inputRef = useRef<HTMLInputElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  const results: Result[] = useMemo(() => (q ? searchStations(index, q) : []), [index, q]);
+  const results: Result[] = useMemo(() => (q && index ? searchStations(index, q) : []), [index, q]);
   const active = Math.min(cursor, Math.max(0, results.length - 1));
 
   useEffect(() => {
@@ -85,7 +90,10 @@ export default function SearchBox({ index, onPick, onNearby, nearby, locating }:
         </Button>
       }
     >
-      {open && results.length > 0 && (
+      {open && q && !index && (
+        <div className="popover" role="status"><div className="popover-empty">loading stations…</div></div>
+      )}
+      {open && index && results.length > 0 && (
         <ul className="popover" role="listbox">
           {results.map((r, i) => (
             <Row

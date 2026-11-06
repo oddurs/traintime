@@ -15,6 +15,7 @@ import { STRIDE, TrainLayer, mercatorPerMetre, mercatorX, mercatorY, writeMark }
 import { BOX } from "@/lib/roundel";
 import { paint } from "@/lib/mapTheme";
 import { readHash } from "@/lib/urlState";
+import { HOME } from "@/lib/home";
 import { frameTook, installFramePerf, perfOn, sourceUploaded } from "@/lib/framePerf";
 
 const STYLE = "https://tiles.openfreemap.org/styles/dark";
@@ -51,7 +52,17 @@ function fanOffsetPx(cb: number, mb: number, tangentRad: number, zoom: number, b
   return [Math.sin(a) * d, -Math.cos(a) * d];
 }
 
-const NYC: [number, number] = [-73.955, 40.735];
+const NYC: [number, number] = [HOME.lon, HOME.lat];
+
+/**
+ * How long the map, once its own lines are up, waits for the basemap before showing anyway.
+ *
+ * It is held back so that it arrives whole: on slow 4G the subway used to appear on black and the
+ * streets pop in under it a couple of seconds later, a second arrival for the same map. But the
+ * trains are on the map and not on the poster it replaces, and they are what anybody is waiting
+ * for, so the basemap only gets so long.
+ */
+const BASEMAP_WAIT_MS = 2500;
 
 /*
  * How often the map's GeoJSON sources are rebuilt, from how fast a train moves on screen.
@@ -111,6 +122,8 @@ interface Props {
   minimal?: boolean;
   /** Called once, when the style has loaded and there is a map to look at. */
   onReady?: () => void;
+  /** Called once, when the map has faded in: its lines are drawn and the basemap is under them. */
+  onShown?: () => void;
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -195,7 +208,7 @@ function applyVisibilityFactory(applied: { scale: number | null; served: string 
 
 export default function TrainMap(props: Props) {
   const { index, statesRef, positionsRef, clock, speed, visibleRoutes, showRibbons, selection, onSelect,
-    follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal, onReady } = props;
+    follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal, onReady, onShown } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -227,6 +240,11 @@ export default function TrainMap(props: Props) {
   // Set once the map's own layers exist, so the effects that configure them know to run. Layers
   // are added from a map callback, which can happen after those effects have already fired.
   const [layersReady, setLayersReady] = useState(false);
+  const [shown, setShown] = useState(false);
+  // Read through a ref: the page passes a fresh closure on every render, and it renders twice a
+  // second, which restarted the reveal's deadline before it could ever run out.
+  const onShownRef = useRef(onShown);
+  useEffect(() => { onShownRef.current = onShown; }, [onShown]);
 
   // Live props the animation loop reads without re-subscribing.
   const live = useRef({ visibleRoutes, showRibbons, selection, follow, highlight, clock, speed, index, onSelect, onFollowEnd, onReady });
@@ -243,7 +261,7 @@ export default function TrainMap(props: Props) {
       container: containerRef.current,
       style: STYLE,
       center: start ? [start.lon, start.lat] : NYC,
-      zoom: start?.zoom ?? 11.4,
+      zoom: start?.zoom ?? HOME.zoom,
       minZoom: 9.5,
       maxZoom: 17,
       attributionControl: { compact: true },
@@ -254,7 +272,7 @@ export default function TrainMap(props: Props) {
     }
     if (!minimal) map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
 
-    map.once("style.load", () => { readyRef.current = true; markTiming("map"); live.current.onReady?.(); });
+    map.once("style.load", () => { readyRef.current = true; live.current.onReady?.(); });
     map.on("dragstart", () => { if (live.current.follow) live.current.onFollowEnd(); });
     map.on("moveend", () => {
       if (!onView) return;
@@ -766,6 +784,23 @@ export default function TrainMap(props: Props) {
     else map.once("style.load", add);
   }, [index]);
 
+  // --- the reveal: fade in once there is a whole map to show
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersReady || shown) return;
+    const t0 = performance.now();
+    const id = setInterval(() => {
+      if (!map.areTilesLoaded() && performance.now() - t0 < BASEMAP_WAIT_MS) return;
+      clearInterval(id);
+      setShown(true);
+      // The map milestone is this moment, not the style loading: that was a map nobody could see
+      // yet, behind the poster, with the basemap still on its way.
+      markTiming("map");
+      onShownRef.current?.();
+    }, 100);
+    return () => clearInterval(id);
+  }, [layersReady, shown]);
+
   // --- route visibility, and the fan width that goes with it
   useEffect(() => {
     const map = mapRef.current;
@@ -827,5 +862,6 @@ export default function TrainMap(props: Props) {
     });
   }, [fitRoute, index, minimal, reducedMotion]);
 
-  return <div ref={containerRef} className="map" />;
+  // The class is MapLibre's to manage once the map exists, so the reveal rides on an attribute.
+  return <div ref={containerRef} className="map" data-shown={shown} />;
 }
