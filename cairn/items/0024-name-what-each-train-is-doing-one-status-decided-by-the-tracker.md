@@ -37,3 +37,7 @@ preparing train is parked at its first stop.
 - [x] `held` is computed by the server from the departure time, so it is right from page load
 - [x] The map, legend, station board and train detail all read the status; the browser's stall clock is gone
 - [ ] The poller is deployed before the site, which reads `status`
+
+## 2026-11-05
+
+Accuracy, replaying 9.5 h of recorded ticks (scripts/audit-status.ts): preparing 92.9% left within ±2 min of start (median 0.0 min); held between stations 90.2% precision / 93.4% recall; held at a platform 97.6% on numbered lines, 62.5% on lettered (n=24); lost 7.0% came back (was 45.5%); 23 flaps in 9.5 h (was 227). Rejected: keeping heartbeat trains at the platform while beating past the modelled departure — evaluate.ts went from 189 m to 476 m median short of platform; reverted, noted in tracker.ts.

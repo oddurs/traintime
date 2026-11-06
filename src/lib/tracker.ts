@@ -65,6 +65,8 @@ interface Memory {
   sig: string;
   changedAt: number;
   dirty: boolean;
+  /** The segment this train was last called held on; it stays held there until it arrives. */
+  heldOn?: string;
 }
 
 const EXPIRE_AFTER = 120;
@@ -392,7 +394,7 @@ export class Tracker {
     const out = this.dedupeByTrain(seen);
     const byId = this.assignLeaders(out);
     this.applyLeaderConstraint(out, byId, hour, cond);
-    for (const st of out) this.classify(st, now);
+    for (const st of out) this.classify(st, this.mem.get(st.id)!, now);
     return out;
   }
 
@@ -400,14 +402,18 @@ export class Tracker {
    * The status of a train in service — see TrainStatus. `scheduled` and `preparing` are settled
    * where the trip is first read, because they decide where it is drawn; these are what is left.
    */
-  private classify(st: TrainState, now: number): void {
+  private classify(st: TrainState, m: Memory, now: number): void {
     // The feed keeps publishing some trains long after they stop doing anything — one had been
     // "at a platform" for over three hours. It is still data, but it is not a running train, and
     // presenting it as one is worse than admitting we have lost track of it.
     const parked = st.phase === "dwelling" && st.arrivedAt !== undefined && now - st.arrivedAt > MAX_DWELL_S;
     // Our own eta is floored at the present — it never reads as past — so overdue-ness has to be
     // judged against the feed's raw prediction, which is not clamped.
-    const overdue = st.phase === "moving" && st.etaRaw < now - MAX_OVERDUE_S;
+    //
+    // Overdue is not enough on its own: a train held at a signal for a quarter of an hour is overdue
+    // too, and the feed goes on revising it. Lost is overdue *and* unrevised. Replayed over 9.5 h,
+    // the overdue rule alone called 101 trains lost and 46 of them were reported moving again.
+    const overdue = st.phase === "moving" && st.etaRaw < now - MAX_OVERDUE_S && now - m.changedAt > MAX_OVERDUE_S;
     if (parked || overdue) { st.status = "lost"; return; }
     if (st.status === "scheduled" || st.status === "preparing") return;
 
@@ -415,7 +421,13 @@ export class Tracker {
       // A layover at the end of the line is the schedule, not a hold.
       const terminal = st.destination !== undefined && parentOf(st.destination) === parentOf(st.nextStop);
       const late = st.expectedDeparture !== undefined ? now - st.expectedDeparture : 0;
-      if (!terminal && late > HELD_S) { st.status = "held"; st.heldFor = late; return; }
+      // On the feeds that report a stand as a heartbeat, STOPPED_AT outlives the train's departure:
+      // the timestamp freezes when it pulls out, and only that says it has gone. Past its departure
+      // there, a train is held only while the heartbeat is still beating. Without this, 95% of the
+      // platform holds called on the lettered lines were trains that had already left.
+      const heartbeat = m.beats > 0 || this.isHeartbeatFeed(m.feed);
+      const standing = !heartbeat || (m.vehicleTs !== undefined && now - m.vehicleTs <= HEARTBEAT_SILENCE_S);
+      if (!terminal && standing && late > HELD_S) { st.status = "held"; st.heldFor = late; return; }
       st.status = "at-platform";
       return;
     }
@@ -423,7 +435,15 @@ export class Tracker {
     // it has been out: a train first seen mid-segment has a guessed origin and no clock to judge.
     if (st.departedAt !== undefined && st.runTime !== undefined && !st.prevInferred) {
       const late = now - st.departedAt - st.runTime;
-      if (late > HELD_S) { st.status = "held"; st.heldFor = late; return; }
+      // Held until it arrives, once called: the departure estimate firms up and the run time is
+      // re-read as a train goes, and a ring that comes and goes with them is worse than none.
+      const segment = `${st.prevStop}>${st.nextStop}`;
+      if (late > HELD_S || m.heldOn === segment) {
+        m.heldOn = segment;
+        st.status = "held";
+        st.heldFor = Math.max(0, late);
+        return;
+      }
     }
     st.status = "running";
   }
@@ -470,6 +490,11 @@ export class Tracker {
       // recorded as the departure event (see ingest), where being 45 s late to know costs nothing
       // and the accuracy is worth everything: it is what finally gives the lettered lines
       // observed dwells and run times to learn the modelled dwell from.
+      //
+      // Tried and measured again in November 2026: letting a beat that is later than the modelled
+      // departure keep a train at the platform — to catch holds there — took the median from 189 m
+      // short to 476 m, and left 7,564 markers on an earlier segment at real arrival against 507.
+      // Beats past the modelled departure are routine, not evidence of a hold.
       if (this.beating(m) && m.vehicleTs !== undefined && now - m.vehicleTs > HEARTBEAT_SILENCE_S) {
         departAt = Math.min(departAt, Math.max(arrivedAt + MIN_DWELL_S, m.vehicleTs - this.departureLag(m)));
       }
@@ -501,11 +526,14 @@ export class Tracker {
     const next = u.stops[nextIdx];
     if (!this.net.station(next.id)) return undefined;
 
-    const unstarted = !v && (!u.assigned || next.arrival - now > 60);
+    // A trip with no train in it whose start has not come is scheduled however close its first stop
+    // is: it was drawn as running for its last minute, then preparing once a vehicle appeared.
+    const start = tripStart(u.id, now, localSecs);
+    const unstarted = !v && (!u.assigned || next.arrival - now > 60 || (start !== undefined && start > now && start - now < PREPARING_WITHIN_S));
     // A vehicle heading for the first stop of a trip that has not begun: making ready, not running.
     // It is parked at that stop rather than drawn on the track short of it, where it sat still and
     // was ringed as stopped — a third of every train shown as moving.
-    const startsAt = v && !m.prevStop && m.departedAt === undefined ? tripStart(u.id, now, localSecs) : undefined;
+    const startsAt = v && !m.prevStop && m.departedAt === undefined ? start : undefined;
     // Bounded, because a train is not made ready hours ahead: the furthest seen is under an hour. A
     // trip id that reads as starting much later belongs to a train first seen mid-route, after a
     // restart, which has simply not been seen to leave anywhere yet.
