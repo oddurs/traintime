@@ -3,9 +3,10 @@ id: 21
 uid: 9ee26a5a-546b-48c8-ac5b-ccba75333c2e
 title: Poller is OOM-killed by the nightly learn pass
 type: bug
-status: doing
+status: done
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
+closed_at: 2026-11-06
 priority: p0
 effort: s
 area: poller
@@ -47,10 +48,14 @@ visible but never turns into a permanent outage.
 - [x] `.railway/railway.ts` matches the live project: the volume is in `us-east4-eqdc4a`, `railway config plan` shows no destructive change
 - [x] The restart policy is `ALWAYS`
 - [x] The poller is redeployed and `/health` reports 8/8 feeds
-- [ ] One nightly learn pass completes on the new deploy without an `oom_killed` event
+- [x] One nightly learn pass completes on the new deploy without an `oom_killed` event
 - [x] The learner over the full history peaks under 5 GB and finishes in under ten minutes
 - [x] Two learner runs over the same history write identical tables
 
 ## 2026-11-05
 
 Scope grew at the user's request ('optimize it generally'): the learner now filters and counts in DuckDB and streams rows; hierarchy build shares work across the four gate shapes; windows break ties fully so builds are repeatable. Full history (80 days): 16.8 GB and a heap crash before, 4.0 GB and 280 s after; whole learnOnce 351 s at 4.6 GB, adopted 40.5 s vs 42.2 s MAE locally. Old learner disagreed with itself run-to-run (86% of run hierarchy identical on 4 days); new agrees with old about as well, and with itself 100%.
+
+## 2026-11-06
+
+2026-11-06 03:20 learn on the Pro deploy: ADOPTED 43.8 s vs 44.4 s on 1,478,796 held-out observations, model retrained; no oom_killed in the project event log.

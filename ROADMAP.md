@@ -57,14 +57,14 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`··········` 0% · 0 of 3 done
+`#######···` 67% · 2 of 3 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
-- [ ] `0022` CI red on main since 2026-10-03: audit:layout reports four broken clauses <sup>bug · p1</sup>
 
-### in progress
+### done
 
-- [ ] `0021` Poller is OOM-killed by the nightly learn pass <sup>bug · p0</sup>
+- [x] `0021` Poller is OOM-killed by the nightly learn pass <sup>bug · p0</sup>
+- [x] `0022` CI red on main since 2026-10-03: audit:layout reports four broken clauses <sup>bug · p1</sup>
 
