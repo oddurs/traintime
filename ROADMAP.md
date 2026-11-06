@@ -57,21 +57,18 @@ Give a train no position of its own, so it cannot leave its line.
 
 ## Unscheduled
 
-`######····` 57% · 4 of 7 done
+`#########·` 86% · 6 of 7 done
 
 ### backlog
 
 - [ ] `0018` The UI audit cannot see the trains and reports zero <sup>bug · p1</sup>
 
-### in progress
-
-- [ ] `0023` Front-end: measure and cut load and gesture cost <sup>chore · p2</sup>
-- [ ] `0024` Name what each train is doing: one status, decided by the tracker <sup>feature · p1</sup>
-
 ### done
 
 - [x] `0021` Poller is OOM-killed by the nightly learn pass <sup>bug · p0</sup>
 - [x] `0022` CI red on main since 2026-10-03: audit:layout reports four broken clauses <sup>bug · p1</sup>
+- [x] `0023` Front-end: measure and cut load and gesture cost <sup>chore · p2</sup>
+- [x] `0024` Name what each train is doing: one status, decided by the tracker <sup>feature · p1</sup>
 - [x] `0025` Trips that go backwards: the feed briefly republishes an older position <sup>bug · p2</sup>
 - [x] `0026` Map: cut main-thread cost per frame <sup>chore · p2</sup>
 

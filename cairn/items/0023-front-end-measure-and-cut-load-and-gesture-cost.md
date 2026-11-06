@@ -3,9 +3,10 @@ id: 23
 uid: 6c192c54-1460-465a-b64f-2f4207abb63e
 title: 'Front-end: measure and cut load and gesture cost'
 type: chore
-status: doing
+status: done
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
+closed_at: 2026-11-06
 priority: p2
 area: site
 effort: m
@@ -37,4 +38,8 @@ Fix the audit first, then each of the above, measured against the base build on 
 - [x] A first visit downloads each MapLibre module and `network.json` once
 - [x] The engine and the geometry are requested together; alerts wait for the map
 - [x] The map renders with no console errors, exceptions or failed requests
-- [ ] Deployed, and the slow-4G audit run against the live site
+- [x] Deployed, and the slow-4G audit run against the live site
+
+## 2026-11-06
+
+Live, 2026-11-06, slow-4G, 4x CPU, --no-sw, three runs: readable 4.7/4.9/5.1 s, map canvas 14.7/15.0/15.5 s (median 15.0 s), style loaded 16.5-18.2 s, 499 KB over 24 requests. No console errors. A trailing slash on the URL made the audit measure an error page; fixed in the same PR.
