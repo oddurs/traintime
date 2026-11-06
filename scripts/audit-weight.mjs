@@ -19,7 +19,9 @@ const PROFILES = {
   none: { downloadThroughput: -1, uploadThroughput: -1, latency: 0 },
 };
 const args = process.argv.slice(2);
-const BASE = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--root" && args[i - 1] !== "--profile") ?? "http://localhost:7117";
+// Without its trailing slash: the page is loaded as `${BASE}/?v=…`, and `https://host//` is a route
+// the site does not have, so a URL pasted from the address bar measured an error page.
+const BASE = (args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--root" && args[i - 1] !== "--profile") ?? "http://localhost:7117").replace(/\/+$/, "");
 const profile = (args.includes("--profile") ? args[args.indexOf("--profile") + 1] : "slow-4g");
 const net = PROFILES[profile] ?? PROFILES["slow-4g"];
 
