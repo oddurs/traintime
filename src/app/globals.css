@@ -574,6 +574,12 @@ button.roundel:active { transform: scale(0.98); }
 .res-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--t-body); letter-spacing: var(--tr-body); }
 .popover li button.is-active { background: var(--fill-2); }
 .popover-empty { padding: var(--s3); color: var(--label-3); font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
+/* A group's name inside the results: Saved, Recent. Set like a direction heading on a board. */
+.popover-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+  padding: var(--s2) var(--s3) var(--s1); color: var(--label-3);
+  font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
+}
 
 /* ---- Legend ---- */
 .legend { display: flex; flex-direction: column; gap: var(--s3); }
@@ -641,22 +647,6 @@ button.roundel:active { transform: scale(0.98); }
 .detail-head { display: flex; align-items: center; gap: var(--s3); }
 .detail-title { flex: 1; min-width: 0; }
 .detail-title h2 { margin: 0; font: var(--t-title); letter-spacing: var(--tr-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.detail-title .sub { font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label-3); margin-top: var(--s0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.motion { display: flex; flex-direction: column; gap: var(--s2); }
-.motion-facts { display: flex; gap: var(--s3); justify-content: space-between; color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); font-variant-numeric: tabular-nums; }
-.motion-facts.one { justify-content: flex-start; }
-.detail-actions { display: flex; gap: var(--s2); }
-
-/*
- * Riding, rather than watching. The next stop is what you look up for, so it is set at the title
- * size with the countdown beside it and the changes you could make underneath — the three things
- * an in-car display is for, in the order you need them.
- */
-.next-stop { display: flex; flex-direction: column; gap: var(--s1); }
-.next-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
-.next-row b { font: var(--t-title); letter-spacing: var(--tr-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.next-eta { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); flex: none; font-variant-numeric: tabular-nums; }
-.next-stop .bullets { margin-top: var(--s1); }
 
 /* The one thing a countdown clock cannot tell you, so it is allowed to look like an answer. */
 .swap {

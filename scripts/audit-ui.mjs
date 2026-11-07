@@ -72,8 +72,20 @@ await step("open a train from the board", async()=>{
   const d=await evalJs(`JSON.stringify({detail:!!document.querySelector(".detail"), title:document.querySelector(".detail-title h2")?.innerText, stops:document.querySelectorAll(".detail .list .row").length, prov:document.querySelector(".detail .card .notice")?.innerText})`);
   return (r.value??r.error)+" | "+(d.value??d.error);});
 await step("follow the train", async()=>{
-  const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".detail-actions button")].find(x=>/follow/i.test(x.innerText)); if(!b) return "no follow"; b.click(); return b.innerText;})()`);
-  await sleep(2500); const s=await evalJs(`document.querySelector(".detail-actions button")?.innerText`); return (r.value??r.error)+" -> "+(s.value??s.error);});
+  const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".detail .btn")].find(x=>/follow/i.test(x.innerText)); if(!b) return "no follow"; b.click(); return b.innerText;})()`);
+  await sleep(2500); const s=await evalJs(`[...document.querySelectorAll(".detail .btn")].find(x=>/follow/i.test(x.innerText))?.innerText`); return (r.value??r.error)+" -> "+(s.value??s.error);});
+await step("back gesture closes the train, then the station", async()=>{
+  await evalJs(`history.back()`); await sleep(1500);
+  const one=await evalJs(`JSON.stringify({board:!!document.querySelector(".board"), detail:!!document.querySelector(".detail")})`);
+  await evalJs(`history.back()`); await sleep(1500);
+  const two=await evalJs(`JSON.stringify({board:!!document.querySelector(".board"), detail:!!document.querySelector(".detail")})`);
+  const ok=JSON.parse(one.value).board && !JSON.parse(one.value).detail && !JSON.parse(two.value).board;
+  if(!ok) problems.push({kind:"assert",txt:"back did not step train → station → map: "+one.value+" then "+two.value});
+  return one.value+" then "+two.value;});
+await step("recent stations offered on focus", async()=>{
+  const r=await evalJs(`(()=>{const i=document.querySelector(".field input"); i.focus(); i.dispatchEvent(new FocusEvent("focusin",{bubbles:true})); return new Promise(res=>setTimeout(()=>res([...document.querySelectorAll(".popover li")].map(l=>l.innerText.split("\\n")[0]).join(" / ")),600));})()`);
+  await evalJs(`document.querySelector(".field input").blur()`);
+  return r.value??r.error;});
 await step("back to map", async()=>{const r=await evalJs(`(()=>{const b=document.querySelector(".detail .icon-btn:last-of-type"); if(b) b.click(); return "closed";})()`); await sleep(1500); return r.value??r.error;});
 await step("open the lines group", async()=>{
   const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".row[aria-expanded]")].find(x=>/Lines on the map/.test(x.innerText)); if(!b) return "no lines row"; b.click(); return "opened";})()`);

@@ -4,9 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { Selection, TrainPosition, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
-import { etaProvenance, fmtIn, kmh, provenance, statusLine } from "@/lib/format";
-import { Button, Callout, Card, IconButton, List, Meter, Notice, Row } from "./ui";
-import { BulletGroup, RouteBullet } from "./brand";
+import { etaProvenance, fmtClock, fmtSpread, fmtWhen, kmh, provenance, statusLine } from "@/lib/format";
+import { Button, Callout, Card, Disclosure, IconButton, Inline, List, Meter, Notice, Row, Stack, Text } from "./ui";
+import { BulletGroup, Countdown, RouteBullet } from "./brand";
 import AlertList from "./AlertList";
 import { betterConnection } from "@/lib/connection";
 
@@ -29,12 +29,19 @@ interface Props {
 const SAMPLE_MS = 250;
 /** How many stops ahead are worth listing before it stops being a journey and becomes a table. */
 const STOPS_SHOWN = 10;
-/** Below this, "leaves in n seconds" is noise and the answer is "now". */
-const LEAVING_S = 5;
+/** Close enough that a number would be a lie. */
+const HERE_S = 30;
 
-/** One train: where it is, how we know, and what it will do next. */
+/**
+ * One train, in the order a rider asks about it: where is it going, where is it now, when does it
+ * get to my stop. How we know — the trip id, the track, whether a departure was reported or
+ * modelled, how our estimate differs from the MTA's — is all still here, at the end and closed.
+ * It used to be the first thing on the card: a trip id in monospace under the title and a
+ * sentence about departure modelling above the next stop.
+ */
 export default function TrainDetail({ index, state, positionsRef, byId, now, alerts, following, onFollow, onSelect, onClose, destination }: Props) {
   const [position, setPosition] = useState<TrainPosition | undefined>(undefined);
+  const [howOpen, setHowOpen] = useState(false);
   useEffect(() => {
     const read = () => setPosition(positionsRef.current.get(state.id));
     read();
@@ -49,22 +56,24 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
   const routeAlerts = useMemo(() => (alerts?.byRoute.get(state.route) ?? []).filter((a) => a.category === "delay"), [alerts, state.route]);
   const progress = position && position.length > 0 ? position.s / position.length : 0;
 
-  /*
-   * What you need when you are on the train rather than watching it: the next stop, what you can
-   * change to there, and — the one thing only we can answer, because we hold every train's
-   * predictions at once — whether you should get off and take a different one.
-   */
   const nextName = state.nextStop ? index.stationName(state.nextStop) : null;
-  const nextIn = state.phase === "moving" ? state.eta - now : null;
+  const nextIn = state.eta - now;
   const changes = useMemo(() => {
     if (!state.nextStop) return [];
-    const key = index.complexKey(state.nextStop.replace(/[NS]$/, "")) ?? state.nextStop.replace(/[NS]$/, "");
-    return (index.complexRoutes(key) ?? []).filter((r) => r !== state.route);
+    const key = index.complexKey(state.nextStop.replace(/[NS]$/, ""));
+    return index.complexRoutes(key).filter((r) => r !== state.route);
   }, [index, state.nextStop, state.route]);
   const swap = useMemo(
     () => (destination ? betterConnection(index, byId.values(), state, destination, now) : undefined),
     [index, byId, state, destination, now],
   );
+
+  // Where it is, in one line: what a rider glances at before anything else.
+  const where = hold
+    ?? (state.phase === "dwelling" && nextName
+      ? `At ${nextName}${state.expectedDeparture !== undefined ? ` · leaves ${fmtWhen(state.expectedDeparture - now) === "now" ? "now" : `in ${fmtWhen(state.expectedDeparture - now)}`}` : ""}`
+      : nextName ? `Next: ${nextName} · ${fmtWhen(nextIn) === "now" ? "arriving" : `in ${fmtWhen(nextIn)}`}` : null);
+  const next = state.stops[0];
 
   return (
     <section className="detail" aria-label={dest ? `${state.route} train to ${dest}` : `${state.route} train`}>
@@ -72,31 +81,14 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
         <RouteBullet index={index} route={state.route} size="xl" />
         <div className="detail-title">
           <h2>{dest ? `to ${dest}` : `${state.route} train`}</h2>
-          <div className="sub">
-            {state.trainId ?? state.id}
-            {state.track ? ` · track ${state.track}` : ""}
-            {state.assigned ? "" : " · unassigned"}
-          </div>
+          {where && <Text variant="subhead" tone="secondary" truncate>{where}</Text>}
         </div>
         <IconButton icon="xmark" onClick={onClose} ariaLabel="Close train" />
       </header>
 
-      <Card>
-        <Notice tone={prov.confident ? "ok" : "warn"}>{prov.line}</Notice>
-      </Card>
-
-      {nextName && (
-        <Card>
-          <div className="next-stop">
-            <h3 className="sect-title">Next stop</h3>
-            <div className="next-row">
-              <b>{nextName}</b>
-              {nextIn !== null && <span className="next-eta">{fmtIn(nextIn)}</span>}
-            </div>
-            {changes.length > 0 && <BulletGroup index={index} routes={changes} size="md" limit={8} lead="change for" />}
-          </div>
-        </Card>
-      )}
+      <Button variant={following ? "filled" : "tinted"} icon={following ? "location.fill" : "location"} wide onClick={() => onFollow(!following)} ariaPressed={following}>
+        {following ? "Following — tap to stop" : "Follow this train"}
+      </Button>
 
       {swap && (
         <Callout lead="Faster" onClick={() => onSelect({ kind: "train", id: swap.toId })}>
@@ -105,41 +97,54 @@ export default function TrainDetail({ index, state, positionsRef, byId, now, ale
         </Callout>
       )}
 
-      {state.phase === "moving" && position && (
-        <div className="motion">
-          <Meter value={progress} ariaLabel={`${Math.round(progress * 100)}% of the way to ${index.stationName(state.nextStop)}`} />
-          <div className="motion-facts">
-            <span>{kmh(position.speed)} km/h</span>
-            <span>{hold ?? position.motion}</span>
-            <span>{index.stationName(state.nextStop)} in {fmtIn(state.eta - now)}</span>
-          </div>
-        </div>
-      )}
-      {state.phase === "dwelling" && state.expectedDeparture !== undefined && (
-        <div className="motion-facts one">
-          <span>Leaves {state.expectedDeparture - now > LEAVING_S ? `in ${Math.round(state.expectedDeparture - now)} s` : "now"}</span>
-        </div>
+      {nextName && state.phase !== "dwelling" && (
+        <Card>
+          <Stack gap={2}>
+            <Inline justify="between" align="baseline" gap={3}>
+              <Stack gap={0}>
+                <Text variant="micro" tone="tertiary" caps>Next stop</Text>
+                <Text variant="title" truncate>{nextName}</Text>
+              </Stack>
+              <Countdown seconds={nextIn} here={nextIn < HERE_S} compact />
+            </Inline>
+            {changes.length > 0 && <BulletGroup index={index} routes={changes} size="md" limit={8} lead="change for" />}
+            {state.phase === "moving" && position && (
+              <Stack gap={1}>
+                <Meter value={progress} ariaLabel={`${Math.round(progress * 100)}% of the way to ${nextName}`} />
+                <Text variant="footnote" tone="tertiary" numeric>{kmh(position.speed)} km/h · {position.motion}</Text>
+              </Stack>
+            )}
+          </Stack>
+        </Card>
       )}
 
       {routeAlerts.length > 0 && <AlertList index={index} alerts={routeAlerts} limit={1} />}
 
-      <List>
-        {state.stops.slice(0, STOPS_SHOWN).map((s, i) => (
-          <Row
-            key={s.id + i}
-            title={index.stationName(s.id)}
-            subtitle={etaProvenance(s.eta, s.etaRaw, s.sigma)}
-            trailing={fmtIn(s.eta - now)}
-            onClick={() => onSelect({ kind: "station", id: s.id.replace(/[NS]$/, "") })}
-          />
-        ))}
+      <List ariaLabel="Stops ahead">
+        {state.stops.slice(0, STOPS_SHOWN).map((s, i) => {
+          const spread = fmtSpread(s.sigma);
+          return (
+            <Row
+              key={s.id + i}
+              title={index.stationName(s.id)}
+              subtitle={`arrives ${fmtClock(s.eta)}${spread ? ` · ${spread}` : ""}`}
+              trailing={fmtWhen(s.eta - now)}
+              onClick={() => onSelect({ kind: "station", id: s.id.replace(/[NS]$/, "") })}
+              ariaLabel={`${index.stationName(s.id)}, ${fmtWhen(s.eta - now) === "now" ? "arriving now" : `in ${fmtWhen(s.eta - now)}`}`}
+            />
+          );
+        })}
       </List>
 
-      <div className="detail-actions">
-        <Button variant={following ? "filled" : "plain"} wide onClick={() => onFollow(!following)}>
-          {following ? "following — tap to stop" : "follow this train"}
-        </Button>
-      </div>
+      <Disclosure lead="How we know" summary={prov.line} open={howOpen} onToggle={() => setHowOpen((o) => !o)}>
+        <Stack gap={2}>
+          <Notice tone={prov.confident ? "ok" : "warn"}>{prov.confident ? "Reported by the feed" : "Partly modelled"}</Notice>
+          {next && <Text variant="subhead" tone="secondary">{index.stationName(next.id)}: {etaProvenance(next.eta, next.etaRaw, next.sigma)}</Text>}
+          <Text variant="code" tone="tertiary">
+            trip {state.trainId ?? state.id}{state.track ? ` · track ${state.track}` : ""}{state.assigned ? "" : " · unassigned"}
+          </Text>
+        </Stack>
+      </Disclosure>
     </section>
   );
 }

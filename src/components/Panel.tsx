@@ -71,6 +71,8 @@ interface Props {
   placesLoaded: boolean;
   onToggleSave: (id: string, name: string) => void;
   isSaved: (id: string) => boolean;
+  recents: import("@/lib/recents").Recent[];
+  onClearRecents: () => void;
 }
 
 /** The feed is late enough that the countdown should no longer be taken at face value. */
@@ -84,7 +86,7 @@ const SLOW_MS = 8000;
 export default function Panel(props: Props) {
   const { index, failed, trains, byId, positionsRef, feeds, status, now, wallNow, alerts, selection, onSelect,
     follow, onFollow, visible, onToggle, onAll, showRibbons, onRibbons, mode, onMode,
-    nearby, distance, destination, onDestination, places, placesLoaded, onToggleSave, isSaved } = props;
+    nearby, distance, destination, onDestination, places, placesLoaded, onToggleSave, isSaved, recents, onClearRecents } = props;
   const client = useMemo(() => new BoundClient(POLLER_URL), []);
   // Tell the poller when this browser fails, so /health can see the half of the system that does
   // not run on our own machine.
@@ -133,7 +135,10 @@ export default function Panel(props: Props) {
   const header = (
     <header className="panel-head">
       <h1 className="sr-only">{BRAND_NAME} — live New York subway map</h1>
-      <SearchBox index={index} onPick={(id) => onSelect({ kind: "station", id })} onFocus={() => setSearching((n) => n + 1)} />
+      <SearchBox
+        index={index} onPick={(id) => onSelect({ kind: "station", id })} onFocus={() => setSearching((n) => n + 1)}
+        saved={places} recent={recents} onClearRecent={onClearRecents}
+      />
       {failed && (
         <Notice tone="bad" action={<Button variant="ghost" onClick={failed}>Try again</Button>}>
           Couldn’t load the stations.

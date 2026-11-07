@@ -56,10 +56,46 @@ export function readHash(): UrlState {
   return typeof window === "undefined" ? {} : parseHash(window.location.hash);
 }
 
-/** Replace the hash without adding history entries (the map moves constantly). */
+const urlFor = (s: UrlState) => `${window.location.pathname}${window.location.search}${toHash(s)}`;
+
+/**
+ * Replace the hash without adding a history entry — the camera moves constantly, and a filter is
+ * not a place you go back to. The entry's own state is kept, because it records how deep into the
+ * app this entry is (see `openPlace`).
+ */
 export function writeHash(s: UrlState) {
   if (typeof window === "undefined") return;
-  const next = toHash(s);
-  const url = `${window.location.pathname}${window.location.search}${next}`;
-  if (window.location.hash !== next) window.history.replaceState(null, "", url);
+  if (window.location.hash !== toHash(s)) window.history.replaceState(window.history.state, "", urlFor(s));
+}
+
+/**
+ * How many places deep this history entry is: 0 at the map, one more for each station or train
+ * opened on top of it. Kept in the entry's state, so it survives a reload and a back gesture.
+ */
+export function placeDepth(): number {
+  if (typeof window === "undefined") return 0;
+  const d = (window.history.state as { tt?: unknown } | null)?.tt;
+  return typeof d === "number" ? d : 0;
+}
+
+/**
+ * Opening a station or a train is going somewhere, so it is a history entry: the phone's back
+ * gesture, the browser's back button and Android's back key all close it again, as they would in
+ * an app. Every selection used to replace the entry, so "back" left the site entirely.
+ */
+export function openPlace(s: UrlState) {
+  if (typeof window === "undefined") return;
+  window.history.pushState({ tt: placeDepth() + 1 }, "", urlFor(s));
+}
+
+/**
+ * Closing a place goes back to where it was opened from, rather than writing a new entry over it —
+ * otherwise the stack fills with copies of the map and back has to be pressed twice. Returns false
+ * when there is nothing of ours to go back to (the page was opened on a station by a link), and
+ * the caller closes it in place instead.
+ */
+export function closePlace(): boolean {
+  if (typeof window === "undefined" || placeDepth() === 0) return false;
+  window.history.back();
+  return true;
 }

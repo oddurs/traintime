@@ -470,7 +470,7 @@ export default function DesignPage() {
             <List leading>
               <Row
                 leading={<RouteBullet index={index} route="4" size="lg" />}
-                title="Woodlawn" subtitle="next stop · give or take 26 s"
+                title="Woodlawn" subtitle="next stop · ± 2 min"
                 trailing={<Countdown seconds={70} here={false} />}
               />
               <Row

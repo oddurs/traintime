@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { GeoJSONSource, Map as MapLibreMap, MapGeoJSONFeature, MapMouseEvent, Point } from "maplibre-gl";
+import type { GeoJSONSource, Map as MapLibreMap, Point } from "maplibre-gl";
 import { maplibregl } from "@/lib/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { markTiming } from "@/lib/clientHealth";
@@ -775,7 +775,15 @@ export default function TrainMap(props: Props) {
        * the same set the eye is picking from, stacked trains included as the one mark that stands
        * for them.
        */
-      const HIT_PX = 14;
+      /*
+       * How far from a mark a tap still counts as a tap on it. A station dot is 3 to 13 pixels
+       * across and was hit-tested at the exact point of the tap, which is a target a fingertip —
+       * about 44 points — hits by luck. A finger gets a target its own size; a pointer, which
+       * lands where it is aimed, a smaller one, so that two stations a block apart stay apart.
+       */
+      const coarse = matchMedia("(pointer: coarse)").matches;
+      const HIT_PX = coarse ? 22 : 14;
+      const STATION_PX = coarse ? 18 : 8;
       const pickTrain = (point: Point): string | null => {
         let best: string | null = null;
         let bestD = HIT_PX * HIT_PX;
@@ -795,6 +803,23 @@ export default function TrainMap(props: Props) {
         return best;
       };
 
+      /** The station nearest the point, within a finger's reach of it. */
+      const pickStationAt = (point: Point): string | null => {
+        const hits = map.queryRenderedFeatures(
+          [[point.x - STATION_PX, point.y - STATION_PX], [point.x + STATION_PX, point.y + STATION_PX]],
+          { layers: ["stations", "station-labels"] },
+        );
+        let best: string | null = null;
+        let bestD = Infinity;
+        for (const f of hits) {
+          if (f.geometry.type !== "Point") continue;
+          const p = map.project(f.geometry.coordinates as [number, number]);
+          const d = (p.x - point.x) ** 2 + (p.y - point.y) ** 2;
+          if (d < bestD) { bestD = d; best = String(f.properties?.id); }
+        }
+        return best;
+      };
+
       // Hover runs on every pointer move, and the scan is over every train on screen — often a
       // few hundred. Ten times a second is past the point anyone can tell.
       let hoverAt = 0;
@@ -807,24 +832,16 @@ export default function TrainMap(props: Props) {
         if (over === overTrain) return;
         overTrain = over;
         if (over) map.getCanvas().style.cursor = "pointer";
-        else if (!map.queryRenderedFeatures(e.point, { layers: ["stations", "station-labels"] }).length) {
-          map.getCanvas().style.cursor = "";
-        }
+        else if (!pickStationAt(e.point)) map.getCanvas().style.cursor = "";
       });
 
-      const pickStation = (e: MapMouseEvent & { features?: MapGeoJSONFeature[] }) => {
-        // A train drawn over a station wins, the way it did when the renderer decided.
-        if (pickTrain(e.point)) return;
-        const f = e.features?.[0];
-        if (f) live.current.onSelect({ kind: "station", id: String(f.properties?.id) });
-      };
-      map.on("click", "stations", pickStation);
-      map.on("click", "station-labels", pickStation);
+      // One handler for every tap: a train drawn over a station wins, then the nearest station,
+      // and a tap on empty map closes whatever was open.
       map.on("click", (e) => {
         const train = pickTrain(e.point);
         if (train) return live.current.onSelect({ kind: "train", id: train });
-        const hits = map.queryRenderedFeatures(e.point, { layers: ["stations", "station-labels"] });
-        if (hits.length === 0) live.current.onSelect({ kind: "none" });
+        const station = pickStationAt(e.point);
+        live.current.onSelect(station ? { kind: "station", id: station } : { kind: "none" });
       });
 
       setLayersReady(true);

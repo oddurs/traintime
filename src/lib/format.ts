@@ -4,12 +4,25 @@ import { parentOf } from "./network";
 
 const NY = "America/New_York";
 
-/** "now", "40 s", "3.2 min" — a countdown a person can read at a glance. */
-export function fmtIn(secs: number): string {
-  if (secs < 20) return "now";
-  if (secs < 60) return `${Math.round(secs / 5) * 5} s`;
-  const m = secs / 60;
-  return `${m < 10 ? m.toFixed(1) : Math.round(m)} min`;
+/**
+ * "now", "1 min", "12 min" — how long until something happens, in the one unit a rider counts in.
+ *
+ * This used to switch between seconds and tenths of a minute ("35 s", "2.4 min"), so a list of
+ * stops mixed two units and a precision the prediction does not have: a train due in 2.4 minutes
+ * is due in two or three, depending on the signals.
+ */
+export function fmtWhen(secs: number): string {
+  if (secs < 30) return "now";
+  return `${Math.max(1, Math.round(secs / 60))} min`;
+}
+
+/**
+ * The uncertainty worth saying out loud, or nothing. Under a minute it does not change what a
+ * rider does, and printing "give or take 32 s" on every row made a board of answers read like a
+ * table of caveats.
+ */
+export function fmtSpread(sigma: number): string | null {
+  return sigma >= 60 ? `± ${Math.round(sigma / 60)} min` : null;
 }
 
 /** Compact countdown for dense lists: "now", "1", "12" (minutes). */
