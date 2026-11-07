@@ -3,10 +3,11 @@ id: 28
 uid: 67f51c14-7b0d-4a4a-8799-b9317de3112f
 title: 'Interface: map first, a swipe-up card, nearby trains and line health'
 type: feature
-status: doing
+status: done
 milestone: render-4
 created: 2026-11-07
 updated: 2026-11-07
+closed_at: 2026-11-07
 priority: p2
 area: front-end
 effort: l
@@ -38,8 +39,12 @@ On a 390 × 844 phone the collapsed sheet covered about 280 points of the map. I
 - [x] The line toggles are collapsed by default, behind one row that shows trains running, held trains and lines with delays.
 - [x] With location on, a Nearby section lists the stations within the chosen radius with their next trains, closest first. The map draws the radius and your position.
 - [x] The nearby selection is covered by unit tests: the radius filter, the order, and the limit per station.
-- [ ] `npm test`, `npm run lint`, `npm run typecheck`, `npm run audit:design` and `npm run audit:layout` pass. The live site is checked on phone and desktop after the deploy.
+- [x] `npm test`, `npm run lint`, `npm run typecheck`, `npm run audit:design` and `npm run audit:layout` pass. The live site is checked on phone and desktop after the deploy.
 
 ## 2026-11-07
 
 Measured on a 390 × 844 viewport against the live poller: the collapsed card is 67 pt tall (top at 777). The radii are 5, 10 and 20 minutes because 15 minutes is only 822 m at the board's walking pace, and the ten-minute circle around Times Sq holds two complexes. Headless Chrome delivers touch moves about 80 ms apart, too slowly to simulate a flick, so the snap rule is a pure function (src/lib/sheet.ts) with unit tests; a held drag was checked in the browser.
+
+## 2026-11-07
+
+Deployed as traintime-site 14550862. On the live site the collapsed phone card's top is at 777 of 844; Nearby at Union Sq listed 14 St-Union Sq and 3 Av with their next trains, and the radius and position drew on the map.
