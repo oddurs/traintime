@@ -3,10 +3,11 @@ id: 31
 uid: 8b2b16ee-a1a7-4f11-b715-fdaf379041fb
 title: 'UX: back closes what you opened, recents in search, a train view for riders'
 type: feature
-status: doing
+status: done
 milestone: render-4
 created: 2026-11-07
 updated: 2026-11-07
+closed_at: 2026-11-07
 priority: p1
 area: front-end
 effort: m
@@ -52,4 +53,8 @@ Walked through on a phone against the live site:
 - [x] The train view shows no trip id or provenance sentence above the stops. Every time in it is "now" or a whole number of minutes.
 - [x] No board or train row shows an uncertainty under a minute.
 - [x] A tap within 18 px of a station, or 22 px of a train, on a touch screen selects it.
-- [ ] Tests, lint, typecheck and the audits pass, and the live site is checked after the deploy.
+- [x] Tests, lint, typecheck and the audits pass, and the live site is checked after the deploy.
+
+## 2026-11-07
+
+Deployed as traintime-site c3927a22. audit-ui on a phone viewport against the live site: back steps train → station → map, focus offers recents, Follow toggles; 0 problems.
