@@ -5,7 +5,7 @@ import type { NetworkIndex } from "@/lib/network";
 import type { GeoStatus } from "@/lib/geolocation";
 import { RADII_MIN, type NearbyStation, type RadiusMin } from "@/lib/nearby";
 import { directionLabel } from "@/lib/format";
-import { Icon, List, Row, Section, Segmented } from "./ui";
+import { Icon, List, Row, Section, Segmented, Stack, Text } from "./ui";
 import { BulletGroup, Countdown, RouteBullet } from "./brand";
 
 interface Props {
@@ -70,12 +70,14 @@ export default function Nearby({ index, stations, geo, on, onLocate, radius, onR
     <Section title="Nearby" accessory={accessory} ariaLabel="Trains near you">
       {stations.length === 0 && (
         <List>
-          <li className="list-static muted hint">
-            No stations within a {radius}-minute walk.{radius < RADII_MIN[RADII_MIN.length - 1] ? " Try a wider radius." : ""}
+          <li className="list-static">
+            <Text variant="subhead" tone="secondary">
+              No stations within a {radius}-minute walk.{radius < RADII_MIN[RADII_MIN.length - 1] ? " Try a wider radius." : ""}
+            </Text>
           </li>
         </List>
       )}
-      <div className="sect-stack">
+      <Stack gap={3}>
         {stations.map((s) => (
           <List leading key={s.id} ariaLabel={`${s.name}, ${Math.max(1, Math.round(s.walkSeconds / 60))} minute walk`}>
             <Row
@@ -87,7 +89,9 @@ export default function Nearby({ index, stations, geo, on, onLocate, radius, onR
               ariaLabel={`${s.name} arrivals`}
             />
             {s.arrivals.length === 0 && (
-              <li className="list-static muted hint">{waiting ? "waiting for live trains…" : "No trains approaching right now."}</li>
+              <li className="list-static">
+                <Text variant="subhead" tone="secondary">{waiting ? "Waiting for live trains…" : "No trains approaching right now."}</Text>
+              </li>
             )}
             {index && s.arrivals.map((a) => {
               const secs = a.eta - now;
@@ -109,7 +113,7 @@ export default function Nearby({ index, stations, geo, on, onLocate, radius, onR
             })}
           </List>
         ))}
-      </div>
+      </Stack>
     </Section>
   );
 }

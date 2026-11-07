@@ -13,7 +13,7 @@ import { BASE_PATH, POLLER_URL } from "@/lib/basePath";
 import { markTiming, reportClientFailures } from "@/lib/clientHealth";
 import { BRAND_NAME } from "@/lib/brand";
 import { loadPhase, loadingHint } from "@/lib/loading";
-import { Button, Notice, Section } from "./ui";
+import { Button, Inline, Notice, Section, Text } from "./ui";
 import Sheet from "./Sheet";
 import SearchBox from "./SearchBox";
 import StationBoard from "./StationBoard";
@@ -153,16 +153,18 @@ export default function Panel(props: Props) {
   );
 
   const foot = (
-    <footer className="panel-foot">
+    <Inline as="footer" justify="between" wrap gap={3}>
       <span role="status">
-        {waiting ? loadingHint(phase, { failed: !!failed, slow }) : <>
-          {BRAND_NAME} · {status.source === "browser"
-            ? `tracking in this browser${status.modelReady ? " · model" : ""}`
-            : alerts ? `alerts ${fmtAgo(wallNow - alerts.fetchedAt)}` : "live feeds"}
-        </>}
+        <Text variant="footnote" tone="tertiary">
+          {waiting ? loadingHint(phase, { failed: !!failed, slow }) : <>
+            {BRAND_NAME} · {status.source === "browser"
+              ? `tracking in this browser${status.modelReady ? " · model" : ""}`
+              : alerts ? `alerts ${fmtAgo(wallNow - alerts.fetchedAt)}` : "live feeds"}
+          </>}
+        </Text>
       </span>
-      <a className="link-a" href={`${BASE_PATH}/accuracy/`}>How accurate is this?</a>
-    </footer>
+      <a className="link-a" href={`${BASE_PATH}/accuracy/`}><Text variant="footnote">How accurate is this?</Text></a>
+    </Inline>
   );
 
   return (

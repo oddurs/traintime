@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { CHROME_COLOR } from "@/lib/palette";
 import ServiceWorker from "@/components/ServiceWorker";
 import { BASE_PATH } from "@/lib/basePath";
+// The tokens first: globals.css is written entirely in terms of them.
+import "./tokens.css";
 import "./globals.css";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { FIRST_PAINT_SCRIPT } from "@/lib/firstPaint";

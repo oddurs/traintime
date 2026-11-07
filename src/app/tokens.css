@@ -1,0 +1,354 @@
+/*
+ * bound — the tokens.
+ *
+ * Three layers, and the split between them is the whole idea.
+ *
+ *   PRIMITIVES  the raw values, named for what they are: --gray-400, --fs-17, --radius-md.
+ *               They mean nothing on their own, and nothing outside this file may use them.
+ *   SEMANTIC    named for what they are for: --label-2, --t-headline, --r-card. Each one refers to
+ *               a primitive. These are the only tokens a stylesheet or a component may use.
+ *   DATA        the colours of the railway itself — the MTA's trunk lines and their inks. They are
+ *               facts about New York rather than design decisions, and are written as such.
+ *
+ * Why: a theme, a dark/light pair or a rebrand is then one edit to the semantic layer. When a rule
+ * says --gray-400, a second theme is a search-and-replace across every file, and it will be wrong
+ * somewhere. scripts/audit-design.ts enforces the split, along with everything else below.
+ *
+ * Change a token deliberately: adding one is cheap, changing one moves the whole product.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ==========================================================================
+     PRIMITIVES
+     ========================================================================== */
+
+  /*
+   * ---- Neutrals. ----
+   *
+   * One ramp for most of the interface, dark end first. Numbered like every ramp — 1000 is black —
+   * so a step can be added between two others without renaming either.
+   */
+  --gray-1000: #000000;
+  --gray-950: #0b0b0d;
+  --gray-900: #101014;
+  --gray-850: #16161a;
+  --gray-500: #9a9aa4;
+  --gray-400: #b4b4be;
+  --gray-300: #c9c9d2;
+  --gray-50: #f5f5f7;
+  --white: #ffffff;
+
+  /* Light laid over a dark material: the fills and hairlines Apple's dark appearance is built from. */
+  --white-a06: rgba(255, 255, 255, 0.06);
+  --white-a08: rgba(255, 255, 255, 0.08);
+  --white-a11: rgba(255, 255, 255, 0.11);
+  --white-a16: rgba(255, 255, 255, 0.16);
+  --white-a35: rgba(255, 255, 255, 0.35);
+  /* And shade: shadows, and the edge of a chevron over a busy map. */
+  --black-a50: rgba(0, 0, 0, 0.5);
+  --black-a60: rgba(0, 0, 0, 0.6);
+
+  /*
+   * ---- Hues: Apple's system colours in their dark appearance, one accent and three states. ----
+   *
+   * The 400s are Apple's increased-contrast variants. Text is set in them, because the standard
+   * blue and red measure under 4.5:1 on a filled control (3.6:1 and 3.9:1); a mark that is not
+   * text, such as the dot that is you, keeps the 500.
+   */
+  --blue-500: #0a84ff;
+  --blue-400: #409cff;
+  --blue-300: #69b0ff;
+  --blue-200: #9fd0ff;
+  --green-500: #30d158;
+  --amber-500: #ff9f0a;
+  --amber-300: #ffb454;
+  --red-400: #ff6961;
+
+  /*
+   * ---- Type sizes. ----
+   *
+   * Apple's text sizes, at 16 px to the rem: caption 12, footnote 13, subheadline 15, body 17,
+   * title 3 20, title 2 22, title 1 28, large title 34 (28 is only the countdown's smallest size, so
+   * it has no line height of its own). Successive steps are about 1.13 apart,
+   * which is close enough to a ratio to read as one, and they are the sizes every Apple device
+   * has trained its readers on. Each size has the line height Apple pairs with it, also in rem, so
+   * a reader who sets a larger default gets a larger interface in proportion rather than clipped
+   * lines. Nothing in the system is set smaller than 12.
+   *
+   * This replaced two scales, one per pointer, at macOS sizes on a desktop: a 13 px body and an
+   * 11 px label, which on a web page at arm's length is fine print. Worse, the root font size had
+   * been set to the body size, so every rem was 13 px and the whole interface rendered at 81 %.
+   */
+  --fs-12: 0.75rem;
+  --fs-13: 0.8125rem;
+  --fs-15: 0.9375rem;
+  --fs-17: 1.0625rem;
+  --fs-20: 1.25rem;
+  --fs-22: 1.375rem;
+  --fs-28: 1.75rem;
+  --fs-34: 2.125rem;
+  --lh-12: 1rem;
+  --lh-13: 1.125rem;
+  --lh-15: 1.25rem;
+  --lh-17: 1.375rem;
+  --lh-20: 1.5625rem;
+  --lh-22: 1.75rem;
+  --lh-34: 2.5625rem;
+  /* Three weights. Not nine. */
+  --fw-regular: 400;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* ---- Radii: four, plus the capsule. Continuous rather than circular wherever the shape is large. ---- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
+
+  /* ==========================================================================
+     SEMANTIC — the only tokens a rule or a component may use
+     ========================================================================== */
+
+  /* ---- Ground and material. Elevation is luminance and blur; a border is the last resort. ---- */
+  --ground: var(--gray-1000);
+  --surface-solid: var(--gray-850);    /* a popover, which must never show the map through it */
+  --surface-sunken: var(--gray-900);   /* sits on top of a bullet, so darker than the panel */
+  --mat-regular: color-mix(in srgb, var(--gray-850) 80%, transparent);
+  --mat-thick: color-mix(in srgb, var(--gray-900) 92%, transparent);
+  --blur-regular: blur(28px) saturate(150%);
+  --blur-thick: blur(40px) saturate(140%);
+
+  /* ---- Fills, in Apple's three steps: what a control sits on inside a material. ---- */
+  --fill: var(--white-a06);
+  --fill-2: var(--white-a11);
+  --fill-3: var(--white-a16);
+  --separator: var(--white-a08);
+  --edge: var(--white-a11);          /* the lit top edge of a glass panel */
+  --edge-soft: var(--white-a08);
+  --edge-strong: var(--white-a35);
+  --scrim-soft: var(--black-a50);
+
+  /* ---- Labels, in Apple's hierarchy. Each holds 4.5:1 on every surface; the audit measures it. ---- */
+  --label: var(--gray-50);
+  --label-2: var(--gray-400);
+  --label-3: var(--gray-500);
+  --on-accent: var(--white);
+
+  /* ---- Accents carry meaning and nothing else. ---- */
+  --accent: var(--blue-400);
+  --accent-hover: var(--blue-300);
+  --accent-fill: color-mix(in srgb, var(--blue-500) 16%, transparent);
+  --green: var(--green-500);
+  --amber: var(--amber-500);
+  --red: var(--red-400);
+  --tint-green: color-mix(in srgb, var(--green-500) 40%, transparent);
+  --tint-amber: color-mix(in srgb, var(--amber-500) 45%, transparent);
+  --glow: color-mix(in srgb, var(--blue-200) 80%, transparent);
+
+  /*
+   * ---- The map's own palette. ----
+   *
+   * MapLibre paints into a canvas and cannot resolve a custom property, so src/lib/mapTheme.ts
+   * reads these at start-up, resolved — the map is themed from here like everything else.
+   */
+  --map-casing: var(--gray-1000);
+  --map-station-fill: var(--gray-950);
+  --map-station-edge: var(--gray-300);
+  --map-label: var(--gray-300);
+  --map-halo: var(--gray-1000);
+  --map-uncertain: var(--blue-200);
+  --map-hold: var(--amber-300);
+  --map-focus: var(--white-a08);
+  --map-chevron-edge: var(--black-a50);
+  --map-you: var(--blue-500);
+
+  /*
+   * ---- Type: two voices, twelve roles, eight sizes. ----
+   *
+   * Signage is Helvetica, the face every station is signed in, and it sets anything that is
+   * information about the railway: station names, destinations, the countdown. Interface is the
+   * platform's own face — San Francisco on an Apple device — and it sets the application talking
+   * about itself: fields, buttons, headers, context. That split is most of what makes this read as
+   * an app that shows you a subway rather than a web page about one.
+   *
+   * A role is a whole font: weight, size, line height and family, as one shorthand. Use it with its
+   * tracking — `font: var(--t-headline); letter-spacing: var(--tr-headline)` — every time; the
+   * audit fails the build if the two are separated. The tracking tightens as the size grows, the
+   * way San Francisco's own does, and opens up for the capitals of --t-micro.
+   *
+   * One scale on every device. A phone is held nearer than a desk is sat from, but the sizes a
+   * phone reads comfortably are the sizes a web page reads comfortably, and two scales had made
+   * every decision twice.
+   */
+  --font-signage: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  /* Running prose wants more air than a label does; a number set large wants none. */
+  --leading-prose: 1.55;
+  --leading-tight: 1;
+
+  /* A document's title. */
+  --t-display: var(--fw-bold) var(--fs-34)/var(--lh-34) var(--font-signage);
+  --tr-display: -0.022em;
+  /*
+   * The countdown: the one fluid role. It measures the panel holding it (cqi) rather than the
+   * window, so it is read from further away as the surface holding it grows — 28 px in a narrow
+   * card, 34 px across a phone held at arm's length.
+   */
+  --t-clock: var(--fw-bold) clamp(var(--fs-28), 0.75rem + 6cqi, var(--fs-34))/var(--leading-tight) var(--font-signage);
+  --tr-clock: -0.024em;
+  /* A station, a train, a view's own heading. */
+  --t-title: var(--fw-bold) var(--fs-22)/var(--lh-22) var(--font-signage);
+  --tr-title: -0.018em;
+  /* The header over a group: "Nearby", "Lines". */
+  --t-section: var(--fw-bold) var(--fs-20)/var(--lh-20) var(--font-ui);
+  --tr-section: -0.02em;
+  /* A number read before its label: a statistic, a countdown in a list of several. */
+  --t-figure: var(--fw-bold) var(--fs-20)/var(--leading-tight) var(--font-signage);
+  --tr-figure: -0.016em;
+  /* A row's own words: a destination, a station in a list. */
+  --t-headline: var(--fw-semibold) var(--fs-17)/var(--lh-17) var(--font-signage);
+  --tr-headline: -0.012em;
+  /* A field, a line of interface text. */
+  --t-body: var(--fw-regular) var(--fs-17)/var(--lh-17) var(--font-ui);
+  --tr-body: -0.022em;
+  /* Paragraphs: a document, the full text of a service change. */
+  --t-prose: var(--fw-regular) var(--fs-17)/var(--leading-prose) var(--font-ui);
+  --tr-prose: -0.016em;
+  /* Context under a headline, controls, notices. The interface's working size. */
+  --t-subhead: var(--fw-regular) var(--fs-15)/var(--lh-15) var(--font-ui);
+  --tr-subhead: -0.014em;
+  /* Fine print: hints, the foot of the card, a label under a figure. */
+  --t-footnote: var(--fw-regular) var(--fs-13)/var(--lh-13) var(--font-ui);
+  --tr-footnote: -0.006em;
+  /* Words set in capitals: a unit, a direction, a kind of alert. The floor of the scale. */
+  --t-micro: var(--fw-semibold) var(--fs-12)/var(--lh-12) var(--font-ui);
+  --tr-micro: 0.04em;
+  /* A train id, an endpoint, a payload. */
+  --t-code: var(--fw-regular) var(--fs-13)/var(--leading-prose) var(--font-mono);
+  --tr-code: 0em;
+  /* A label's weight when a role is borrowed for a control: a button is subhead, set semibold. */
+  --w-strong: var(--fw-semibold);
+  --w-heavy: var(--fw-bold);
+
+  /* ---- Radii, by what they round. ---- */
+  --r-inner: var(--radius-sm);     /* something small inside something else: a thumb, a skeleton */
+  --r-control: var(--radius-md);   /* a button, a field, a segmented control, a map button */
+  --r-card: var(--radius-lg);      /* a grouped list, a card, a popover */
+  --r-panel: var(--radius-xl);     /* the floating card on a desktop */
+  --r-sheet: var(--radius-lg);     /* the top of the phone's swipe-up card */
+  --r-pill: var(--radius-full);
+
+  /* ---- Elevation: three steps, so depth is a decision rather than a habit. ---- */
+  --shadow-1: 0 1px 2px var(--black-a50);
+  --shadow-2: 0 6px 20px var(--black-a50);
+  --shadow-3: 0 12px 40px var(--black-a60);
+  --hairline: 0.5px;
+  --ring: 2px;
+
+  /*
+   * ---- Layers. ----
+   *
+   * Named for what sits there, lowest first. A z-index anywhere else is a number somebody will
+   * have to beat with a bigger number; the audit fails any z-index that is not one of these.
+   */
+  --z-pip: 2;          /* a mark at the corner of a bullet */
+  --z-controls: 4;     /* the buttons that float over the map */
+  --z-panel: 5;        /* the card */
+  --z-popover: 10;     /* search results, which must clear the card's own contents */
+
+  /*
+   * ---- Space: an 8-point grid with two half-steps. ----
+   *
+   * Every gap, pad and inset comes from here, so the interface has a rhythm rather than an
+   * assortment of near-misses — the audit fails on anything off it.
+   */
+  --s0: 2px;
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 64px;
+
+  /* ---- Sizes for the things that are a size rather than a space. ---- */
+  --tap: 44px;              /* the smallest thing a finger is asked to hit */
+  --control-h: 36px;        /* a button or a select with a pointer on it */
+  --control-h-sm: 30px;     /* a segment, a clear button inside a field */
+  --field-h: 40px;          /* the search field */
+  --map-btn: 44px;          /* a floating control over the map */
+  --icon: 18px;
+  --icon-lg: 22px;
+  --dot: 6px;
+  --pip: 9px;
+  --bullet-sm: 18px;
+  --bullet-md: 20px;
+  --bullet-lg: 28px;
+  --bullet-xl: 32px;
+  --switch-w: 46px;
+  --switch-h: 28px;
+  --switch-knob: 24px;
+  --grabber-w: 36px;
+  --grabber-h: 5px;
+  --panel-w: 384px;
+  --doc-w: 720px;
+  --embed-w: 320px;
+  --sheet-half: 50dvh;
+  --sheet-full: 92dvh;
+  /*
+   * The one breakpoint. A custom property cannot be read inside a media query, so this is the
+   * declaration and the audit checks that every `max-width` query in the stylesheet, and
+   * PHONE_QUERY in src/lib/firstPaint.ts, says the same number.
+   */
+  --bp-phone: 640px;
+
+  /* ---- Motion: one curve, three durations, and a reduced-motion rule at the end of globals.css. ---- */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --fast: 0.15s;
+  --slow: 0.32s;
+  --ambient: 1.4s;   /* a loop that is meant to be ignored, not watched */
+
+  /* ==========================================================================
+     DATA — the railway's own colours
+     ========================================================================== */
+
+  /*
+   * ---- The trunk lines. ----
+   *
+   * The New York subway is not organised by service, it is organised by trunk line: the 1, 2 and
+   * 3 are three services on one red Broadway-7 Avenue trunk, and that is why they share a colour
+   * on every map the MTA has printed since 1979. So the colours are named for the lines rather
+   * than the services, and a service is coloured by the trunk it runs on.
+   *
+   * These are the feed's own hues rather than the printed manual's, which are tuned for white
+   * paper; src/lib/trunks.ts says which services run on each, and the design audit checks that
+   * every service the feed publishes has a trunk to belong to.
+   */
+  --trunk-7av: #ee352e;
+  --trunk-lexington: #00933c;
+  --trunk-flushing: #b933ad;
+  --trunk-8av: #0039a6;
+  --trunk-6av: #ff6319;
+  --trunk-broadway: #fccc0a;
+  --trunk-crosstown: #6cbe45;
+  --trunk-nassau: #996633;
+  --trunk-canarsie: #a7a9ac;
+  --trunk-shuttle: #808183;
+  --trunk-sir: #0078c6;
+  /*
+   * One line, lightened for a black ground. The emblem keeps the colour the MTA prints; #0039a6
+   * is 2.14:1 on black, which is a line you lose at two pixels. Lifting its lightness from 33 % to
+   * 48 %, hue and saturation untouched, takes it to 3.5:1.
+   */
+  --line-8av: #0053f3;
+  --route-unknown: #808183;
+  --route-unknown-text: #ffffff;
+  /* What a bullet's character is set in: the only two inks the signs use. */
+  --ink-light: #ffffff;
+  --ink-dark: #000000;
+}

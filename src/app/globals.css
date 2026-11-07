@@ -16,253 +16,28 @@
  * face. That one split is the difference between an app that shows you a subway and a web page
  * about one.
  *
- * Everything below is a token, and the components above it are built from a named set of
- * primitives (src/components/ui) rather than from raw markup. scripts/audit-design.ts fails the
- * build on any colour, spacing, radius, type style or duration written by hand — in this
- * stylesheet, in the map's palette, or in a component.
+ * Every value below is a semantic token from ./tokens.css, and the components above it are built
+ * from a named set of primitives (src/components/ui) rather than from raw markup.
+ * scripts/audit-design.ts fails the build on any colour, spacing, radius, type style, weight,
+ * layer or duration written by hand — in this stylesheet, in the map's palette, or in a
+ * component — and on any primitive token used here instead of the semantic one above it.
  */
-
-:root {
-  color-scheme: dark;
-
-  /* ---- Material. Elevation is luminance and blur; a border is the last resort. ---- */
-  --ground: #000000;
-  --mat-thin: rgba(24, 24, 27, 0.6);
-  --mat-regular: rgba(20, 20, 22, 0.78);
-  --mat-thick: rgba(16, 16, 19, 0.92);
-  --blur-thin: blur(20px) saturate(170%);
-  --blur-regular: blur(28px) saturate(150%);
-  --blur-thick: blur(40px) saturate(140%);
-  --surface-solid: #16161a;      /* a popover, which must never show the map through it */
-  --surface-sunken: #101014;     /* sits on top of a bullet, so darker than the panel */
-
-  /* ---- Fills, in Apple's three steps: what a control sits on inside a material. ---- */
-  --fill: rgba(255, 255, 255, 0.06);
-  --fill-2: rgba(255, 255, 255, 0.11);
-  --fill-3: rgba(255, 255, 255, 0.16);
-  --separator: rgba(255, 255, 255, 0.085);
-  --edge: rgba(255, 255, 255, 0.12);        /* the lit top edge of a glass panel */
-  --edge-soft: rgba(255, 255, 255, 0.1);
-  --edge-strong: rgba(255, 255, 255, 0.35);
-  --scrim: rgba(0, 0, 0, 0.85);
-  --scrim-soft: rgba(0, 0, 0, 0.5);
-
-  /* ---- Labels, in Apple's four-step hierarchy. ---- */
-  --label: #f5f5f7;
-  --label-2: #a6a6b0;
-  --label-3: #8a8a95;   /* tertiary, held at >= 4.5:1 on the panel material */
-  --on-accent: #ffffff;
-
-  /* ---- Accents carry meaning and nothing else. ---- */
-  --accent: #0a84ff;
-  --accent-hover: #339cff;
-  --accent-fill: rgba(10, 132, 255, 0.16);
-  --amber: #ff9f0a;
-  --red: #ff453a;
-  --green: #30d158;
-  --tint-green: rgba(48, 209, 88, 0.4);
-  --tint-amber: rgba(255, 159, 10, 0.45);
-  --glow: rgba(159, 208, 255, 0.8);
-
-  /*
-   * The map's own palette. MapLibre paints into a canvas and cannot resolve a custom property, so
-   * src/lib/mapTheme.ts reads these at start-up — the map is themed from here like everything
-   * else rather than from a second set of literals nobody could audit.
-   */
-  --map-casing: #000000;
-  --map-station-fill: #0b0b0d;
-  --map-station-edge: #c9c9d2;
-  --map-label: #cfcfcf;
-  --map-halo: #000000;
-  --map-uncertain: #9fd0ff;
-  --map-hold: #ffb454;
-  --map-focus: rgba(255, 255, 255, 0.08);
-  --map-chevron-edge: rgba(0, 0, 0, 0.55);
-  --route-unknown: #808183;
-  --route-unknown-text: #ffffff;
-
-  /*
-   * ---- The trunk lines. ----
-   *
-   * The New York subway is not organised by service, it is organised by trunk line: the 1, 2 and
-   * 3 are three services on one red Broadway-7 Avenue trunk, and that is why they share a colour
-   * on every map the MTA has printed since 1979. So the colours are named for the lines rather
-   * than the services, and a service is coloured by the trunk it runs on — which is the same
-   * order the map draws them in when you are too far away to tell them apart.
-   *
-   * These are the feed's own hues rather than the printed manual's, which are tuned for white
-   * paper; src/lib/trunks.ts says which services run on each, and the design audit checks that
-   * every service the feed publishes has a trunk to belong to.
-   */
-  --trunk-7av: #ee352e;
-  --trunk-lexington: #00933c;
-  --trunk-flushing: #b933ad;
-  --trunk-8av: #0039a6;
-  --trunk-6av: #ff6319;
-  --trunk-broadway: #fccc0a;
-  --trunk-crosstown: #6cbe45;
-  --trunk-nassau: #996633;
-  --trunk-canarsie: #a7a9ac;
-  --trunk-shuttle: #808183;
-  --trunk-sir: #0078c6;
-  /*
-   * One line, lightened for a black ground.
-   *
-   * The emblem keeps the colour the MTA prints; a line on the map has a different job. Measured
-   * against the map's own ground, ten of the eleven trunks clear 4:1 and read at a two-pixel
-   * stroke. 8 Avenue does not — #0039a6 is 2.14:1 on black, which is a line you lose. Lifting its
-   * lightness from 33% to 48%, hue and saturation untouched, takes it to 3.5:1. Everything else
-   * draws in the colour it is printed in.
-   */
-  --line-8av: #0053f3;
-  /* What a bullet's character is set in, and the only two inks the system uses. */
-  --ink-light: #ffffff;
-  --ink-dark: #000000;
-
-  /*
-   * ---- Type: two voices. ----
-   *
-   * Signage is Helvetica — the system's own typeface, and the one every station is signed in.
-   * Interface is whatever the platform calls its own: San Francisco on an Apple device, Segoe on
-   * Windows, Roboto on Android. Chrome set in the host's face is most of what "native" means.
-   */
-  --font-signage: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-
-  /*
-   * One scale, in rem, so a reader who scales text up gets a bigger interface rather than clipped
-   * labels. Each step carries a tracking: Helvetica is drawn for signage and sets loose at small
-   * sizes and loose-looking at large ones, so the scale tightens as it grows and opens up for the
-   * all-caps micro labels. Use the pair — `font: var(--t-title); letter-spacing: var(--tr-title)`
-   * — every time; the audit fails the build if they are ever separated.
-   *
-   * The countdown is the one step that is fluid, and it measures the panel rather than the window
-   * (`cqi`): it is read from further away as the surface holding it grows, which on a phone is the
-   * sheet and on a desktop is a panel of fixed width. That replaced a media query that set it
-   * larger on small screens — an override of the scale rather than a part of it.
-   */
-  /*
-   * Two scales, the way Apple ships two: the macOS sizes for a pointer, here, and the iOS sizes
-   * for a finger, in the `pointer: coarse` block below. A phone is held at about 35 cm and a
-   * desktop screen sits at about 55 cm, so iOS sets a list row's title at 17 points where macOS
-   * sets it at 13. This used to be one scale multiplied by 1.12 on touch, which made the small
-   * steps too big and the large ones too small at once: a 12-point caption on a phone and a
-   * 17-point headline are not the same ratio apart as their desktop counterparts.
-   *
-   * The scale asks about the pointer rather than the window: a narrow window on a desk is still a
-   * desk, and a touch screen is still an arm's length away however wide it is.
-   */
-  --t-clock: 700 clamp(1.5rem, 0.4rem + 5cqi, 2rem)/1 var(--font-signage);
-  --tr-clock: -0.024em;
-  --t-large: 700 1.75rem/1.14 var(--font-signage);
-  --tr-large: -0.022em;
-  --t-title: 700 1.25rem/1.2 var(--font-signage);
-  --tr-title: -0.018em;
-  /* A section's header: the "Favourites" over a group in Maps, not a page heading. */
-  --t-section: 700 0.9375rem/1.25 var(--font-ui);
-  --tr-section: -0.01em;
-  --t-headline: 600 0.875rem/1.3 var(--font-signage);
-  --tr-headline: -0.006em;
-  /* A number that is read before its label: a statistic, the countdown in a list of several. */
-  --t-figure: 700 1.0625rem/1.1 var(--font-signage);
-  --tr-figure: -0.016em;
-  --t-body: 400 0.8125rem/1.4 var(--font-ui);
-  --tr-body: 0em;
-  --t-caption: 400 0.75rem/1.33 var(--font-ui);
-  --tr-caption: -0.003em;
-  --t-micro: 590 0.6875rem/1.3 var(--font-ui);
-  --tr-micro: 0.04em;
-  --t-code: 400 calc(0.75rem * var(--type-scale))/1.55 var(--font-mono);
-  --tr-code: 0em;
-
-  /* ---- Radii, continuous rather than circular wherever the shape is large. ---- */
-  --r-inner: 6px;
-  --r-chip: 8px;
-  --r-field: 10px;
-  --r-card: 12px;
-  --r-panel: 18px;
-  --r-sheet: 16px;
-  --r-pill: 999px;
-
-  /* ---- Elevation: three steps, so depth is a decision rather than a habit. ---- */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
-  --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.5);
-  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.6);
-  --hairline: 0.5px;
-  --ring: 1.5px;
-
-  /*
-   * An 8-point grid. Every gap, pad and inset comes from here, so the interface has a rhythm
-   * rather than an assortment of near-misses — the audit fails on anything off it.
-   */
-  --s0: 2px;
-  --s1: 4px;
-  --s2: 8px;
-  --s3: 12px;
-  --s4: 16px;
-  --s5: 24px;
-  --s6: 32px;
-  --s7: 48px;
-  --s8: 64px;
-
-  /* ---- Sizes for the things that are a size rather than a space. ---- */
-  --tap: 44px;              /* the smallest thing a finger is asked to hit */
-  --control-h: 32px;        /* a button or field with a pointer on it */
-  --control-h-sm: 28px;
-  --field-h: 34px;          /* the search field: Maps sets it shorter than a row */
-  --map-btn: 40px;          /* a floating control over the map */
-  --icon: 16px;
-  --icon-lg: 20px;
-  --dot: 6px;
-  --pip: 8px;
-  --bullet-sm: 16px;
-  --bullet-md: 18px;
-  --bullet-lg: 26px;
-  --bullet-xl: 30px;
-  --switch-w: 38px;
-  --switch-h: 22px;
-  --switch-knob: 18px;
-  --grabber-w: 36px;
-  --grabber-h: 5px;
-  --panel-w: 360px;
-  --doc-w: 720px;
-  --embed-w: 304px;
-  --sheet-half: 50dvh;
-  --sheet-full: 92dvh;
-
-  /* ---- One easing and one duration scale, so everything that moves moves the same way. ---- */
-  --ease: cubic-bezier(0.32, 0.72, 0, 1);
-  --fast: 0.15s;
-  --slow: 0.32s;
-  --ambient: 1.4s;   /* a loop that is meant to be ignored, not watched */
-}
-
-/* Held at arm's length rather than across a desk: the iOS sizes, and a finger's controls. */
-@media (pointer: coarse) {
-  :root {
-    --t-title: 700 1.375rem/1.18 var(--font-signage);
-    --t-section: 700 1.25rem/1.2 var(--font-ui);
-    --t-headline: 600 1.0625rem/1.29 var(--font-signage);
-    --t-figure: 700 1.25rem/1.1 var(--font-signage);
-    --t-body: 400 0.9375rem/1.33 var(--font-ui);
-    --t-caption: 400 0.8125rem/1.38 var(--font-ui);
-    --t-micro: 590 0.75rem/1.3 var(--font-ui);
-    --field-h: 38px;
-    --map-btn: 44px;
-  }
-}
 
 /* ===========================================================================
    Ground
    =========================================================================== */
 
 * { box-sizing: border-box; }
-html, body {
+/*
+ * The root keeps the browser's own size, so a rem is the reader's 16 px (or whatever they chose).
+ * It used to be set to the body role along with the body, which made every rem 13 px and drew the
+ * whole interface at 81 % of the scale it was designed at.
+ */
+html { height: 100%; -webkit-text-size-adjust: 100%; }
+body {
   margin: 0; height: 100%; background: var(--ground); color: var(--label);
   font: var(--t-body); letter-spacing: var(--tr-body);
-  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-  font-optical-sizing: auto; -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; font-optical-sizing: auto;
 }
 button, input, select { font: inherit; letter-spacing: inherit; }
 a { color: inherit; }
@@ -292,7 +67,7 @@ a { color: inherit; }
 .map[data-shown="false"] { opacity: 0; }
 .map-notice {
   position: absolute; top: var(--s4); left: 50%; transform: translateX(-50%);
-  padding: var(--s2) var(--s3); border-radius: var(--r-chip);
+  padding: var(--s2) var(--s3); border-radius: var(--r-control);
   background: var(--mat-regular); box-shadow: var(--shadow-3);
 }
 
@@ -301,12 +76,63 @@ a { color: inherit; }
    its own button, row or field; src/components/ui is the only way to get one.
    =========================================================================== */
 
+/*
+ * ---- Layout primitives: Stack, Inline (src/components/ui/Stack.tsx). ----
+ *
+ * No appearance of their own. A gap is a step of the grid, by number, so a layout cannot be
+ * spaced off the scale even by accident.
+ */
+.stack { display: flex; flex-direction: column; min-width: 0; }
+.inline { display: flex; flex-direction: row; align-items: center; min-width: 0; }
+.inline--wrap { flex-wrap: wrap; }
+.inline--between { justify-content: space-between; }
+.inline--end { justify-content: flex-end; }
+.align--baseline { align-items: baseline; }
+.align--start { align-items: flex-start; }
+.gap-0 { gap: var(--s0); }
+.gap-1 { gap: var(--s1); }
+.gap-2 { gap: var(--s2); }
+.gap-3 { gap: var(--s3); }
+.gap-4 { gap: var(--s4); }
+.gap-5 { gap: var(--s5); }
+.gap-6 { gap: var(--s6); }
+.gap-7 { gap: var(--s7); }
+.gap-8 { gap: var(--s8); }
+
+/*
+ * ---- Text (src/components/ui/Text.tsx): one class per role, and the label hierarchy. ----
+ *
+ * The same roles every rule below uses by token; this is how a component gets one without a
+ * rule of its own.
+ */
+/* A Text is its role and its tone and nothing else: whatever element it is, it brings no case, colour or margin of its own. */
+.text { margin: 0; font-style: normal; text-transform: none; color: inherit; }
+.text--display { font: var(--t-display); letter-spacing: var(--tr-display); }
+.text--title { font: var(--t-title); letter-spacing: var(--tr-title); }
+.text--section { font: var(--t-section); letter-spacing: var(--tr-section); }
+.text--figure { font: var(--t-figure); letter-spacing: var(--tr-figure); font-variant-numeric: tabular-nums; }
+.text--headline { font: var(--t-headline); letter-spacing: var(--tr-headline); }
+.text--body { font: var(--t-body); letter-spacing: var(--tr-body); }
+.text--prose { font: var(--t-prose); letter-spacing: var(--tr-prose); }
+.text--subhead { font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
+.text--footnote { font: var(--t-footnote); letter-spacing: var(--tr-footnote); }
+.text--micro { font: var(--t-micro); letter-spacing: var(--tr-micro); }
+.text--code { font: var(--t-code); letter-spacing: var(--tr-code); }
+.text--caps { text-transform: uppercase; }
+.text--truncate { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tone--secondary { color: var(--label-2); }
+.tone--tertiary { color: var(--label-3); }
+.tone--accent { color: var(--accent); }
+.tone--good { color: var(--green); }
+.tone--warn { color: var(--amber); }
+.tone--bad { color: var(--red); }
+
 /* ---- Button ---- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--s1);
-  background: var(--fill); color: var(--label); border: none; border-radius: var(--r-chip);
-  padding: 0 var(--s3); min-height: var(--control-h); font: var(--t-caption); font-weight: 590;
-  letter-spacing: var(--tr-caption); cursor: pointer; white-space: nowrap;
+  background: var(--fill); color: var(--label); border: none; border-radius: var(--r-control);
+  padding: 0 var(--s3); min-height: var(--control-h); font: var(--t-subhead); font-weight: var(--w-strong);
+  letter-spacing: var(--tr-subhead); cursor: pointer; white-space: nowrap;
   transition: background var(--fast) var(--ease), transform var(--fast) var(--ease);
 }
 .btn:hover { background: var(--fill-2); }
@@ -357,7 +183,7 @@ a { color: inherit; }
  */
 .field-row {
   display: flex; align-items: center; gap: var(--s2);
-  background: var(--fill-2); border-radius: var(--r-field); padding: 0 var(--s2); min-height: var(--field-h);
+  background: var(--fill-2); border-radius: var(--r-control); padding: 0 var(--s2); min-height: var(--field-h);
   transition: background var(--fast) var(--ease);
 }
 .field-row:focus-within { background: var(--fill-3); }
@@ -376,15 +202,15 @@ a { color: inherit; }
 
 /* ---- Select: the platform's own menu, in the system's chrome ---- */
 .select select {
-  background: var(--fill); color: var(--label); border: none; border-radius: var(--r-chip);
+  background: var(--fill); color: var(--label); border: none; border-radius: var(--r-control);
   padding: 0 var(--s2); min-height: var(--control-h); color-scheme: dark; cursor: pointer;
-  font: var(--t-caption); letter-spacing: var(--tr-caption); font-weight: 590;
+  font: var(--t-subhead); letter-spacing: var(--tr-subhead); font-weight: var(--w-strong);
 }
 .select select:hover { background: var(--fill-2); }
 
 /* ---- Popover: results and menus that float above the panel ---- */
 .popover {
-  position: absolute; left: 0; right: 0; top: calc(100% + var(--s1)); z-index: 10;
+  position: absolute; left: 0; right: 0; top: calc(100% + var(--s1)); z-index: var(--z-popover);
   margin: 0; padding: var(--s1); list-style: none;
   background: var(--surface-solid); border-radius: var(--r-card);
   box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge-soft);
@@ -403,7 +229,7 @@ a { color: inherit; }
   background: var(--fill); border-radius: var(--r-card); overflow: hidden;
   --row-inset: var(--s3);
 }
-.list--leading { --row-inset: var(--s7); }
+.list--leading { --row-inset: calc(var(--s3) * 2 + var(--bullet-lg)); }
 .list > li { position: relative; }
 .list > li + li::before {
   content: ""; position: absolute; top: 0; left: var(--row-inset); right: 0;
@@ -424,11 +250,11 @@ a { color: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .row-label em {
-  display: block; font: var(--t-caption); letter-spacing: var(--tr-caption); font-style: normal;
+  display: block; font: var(--t-subhead); letter-spacing: var(--tr-subhead); font-style: normal;
   color: var(--label-3); margin-top: var(--s0);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.row-trailing { flex: none; display: flex; align-items: center; gap: var(--s2); color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); font-variant-numeric: tabular-nums; }
+.row-trailing { flex: none; display: flex; align-items: center; gap: var(--s2); color: var(--label-3); font: var(--t-footnote); letter-spacing: var(--tr-footnote); font-variant-numeric: tabular-nums; }
 .row-disclosure { color: var(--label-3); flex: none; transition: transform var(--fast) var(--ease); }
 /* A row that opens in place turns its chevron rather than pointing somewhere else. */
 .row.is-expanded .row-disclosure { transform: rotate(90deg); }
@@ -456,24 +282,23 @@ a { color: inherit; }
 .sect-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: var(--control-h); }
 .sect-title { margin: 0; font: var(--t-section); letter-spacing: var(--tr-section); color: var(--label); }
 .sect-accessory { flex: none; display: flex; align-items: center; }
-.sect-stack { display: flex; flex-direction: column; gap: var(--s3); }
 
 /* ---- Segmented control: one of a few, the iOS way ---- */
 .seg {
   display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: var(--s0);
-  padding: var(--s0); border-radius: var(--r-chip); background: var(--fill-2);
+  padding: var(--s0); border-radius: var(--r-control); background: var(--fill-2);
 }
 .seg-opt {
   min-height: var(--control-h-sm); padding: 0 var(--s3); border: none; border-radius: var(--r-inner);
   background: none; color: var(--label-2); cursor: pointer; white-space: nowrap;
-  font: var(--t-caption); letter-spacing: var(--tr-caption); font-weight: 590; font-variant-numeric: tabular-nums;
+  font: var(--t-subhead); letter-spacing: var(--tr-subhead); font-weight: var(--w-strong); font-variant-numeric: tabular-nums;
   transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 .seg-opt:hover { color: var(--label); }
 .seg-opt.is-on { background: var(--fill-3); color: var(--label); box-shadow: var(--shadow-1); }
 
 /* ---- Switch: the native toggle, in place of a checkbox ---- */
-.switch { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; min-height: var(--control-h); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.switch { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; min-height: var(--control-h); color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
 .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
 .switch i {
   position: relative; display: block; flex: none;
@@ -502,7 +327,7 @@ a { color: inherit; }
 .toolbar-end { margin-left: auto; }
 
 /* ---- Notice: a line of consequence, with a coloured pip ---- */
-.notice { display: flex; align-items: flex-start; gap: var(--s2); font: var(--t-caption); letter-spacing: var(--tr-caption); line-height: 1.45; color: var(--label-2); }
+.notice { display: flex; align-items: flex-start; gap: var(--s2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); color: var(--label-2); }
 .notice-pip { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--label-3); }
 .notice .notice-pip { margin-top: var(--s1); }
 .notice.has-action { align-items: center; }
@@ -526,7 +351,7 @@ a { color: inherit; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 
 /* ---- Countdown: the signature element, and the only fluid type in the system ---- */
-.clock { text-align: right; font-variant-numeric: tabular-nums; line-height: 1; }
+.clock { text-align: right; font-variant-numeric: tabular-nums; line-height: var(--leading-tight); }
 .clock b { display: block; font: var(--t-clock); letter-spacing: var(--tr-clock); }
 .clock i {
   display: block; font: var(--t-micro); letter-spacing: var(--tr-micro); font-style: normal;
@@ -554,7 +379,7 @@ a { color: inherit; }
  * window — a map with a card on it, not a sidebar with a map beside it.
  */
 .panel {
-  position: absolute; top: var(--s3); left: var(--s3); z-index: 5;
+  position: absolute; top: var(--s3); left: var(--s3); z-index: var(--z-panel);
   width: var(--panel-w); max-height: calc(100dvh - var(--s5));
   background: var(--surface-solid);
   border-radius: var(--r-panel);
@@ -581,14 +406,9 @@ a { color: inherit; }
 }
 /* The card has nothing below its search field: no empty scroll area, no padding under nothing. */
 .panel-scroll:empty { display: none; }
-/* The fine print, at the end of the content rather than pinned under it. */
-.panel-foot {
-  display: flex; align-items: center; gap: var(--s3); justify-content: space-between; flex-wrap: wrap;
-  color: var(--label-3); padding: 0 var(--s1); font: var(--t-caption); letter-spacing: var(--tr-caption);
-}
 
 .muted { color: var(--label-2); }
-.hint { font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.hint { font: var(--t-footnote); letter-spacing: var(--tr-footnote); }
 .link-a { color: var(--label-3); text-decoration: none; }
 .link-a:hover { color: var(--label); }
 .grabber { display: none; }
@@ -601,12 +421,12 @@ a { color: inherit; }
  * screen, and only as big as a word.
  */
 .map-controls {
-  position: absolute; z-index: 4; top: calc(var(--s3) + env(safe-area-inset-top)); right: var(--s3);
+  position: absolute; z-index: var(--z-controls); top: calc(var(--s3) + env(safe-area-inset-top)); right: var(--s3);
   display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2);
 }
 .map-btn {
   display: grid; place-items: center; width: var(--map-btn); height: var(--map-btn); padding: 0;
-  border: none; border-radius: var(--r-field); cursor: pointer; color: var(--accent);
+  border: none; border-radius: var(--r-control); cursor: pointer; color: var(--accent);
   background: var(--surface-solid); box-shadow: var(--shadow-2), inset 0 0 0 var(--hairline) var(--edge);
   transition: transform var(--fast) var(--ease), background var(--fast) var(--ease);
 }
@@ -635,13 +455,6 @@ a { color: inherit; }
  * one look; the toggles that used to be the whole group are one row beneath them.
  */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: var(--s2); }
-.stat { display: flex; flex-direction: column; gap: var(--s0); min-width: 0; }
-.stat b { font: var(--t-figure); letter-spacing: var(--tr-figure); color: var(--label); font-variant-numeric: tabular-nums; }
-.stat span { font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stat.is-warn b { color: var(--amber); }
-.stat.is-bad b { color: var(--red); }
-.lines-body { display: flex; flex-direction: column; gap: var(--s4); padding: var(--s1) 0 0; }
-.lines-tools { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
 /* A group inside a group: the header steps down to a row's size, so the outer one still leads. */
 .sect .sect .sect-title { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); }
 
@@ -693,7 +506,7 @@ button.roundel:active { transform: scale(0.98); }
  * out of the emblem.
  */
 .roundel .alert-pip {
-  position: absolute; top: calc(var(--s0) * -1); right: calc(var(--s0) * -1); z-index: 2;
+  position: absolute; top: calc(var(--s0) * -1); right: calc(var(--s0) * -1); z-index: var(--z-pip);
   width: var(--pip); height: var(--pip); border-radius: 50%;
   box-shadow: 0 0 0 1px var(--surface-sunken);
 }
@@ -718,12 +531,12 @@ button.roundel:active { transform: scale(0.98); }
 /* ---- A row of roundels: the services that call somewhere, or that you could change to ---- */
 .bullets { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--s1); min-width: 0; }
 .bullets em {
-  font-style: normal; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption);
+  font-style: normal; color: var(--label-3); font: var(--t-footnote); letter-spacing: var(--tr-footnote);
   margin-right: var(--s1); font-variant-numeric: tabular-nums;
 }
 
 /* ---- How a line is running, in the agency's own four words ---- */
-.svc { display: inline-flex; align-items: center; gap: var(--s2); font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); }
+.svc { display: inline-flex; align-items: center; gap: var(--s2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); color: var(--label-2); }
 .svc-pip { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--label-3); }
 .svc--good .svc-pip { background: var(--green); }
 .svc--delay .svc-pip { background: var(--red); }
@@ -734,7 +547,7 @@ button.roundel:active { transform: scale(0.98); }
 /* ---- Which way, and where to ---- */
 .dir { display: flex; flex-direction: column; }
 .dir h3 { margin: 0 0 var(--s0); font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
-.dir-toward { font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); margin-bottom: var(--s2); }
+.dir-toward { font: var(--t-subhead); letter-spacing: var(--tr-subhead); color: var(--label-2); margin-bottom: var(--s2); }
 
 /* ---- A station's name, set the way a platform sign sets it ---- */
 .station-name { margin: 0; font: var(--t-title); letter-spacing: var(--tr-title); color: var(--label); }
@@ -757,7 +570,7 @@ button.roundel:active { transform: scale(0.98); }
 /* ---- Search ---- */
 .res-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--t-body); letter-spacing: var(--tr-body); }
 .popover li button.is-active { background: var(--fill-2); }
-.popover-empty { padding: var(--s3); color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.popover-empty { padding: var(--s3); color: var(--label-3); font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
 
 /* ---- Legend ---- */
 .legend { display: flex; flex-direction: column; gap: var(--s3); }
@@ -768,7 +581,7 @@ button.roundel:active { transform: scale(0.98); }
   background: linear-gradient(90deg, var(--fill) 25%, var(--fill-2) 37%, var(--fill) 63%);
   background-size: 400% 100%; animation: shimmer var(--ambient) var(--ease) infinite;
 }
-.legend-rows { display: flex; flex-direction: column; gap: var(--s2); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.legend-rows { display: flex; flex-direction: column; gap: var(--s2); color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
 .legend-row { display: flex; align-items: center; gap: var(--s2); }
 .swatch { width: var(--icon); height: var(--icon); flex: none; border-radius: 50%; display: inline-block; }
 .swatch.dot { background: var(--trunk-7av); box-shadow: 0 0 0 2px var(--label); }
@@ -781,14 +594,14 @@ button.roundel:active { transform: scale(0.98); }
 /* ---- Alerts ---- */
 .alerts { display: flex; flex-direction: column; gap: var(--s2); }
 .alert { border-radius: var(--r-card); background: var(--fill); overflow: hidden; }
-.alert-head { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--label); padding: var(--s3); cursor: pointer; font: var(--t-caption); letter-spacing: var(--tr-caption); line-height: 1.45; }
+.alert-head { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--label); padding: var(--s3); cursor: pointer; font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
 .alert-head:hover { background: var(--fill); }
 .alert-type { display: block; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; margin-bottom: var(--s1); }
 .alert.delay .alert-type { color: var(--red); }
 .alert.planned .alert-type { color: var(--amber); }
 .alert.info .alert-type { color: var(--label-3); }
 .alert-text .roundel, .alert-body .roundel { margin: 0 2px; }
-.alert-body { padding: 0 var(--s3) var(--s3); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); line-height: 1.55; white-space: pre-wrap; }
+.alert-body { padding: 0 var(--s3) var(--s3); color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); line-height: var(--leading-prose); white-space: pre-wrap; }
 /*
  * A service change, as one row. It keeps the warning where you cannot miss it while leaving the
  * countdown — the thing anyone actually opened the station for — above the fold on a phone.
@@ -804,7 +617,7 @@ button.roundel:active { transform: scale(0.98); }
 .board { display: flex; flex-direction: column; gap: var(--s5); }
 .board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
 .board-head .station-name { margin-bottom: var(--s2); }
-.board-sub { font: var(--t-caption); letter-spacing: var(--tr-caption); margin: calc(var(--s1) * -1) 0 var(--s2); }
+.board-sub { font: var(--t-subhead); letter-spacing: var(--tr-subhead); margin: calc(var(--s1) * -1) 0 var(--s2); }
 .board-sub.near { color: var(--green); }
 .board-sub.stale { color: var(--amber); }
 .board-actions { display: flex; gap: var(--s1); flex: none; }
@@ -820,7 +633,7 @@ button.roundel:active { transform: scale(0.98); }
 .detail-title h2 { margin: 0; font: var(--t-title); letter-spacing: var(--tr-title); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .detail-title .sub { font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label-3); margin-top: var(--s0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .motion { display: flex; flex-direction: column; gap: var(--s2); }
-.motion-facts { display: flex; gap: var(--s3); justify-content: space-between; color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); font-variant-numeric: tabular-nums; }
+.motion-facts { display: flex; gap: var(--s3); justify-content: space-between; color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); font-variant-numeric: tabular-nums; }
 .motion-facts.one { justify-content: flex-start; }
 .detail-actions { display: flex; gap: var(--s2); }
 
@@ -840,14 +653,13 @@ button.roundel:active { transform: scale(0.98); }
   display: flex; align-items: flex-start; gap: var(--s2); width: 100%; text-align: left;
   background: var(--fill); border: none; border-radius: var(--r-card);
   padding: var(--s3); min-height: var(--tap); cursor: pointer;
-  color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption);
+  color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead);
   box-shadow: inset 0 0 0 1px var(--tint-green);
   transition: background var(--fast) var(--ease);
 }
 .swap:hover { background: var(--fill-2); }
 .swap-lead { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--green); flex: none; padding-top: var(--s0); }
-.swap-body { line-height: 1.45; }
-.swap-body b { color: var(--label); font-weight: 600; }
+.swap-body b { color: var(--label); font-weight: var(--w-strong); }
 .swap .roundel { margin: 0 var(--s0); vertical-align: middle; }
 
 /* ===========================================================================
@@ -862,7 +674,7 @@ button.roundel:active { transform: scale(0.98); }
 .tl-cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--label); border-radius: 1px; pointer-events: none; }
 .tl-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber); pointer-events: none; }
 .tl-scale { display: flex; justify-content: space-between; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); font-variant-numeric: tabular-nums; }
-.health table { width: 100%; border-collapse: collapse; font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.health table { width: 100%; border-collapse: collapse; font: var(--t-footnote); letter-spacing: var(--tr-footnote); }
 .health th { text-align: left; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); padding-bottom: var(--s2); }
 .health td { padding: var(--s1) 0; border-top: var(--hairline) solid var(--separator); }
 .health tbody tr { cursor: pointer; }
@@ -877,7 +689,7 @@ button.roundel:active { transform: scale(0.98); }
    MapLibre's own chrome, brought into the system
    =========================================================================== */
 
-.maplibregl-ctrl-group { background: var(--mat-regular) !important; border: none !important; border-radius: var(--r-chip) !important; box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge) !important; }
+.maplibregl-ctrl-group { background: var(--mat-regular) !important; border: none !important; border-radius: var(--r-control) !important; box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge) !important; }
 .maplibregl-ctrl-group button + button { border-top: var(--hairline) solid var(--separator) !important; }
 .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(1); }
 .maplibregl-ctrl-attrib { background: var(--scrim-soft) !important; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); }
@@ -887,22 +699,26 @@ button.roundel:active { transform: scale(0.98); }
    Documents
    =========================================================================== */
 
+/*
+ * A document's own elements are styled through :where(), at the specificity of a bare element, so
+ * a primitive set inside a document — a Text in a title role — is never overruled by the document.
+ */
 .doc { max-width: var(--doc-w); margin: 0 auto; padding: var(--s7) var(--s5) var(--s8); }
 .doc header { margin-bottom: var(--s6); }
-.doc h1 { font: var(--t-large); letter-spacing: var(--tr-large); margin: 0 0 var(--s3); }
-.doc h2 { font: var(--t-title); letter-spacing: var(--tr-title); margin: var(--s7) 0 var(--s3); }
-.doc h3 { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); margin: var(--s5) 0 var(--s2); }
-.doc p, .doc li { color: var(--label-2); font: var(--t-body); letter-spacing: var(--tr-body); line-height: 1.62; }
+:where(.doc) h1 { font: var(--t-display); letter-spacing: var(--tr-display); margin: 0 0 var(--s3); }
+:where(.doc) h2 { font: var(--t-title); letter-spacing: var(--tr-title); margin: var(--s7) 0 var(--s3); }
+:where(.doc) h3 { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); margin: var(--s5) 0 var(--s2); }
+:where(.doc) :is(p, li) { color: var(--label-2); font: var(--t-prose); letter-spacing: var(--tr-prose); }
 .doc a { color: var(--accent); text-decoration: none; }
 .doc a:hover { text-decoration: underline; }
 .doc code { font: var(--t-code); letter-spacing: var(--tr-code); background: var(--fill); padding: var(--s0) var(--s1); border-radius: var(--r-inner); color: var(--label); }
 .doc pre { background: var(--fill); border-radius: var(--r-card); padding: var(--s4); overflow-x: auto; font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label); }
 .doc table { width: 100%; border-collapse: collapse; margin: var(--s4) 0; }
-.doc th, .doc td { text-align: left; padding: var(--s2) var(--s3); border-bottom: var(--hairline) solid var(--separator); font: var(--t-body); letter-spacing: var(--tr-body); }
-.doc th { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
+:where(.doc) :is(th, td) { text-align: left; padding: var(--s2) var(--s3); border-bottom: var(--hairline) solid var(--separator); font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
+:where(.doc) th { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
 .doc td.num, .doc th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.doc .win { color: var(--green); font-weight: 600; }
-.doc .back { display: inline-block; margin-bottom: var(--s5); color: var(--label-3); text-decoration: none; font: var(--t-caption); letter-spacing: var(--tr-caption); }
+.doc .win { color: var(--green); font-weight: var(--w-strong); }
+.doc .back { display: inline-block; margin-bottom: var(--s5); color: var(--label-3); text-decoration: none; font: var(--t-footnote); letter-spacing: var(--tr-footnote); }
 .doc .back:hover { color: var(--label); }
 .doc .stale { color: var(--amber); }
 
@@ -910,14 +726,11 @@ button.roundel:active { transform: scale(0.98); }
    The component library, drawn — /design
    =========================================================================== */
 
-.ds h2 { margin: var(--s6) 0 var(--s2); }
+:where(.ds) h2 { margin: var(--s6) 0 var(--s2); }
 /* A section's own heading is not a page heading, however it is marked up. */
 .ds .sect-title { margin: 0; }
 .ds .sect { margin: var(--s4) 0; }
-.ds code { font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label-3); background: none; padding: 0; }
-.ds-stack { display: flex; flex-direction: column; gap: var(--s2); }
-.ds-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
-.ds-row--wide { gap: var(--s4); }
+.ds code { font: var(--t-code); letter-spacing: var(--tr-code); color: var(--label-3); background: none; padding: 0; white-space: nowrap; }
 .ds-cell { display: flex; flex-direction: column; align-items: center; gap: var(--s2); }
 /* A panel's own ground, so a control is judged against the surface it will live on. */
 .ds-panel {
@@ -930,20 +743,17 @@ button.roundel:active { transform: scale(0.98); }
 .ds-chip { display: block; width: var(--s8); height: var(--s6); border-radius: var(--r-inner); background: var(--ds-fill); box-shadow: inset 0 0 0 var(--hairline) var(--edge); }
 /* A label is judged as ink, not as a field of colour: a tall thin bar reads the way text does. */
 .ds-chip--tall { height: var(--s5); }
-.ds-type { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
-/* The sample is set in whichever step it is showing, handed in by name. */
-.ds-type b { font: var(--t-sample); letter-spacing: var(--tr-sample); font-weight: inherit; }
-.ds-type em { font-style: normal; color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .ds-space { display: flex; align-items: center; gap: var(--s3); }
 .ds-space i { display: block; width: var(--ds-size); height: var(--s3); background: var(--accent); border-radius: 2px; }
 .ds-radius { display: block; width: var(--s7); height: var(--s7); background: var(--fill-2); border-radius: var(--ds-radius); }
+.ds-shadow { background: var(--surface-solid); border-radius: var(--r-card); box-shadow: var(--ds-shadow); }
 
 /* ===========================================================================
    Embed
    =========================================================================== */
 
 .embed-card {
-  position: absolute; top: var(--s3); left: var(--s3); z-index: 5; max-width: var(--embed-w);
+  position: absolute; top: var(--s3); left: var(--s3); z-index: var(--z-panel); max-width: var(--embed-w);
   background: var(--surface-solid);
   border-radius: var(--r-card); box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge); padding: var(--s3) var(--s4);
 }
@@ -953,11 +763,11 @@ button.roundel:active { transform: scale(0.98); }
 .embed-card h2 { margin: 0 0 var(--s3); font: var(--t-headline); letter-spacing: var(--tr-headline); }
 .embed-group + .embed-group { margin-top: var(--s3); }
 .embed-group h3 { margin: 0 0 var(--s1); font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
-.embed-row { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) 0; font: var(--t-body); letter-spacing: var(--tr-body); }
+.embed-row { display: flex; align-items: center; gap: var(--s2); padding: var(--s1) 0; font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
 .embed-dest { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.embed-eta { font-weight: 700; font-variant-numeric: tabular-nums; }
+.embed-eta { font-weight: var(--w-heavy); font-variant-numeric: tabular-nums; }
 .embed-brand {
-  position: absolute; right: var(--s3); top: var(--s3); z-index: 5; font: var(--t-micro); letter-spacing: var(--tr-micro);
+  position: absolute; right: var(--s3); top: var(--s3); z-index: var(--z-panel); font: var(--t-micro); letter-spacing: var(--tr-micro);
   color: var(--label); background: var(--mat-regular); border-radius: var(--r-inner); padding: var(--s1) var(--s2); text-decoration: none;
   box-shadow: inset 0 0 0 var(--hairline) var(--edge);
 }
@@ -968,10 +778,10 @@ button.roundel:active { transform: scale(0.98); }
 
 .dest-chip {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
-  background: var(--fill); border-radius: var(--r-chip); padding: var(--s1) var(--s1) var(--s1) var(--s3);
-  font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-2); min-height: var(--control-h);
+  background: var(--fill); border-radius: var(--r-control); padding: var(--s1) var(--s1) var(--s1) var(--s3);
+  font: var(--t-subhead); letter-spacing: var(--tr-subhead); color: var(--label-2); min-height: var(--control-h);
 }
-.dest-chip b { color: var(--label); font-weight: 600; }
+.dest-chip b { color: var(--label); font-weight: var(--w-strong); }
 
 /* ===========================================================================
    Phones — the panel becomes a sheet
@@ -1017,7 +827,7 @@ button.roundel:active { transform: scale(0.98); }
   .panel.sheet .icon-btn { min-width: var(--tap); width: var(--tap); }
   /* Inside the field the field is the target: a 44-point clear button would make it taller. */
   .panel.sheet .field .icon-btn { min-width: 0; min-height: 0; width: var(--control-h-sm); height: var(--control-h-sm); }
-  .panel.sheet .panel-foot a { display: inline-flex; align-items: center; min-height: var(--tap); }
+  .panel.sheet .panel-scroll > footer a { display: inline-flex; align-items: center; min-height: var(--tap); }
 }
 
 @media (prefers-reduced-motion: reduce) {
