@@ -1,4 +1,4 @@
-export type MeterTone = "accent" | "amber" | "red";
+export type MeterTone = "accent" | "warn" | "bad";
 
 /** A proportion, drawn. Never a control: nothing here can be dragged. */
 export default function Meter({ value, tone = "accent", ariaLabel }: {

@@ -123,9 +123,6 @@ a { color: inherit; }
 .tone--secondary { color: var(--label-2); }
 .tone--tertiary { color: var(--label-3); }
 .tone--accent { color: var(--accent); }
-.tone--good { color: var(--green); }
-.tone--warn { color: var(--amber); }
-.tone--bad { color: var(--red); }
 
 /* ---- Button ---- */
 .btn {
@@ -143,11 +140,11 @@ a { color: inherit; }
 .btn--tinted { background: var(--accent-fill); color: var(--accent); }
 .btn--tinted:hover { background: var(--accent-fill); color: var(--accent-hover); }
 /* Filled: reserved for the one action a view is for. */
-.btn--filled { background: var(--accent); color: var(--on-accent); }
-.btn--filled:hover { background: var(--accent-hover); }
+.btn--filled { background: var(--accent-ground); color: var(--on-accent); }
+.btn--filled:hover { background: var(--accent-ground-hover); }
 .btn--ghost { background: none; color: var(--label-2); padding: 0 var(--s1); }
 .btn--ghost:hover { background: none; color: var(--label); }
-.btn--ghost.is-on { color: var(--amber); }
+.btn--ghost.is-on { color: var(--accent); }
 .btn--wide { flex: 1; }
 .btn--touch { min-height: var(--tap); }
 .btn--start { justify-content: flex-start; text-align: left; width: 100%; }
@@ -161,7 +158,7 @@ a { color: inherit; }
 }
 .icon-btn:hover { background: var(--fill); color: var(--label); }
 .icon-btn:active { transform: scale(0.92); }
-.icon-btn.is-on { color: var(--amber); }
+.icon-btn.is-on { color: var(--accent); }
 .icon { display: block; flex: none; }
 
 /* ---- Chip: a small piece of status, never interactive ---- */
@@ -171,8 +168,13 @@ a { color: inherit; }
   font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
 }
 .chip--plain { color: var(--label-2); box-shadow: inset 0 0 0 1px var(--separator); }
-.chip--live { color: var(--green); box-shadow: inset 0 0 0 1px var(--tint-green); }
-.chip--replay { color: var(--amber); box-shadow: inset 0 0 0 1px var(--tint-amber); }
+/* A state is a mark beside the word, never the word's colour (tokens.css). */
+.chip--live, .chip--replay { color: var(--label-2); }
+.chip--live::before, .chip--replay::before { content: ""; width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; }
+.chip--live { box-shadow: inset 0 0 0 1px var(--good-tint); }
+.chip--live::before { background: var(--good); }
+.chip--replay { box-shadow: inset 0 0 0 1px var(--warn-tint); }
+.chip--replay::before { background: var(--warn); }
 
 /* ---- Field: one text input, with room for a leading icon and a trailing action ---- */
 .field { position: relative; }
@@ -311,7 +313,7 @@ a { color: inherit; }
   background: var(--label); box-shadow: var(--shadow-1);
   transition: transform var(--fast) var(--ease);
 }
-.switch input:checked + i { background: var(--green); }
+.switch input:checked + i { background: var(--good); }
 .switch input:checked + i::after { transform: translateX(calc(var(--switch-w) - var(--switch-knob) - var(--s1))); }
 .switch input:focus-visible + i { outline: var(--ring) solid var(--accent); outline-offset: var(--s0); }
 
@@ -319,8 +321,8 @@ a { color: inherit; }
 .meter { height: var(--s1); background: var(--fill-2); border-radius: var(--r-pill); overflow: hidden; }
 .meter i { display: block; height: 100%; border-radius: var(--r-pill); transition: width var(--slow) linear; }
 .meter--accent i { background: var(--accent); }
-.meter--amber i { background: var(--amber); }
-.meter--red i { background: var(--red); }
+.meter--warn i { background: var(--warn); }
+.meter--bad i { background: var(--bad); }
 
 /* ---- Toolbar: a row of controls that belong together ---- */
 .toolbar { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; color: var(--label-2); }
@@ -334,10 +336,9 @@ a { color: inherit; }
 .notice.has-action .notice-pip { margin-top: 0; }
 .notice-action { margin-left: auto; flex: none; }
 .notice--plain .notice-pip { background: var(--label-3); }
-.notice--ok .notice-pip { background: var(--green); }
-.notice--warn .notice-pip { background: var(--amber); }
-.notice--bad .notice-pip { background: var(--red); }
-.notice--warn { color: var(--amber); }
+.notice--ok .notice-pip { background: var(--good); }
+.notice--warn .notice-pip { background: var(--warn); }
+.notice--bad .notice-pip { background: var(--bad); }
 
 /*
  * A line of text that has not arrived, in the line box it will occupy — inline, and an em tall, so
@@ -357,7 +358,7 @@ a { color: inherit; }
   display: block; font: var(--t-micro); letter-spacing: var(--tr-micro); font-style: normal;
   text-transform: uppercase; color: var(--label-3); margin-top: var(--s0);
 }
-.clock--here b { font: var(--t-title); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--green); }
+.clock--here b { font: var(--t-title); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--good); }
 .clock--missed b { color: var(--label-3); }
 /* In a list of several stations the countdowns are many, so each is a figure rather than a sign. */
 .clock--md b { font: var(--t-figure); letter-spacing: var(--tr-figure); }
@@ -431,7 +432,7 @@ a { color: inherit; }
   transition: transform var(--fast) var(--ease), background var(--fast) var(--ease);
 }
 .map-btn:active { transform: scale(0.94); }
-.map-btn.is-on { background: var(--accent); color: var(--on-accent); }
+.map-btn.is-on { background: var(--accent-ground); color: var(--on-accent); }
 .map-badge {
   display: inline-flex; align-items: center; gap: var(--s1); padding: var(--s1) var(--s2);
   border-radius: var(--r-pill); background: var(--surface-solid); color: var(--label-2);
@@ -442,9 +443,8 @@ a { color: inherit; }
   .map-btn:not(.is-on), .map-badge { background: var(--mat-regular); backdrop-filter: var(--blur-regular); }
 }
 .map-badge i { width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--label-3); flex: none; }
-.map-badge--live i { background: var(--green); }
-.map-badge--replay { color: var(--amber); }
-.map-badge--replay i { background: var(--amber); }
+.map-badge--live i { background: var(--good); }
+.map-badge--replay i { background: var(--warn); }
 .map-badge--wait i { animation: breathe var(--ambient) var(--ease) infinite alternate; }
 @keyframes breathe { from { opacity: 1; } to { opacity: 0.25; } }
 
@@ -455,6 +455,10 @@ a { color: inherit; }
  * one look; the toggles that used to be the whole group are one row beneath them.
  */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: var(--s2); }
+/* What a figure is about, when it is a warning or a fault: a dot beside its label, not a coloured number. */
+.stat-mark { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; }
+.stat-mark--warn { background: var(--warn); }
+.stat-mark--bad { background: var(--bad); }
 /* A group inside a group: the header steps down to a row's size, so the outer one still leads. */
 .sect .sect .sect-title { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); }
 
@@ -510,8 +514,8 @@ button.roundel:active { transform: scale(0.98); }
   width: var(--pip); height: var(--pip); border-radius: 50%;
   box-shadow: 0 0 0 1px var(--surface-sunken);
 }
-.alert-pip.delay { background: var(--red); }
-.alert-pip.planned, .alert-pip.info { background: var(--amber); }
+.alert-pip.delay { background: var(--bad); }
+.alert-pip.planned, .alert-pip.info { background: var(--warn); }
 .roundel-blank { width: var(--bullet-lg); height: var(--bullet-lg); border-radius: 50%; background: var(--fill-2); flex: none; }
 
 /*
@@ -538,11 +542,10 @@ button.roundel:active { transform: scale(0.98); }
 /* ---- How a line is running, in the agency's own four words ---- */
 .svc { display: inline-flex; align-items: center; gap: var(--s2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); color: var(--label-2); }
 .svc-pip { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; background: var(--label-3); }
-.svc--good .svc-pip { background: var(--green); }
-.svc--delay .svc-pip { background: var(--red); }
-.svc--planned .svc-pip { background: var(--amber); }
+.svc--good .svc-pip { background: var(--good); }
+.svc--delay .svc-pip { background: var(--bad); }
+.svc--planned .svc-pip { background: var(--warn); }
 .svc--info .svc-pip { background: var(--label-3); }
-.svc--delay { color: var(--red); }
 
 /* ---- Which way, and where to ---- */
 .dir { display: flex; flex-direction: column; }
@@ -587,7 +590,7 @@ button.roundel:active { transform: scale(0.98); }
 .swatch.dot { background: var(--trunk-7av); box-shadow: 0 0 0 2px var(--label); }
 .swatch.chev { border-radius: 0; background: var(--trunk-8av); clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%); }
 .swatch.glow { background: radial-gradient(circle, var(--glow), transparent 70%); }
-.swatch.hold { background: var(--trunk-6av); box-shadow: 0 0 0 2px var(--amber); }
+.swatch.hold { background: var(--trunk-6av); box-shadow: 0 0 0 2px var(--warn); }
 .swatch.ghost { background: var(--trunk-canarsie); opacity: 0.5; box-shadow: 0 0 0 2px var(--edge-strong); }
 .swatch.stalefade { background: var(--trunk-7av); opacity: 0.45; }
 
@@ -597,8 +600,12 @@ button.roundel:active { transform: scale(0.98); }
 .alert-head { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--label); padding: var(--s3); cursor: pointer; font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
 .alert-head:hover { background: var(--fill); }
 .alert-type { display: block; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; margin-bottom: var(--s1); }
-.alert.delay .alert-type { color: var(--red); }
-.alert.planned .alert-type { color: var(--amber); }
+.alert-type::before {
+  content: ""; display: inline-block; width: var(--dot); height: var(--dot); border-radius: 50%;
+  margin-right: var(--s1); vertical-align: middle; background: var(--label-3);
+}
+.alert.delay .alert-type::before { background: var(--bad); }
+.alert.planned .alert-type::before { background: var(--warn); }
 .alert.info .alert-type { color: var(--label-3); }
 .alert-text .roundel, .alert-body .roundel { margin: 0 2px; }
 .alert-body { padding: 0 var(--s3) var(--s3); color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead); line-height: var(--leading-prose); white-space: pre-wrap; }
@@ -606,8 +613,8 @@ button.roundel:active { transform: scale(0.98); }
  * A service change, as one row. It keeps the warning where you cannot miss it while leaving the
  * countdown — the thing anyone actually opened the station for — above the fold on a phone.
  */
-.pip--delay { background: var(--red); }
-.pip--planned { background: var(--amber); }
+.pip--delay { background: var(--bad); }
+.pip--planned { background: var(--warn); }
 .pip--info { background: var(--label-3); }
 
 /* ===========================================================================
@@ -618,8 +625,11 @@ button.roundel:active { transform: scale(0.98); }
 .board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3); }
 .board-head .station-name { margin-bottom: var(--s2); }
 .board-sub { font: var(--t-subhead); letter-spacing: var(--tr-subhead); margin: calc(var(--s1) * -1) 0 var(--s2); }
-.board-sub.near { color: var(--green); }
-.board-sub.stale { color: var(--amber); }
+.board-sub { color: var(--label-2); }
+.board-sub.stale::before {
+  content: ""; display: inline-block; width: var(--dot); height: var(--dot); border-radius: 50%;
+  margin-right: var(--s1); vertical-align: middle; background: var(--warn);
+}
 .board-actions { display: flex; gap: var(--s1); flex: none; }
 .board-group + .board-group { margin-top: var(--s2); }
 
@@ -654,11 +664,11 @@ button.roundel:active { transform: scale(0.98); }
   background: var(--fill); border: none; border-radius: var(--r-card);
   padding: var(--s3); min-height: var(--tap); cursor: pointer;
   color: var(--label-2); font: var(--t-subhead); letter-spacing: var(--tr-subhead);
-  box-shadow: inset 0 0 0 1px var(--tint-green);
+  box-shadow: inset 0 0 0 1px var(--good-tint);
   transition: background var(--fast) var(--ease);
 }
 .swap:hover { background: var(--fill-2); }
-.swap-lead { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--green); flex: none; padding-top: var(--s0); }
+.swap-lead { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-2); flex: none; padding-top: var(--s0); }
 .swap-body b { color: var(--label); font-weight: var(--w-strong); }
 .swap .roundel { margin: 0 var(--s0); vertical-align: middle; }
 
@@ -672,7 +682,7 @@ button.roundel:active { transform: scale(0.98); }
 /* 1px gaps: these are chart bars, not layout. */
 .tl-bar i { flex: 1; background: var(--accent); opacity: 0.55; border-radius: 1px; min-height: 2px; }
 .tl-cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--label); border-radius: 1px; pointer-events: none; }
-.tl-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber); pointer-events: none; }
+.tl-playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warn); pointer-events: none; }
 .tl-scale { display: flex; justify-content: space-between; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); font-variant-numeric: tabular-nums; }
 .health table { width: 100%; border-collapse: collapse; font: var(--t-footnote); letter-spacing: var(--tr-footnote); }
 .health th { text-align: left; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); padding-bottom: var(--s2); }
@@ -681,7 +691,7 @@ button.roundel:active { transform: scale(0.98); }
 .health tbody tr:hover { background: var(--fill); }
 .health .num { text-align: right; padding-right: var(--s2); }
 .health .num em { font-style: normal; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); margin-left: var(--s1); }
-.health .num.worse { color: var(--red); }
+.health .num.worse { font-weight: var(--w-strong); }
 .health .wide { width: 42%; }
 .health .meter { display: inline-block; width: var(--s7); margin-right: var(--s2); vertical-align: middle; }
 
@@ -717,10 +727,10 @@ button.roundel:active { transform: scale(0.98); }
 :where(.doc) :is(th, td) { text-align: left; padding: var(--s2) var(--s3); border-bottom: var(--hairline) solid var(--separator); font: var(--t-subhead); letter-spacing: var(--tr-subhead); }
 :where(.doc) th { font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--label-3); }
 .doc td.num, .doc th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.doc .win { color: var(--green); font-weight: var(--w-strong); }
+.doc .win { color: var(--label); font-weight: var(--w-strong); }
 .doc .back { display: inline-block; margin-bottom: var(--s5); color: var(--label-3); text-decoration: none; font: var(--t-footnote); letter-spacing: var(--tr-footnote); }
 .doc .back:hover { color: var(--label); }
-.doc .stale { color: var(--amber); }
+.doc .stale { color: var(--label-3); }
 
 /* ===========================================================================
    The component library, drawn — /design
@@ -743,6 +753,9 @@ button.roundel:active { transform: scale(0.98); }
 .ds-chip { display: block; width: var(--s8); height: var(--s6); border-radius: var(--r-inner); background: var(--ds-fill); box-shadow: inset 0 0 0 var(--hairline) var(--edge); }
 /* A label is judged as ink, not as a field of colour: a tall thin bar reads the way text does. */
 .ds-chip--tall { height: var(--s5); }
+.ds-chip--sm { width: var(--s6); height: var(--s5); }
+/* The step a line is drawn in: outlined in the label colour, the way a selected swatch is. */
+.ds-chip--picked { box-shadow: 0 0 0 var(--ring) var(--label); }
 .ds-space { display: flex; align-items: center; gap: var(--s3); }
 .ds-space i { display: block; width: var(--ds-size); height: var(--s3); background: var(--accent); border-radius: 2px; }
 .ds-radius { display: block; width: var(--s7); height: var(--s7); background: var(--fill-2); border-radius: var(--ds-radius); }

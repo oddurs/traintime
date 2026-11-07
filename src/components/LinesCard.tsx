@@ -145,8 +145,11 @@ export default function LinesCard(props: Props) {
 function Stat({ value, label, tone }: { value: React.ReactNode; label: string; tone?: "warn" | "bad" }) {
   return (
     <Stack gap={0}>
-      <Text variant="figure" tone={tone}>{value}</Text>
-      <Text variant="footnote" tone="tertiary" truncate>{label}</Text>
+      <Text variant="figure">{value}</Text>
+      <Inline gap={1}>
+        {tone && <i className={`stat-mark stat-mark--${tone}`} aria-hidden="true" />}
+        <Text variant="footnote" tone="tertiary" truncate>{label}</Text>
+      </Inline>
     </Stack>
   );
 }

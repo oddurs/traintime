@@ -74,7 +74,7 @@ export default function LineHealth({ index, lines, onSolo }: Props) {
                   <span className="muted hint">no baseline yet</span>
                 ) : (
                   <>
-                    <Meter value={l.headwayRatio / METER_FULL} tone={l.headwayRatio > WORSE ? "red" : "amber"} />
+                    <Meter value={l.headwayRatio / METER_FULL} tone={l.headwayRatio > WORSE ? "bad" : "warn"} />
                     <span className={`num ${l.headwayRatio > WORSE ? "worse" : ""}`}>
                       {l.headwayRatio > NOTABLE ? `${Math.round((l.headwayRatio - 1) * 100)}% worse` : l.headwayRatio < 0.9 ? "better" : "normal"}
                     </span>

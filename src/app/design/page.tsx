@@ -10,6 +10,7 @@ import {
   Segmented, Select, Stack, Switch, Text, type IconName, type TextVariant,
 } from "@/components/ui";
 import { BulletGroup, Countdown, DirectionHeading, RouteBullet, ServiceStatus, StationName, TrunkStripe } from "@/components/brand";
+import { HUES, STEPS, oklch, toOklch } from "@/lib/ramps";
 
 /**
  * The design system, documented by rendering it.
@@ -35,11 +36,11 @@ const ROLES: { variant: TextVariant; token: string; use: string; sample: string 
   { variant: "code", token: "t-code", use: "A train id, an endpoint", sample: "GET /v1/lines" },
 ];
 
-const NEUTRALS = ["gray-1000", "gray-950", "gray-900", "gray-850", "gray-500", "gray-400", "gray-300", "gray-50", "white"];
-const HUES = ["blue-500", "blue-400", "blue-300", "blue-200", "green-500", "amber-500", "amber-300", "red-400"];
+const NEUTRALS = ["gray-1000", "gray-950", "gray-900", "gray-850", "gray-700", "gray-600", "gray-500", "gray-400", "gray-300", "gray-50", "white"];
 const ALPHAS = ["white-a06", "white-a08", "white-a11", "white-a16", "white-a35", "black-a50", "black-a60"];
 const SURFACES = ["ground", "surface-solid", "surface-sunken", "fill", "fill-2", "fill-3", "separator", "edge"];
-const LABELS = ["label", "label-2", "label-3", "accent", "green", "amber", "red"];
+const LABELS = ["label", "label-2", "label-3", "accent", "good"];
+const MARKS = ["accent-ground", "good", "warn", "bad"];
 const CONTRAST_ON: { name: string; over?: string }[] = [
   { name: "ground" }, { name: "surface-solid" }, { name: "fill", over: "surface-solid" }, { name: "fill-2", over: "surface-solid" },
 ];
@@ -126,6 +127,79 @@ function ContrastTable() {
           <tr key={r.label}>
             <td><code>--{r.label}</code></td>
             {r.cells.map((c, i) => <td key={i} className={`num${c >= 4.5 ? " win" : " stale"}`}>{c.toFixed(2)}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Every ramp, every step, with the MTA's printed colour beside it and the step each trunk is drawn
+ * in marked. Computed from src/lib/ramps.ts, the same numbers that generate the tokens.
+ */
+function Ramps() {
+  const steps = Object.entries(STEPS);
+  return (
+    <table>
+      <thead><tr><th>ramp</th><th>printed</th>{steps.map(([s]) => <th key={s} className="num">{s}</th>)}</tr></thead>
+      <tbody>
+        {Object.entries(HUES).map(([name, hue]) => {
+          const used = Object.values(TRUNKS).find((t) => t.name === hue.from);
+          return (
+            <tr key={name}>
+              <td><Stack gap={0}><Text variant="subhead">{name}</Text><Text variant="footnote" tone="tertiary">{hue.from}, L {toOklch(hue.printed)[0].toFixed(2)}</Text></Stack></td>
+              <td><i className="ds-chip ds-chip--sm" style={{ ["--ds-fill" as string]: hue.printed }} /></td>
+              {steps.map(([s, L]) => (
+                <td key={s}>
+                  <i className={`ds-chip ds-chip--sm${used && tokenStep(used.token) === `${name}-${s}` ? " ds-chip--picked" : ""}`} style={{ ["--ds-fill" as string]: oklch(L, hue.c, hue.h) }} />
+                </td>
+              ))}
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/** Which ramp step a token names, read from the live stylesheet's source of truth: tokens.css as served. */
+function tokenStep(token: string): string | undefined {
+  if (typeof document === "undefined") return undefined;
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList;
+    try { rules = sheet.cssRules; } catch { continue; }
+    for (const rule of Array.from(rules)) {
+      if (!(rule instanceof CSSStyleRule) || rule.selectorText !== ":root") continue;
+      const m = /var\(--([a-z]+-\d+)\)/.exec(rule.style.getPropertyValue(token));
+      if (m) return m[1];
+    }
+  }
+  return undefined;
+}
+
+/** Each line, as printed and as drawn, and what it measures on the map and under its letter. */
+function LineTable() {
+  const [rows, setRows] = useState<{ id: string; name: string; on: number; ink: number }[] | null>(null);
+  useEffect(() => {
+    const black = resolved("map-casing");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- measured from the live stylesheet, which render cannot read
+    setRows(Object.entries(TRUNKS).map(([id, t]) => {
+      const c = resolved(t.token.slice(2)), ink = resolved(t.ink === "dark" ? "ink-dark" : "ink-light");
+      return { id, name: t.name, on: c && black ? ratio(c, black) : 0, ink: c && ink ? ratio(ink, c) : 0 };
+    }));
+  }, []);
+  if (!rows) return null;
+  return (
+    <table>
+      <thead><tr><th>line</th><th>drawn as</th><th className="num">on black</th><th className="num">letter</th></tr></thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.id}>
+            <td>{r.name}</td>
+            <td><code>{tokenStep(`--trunk-${r.id}`) ?? "—"}</code></td>
+            <td className={`num${r.on >= 3 ? " win" : " stale"}`}>{r.on.toFixed(1)}</td>
+            <td className={`num${r.ink >= 3 ? " win" : " stale"}`}>{r.ink.toFixed(1)}</td>
           </tr>
         ))}
       </tbody>
@@ -228,16 +302,42 @@ export default function DesignPage() {
       </Section>
 
       <h2>Colour</h2>
-      <Section title="Primitives: neutrals"><Swatches tokens={NEUTRALS} /></Section>
-      <Section title="Primitives: hues"><Swatches tokens={HUES} /></Section>
-      <Section title="Primitives: light and shade"><Swatches tokens={ALPHAS} /></Section>
-      <Section title="Semantic: surfaces and fills"><Swatches tokens={SURFACES} /></Section>
-      <Section title="Semantic: labels and states"><Swatches tokens={LABELS} tall /></Section>
       <p>
-        Every label and state colour, on every surface it is set on, measured here in the browser.
-        The bar is 4.5:1 for text of any size; the audit holds the same table to it. The standard
-        system blue and red fall under it on a filled control, so text is set in Apple&rsquo;s
-        increased-contrast variants and only marks keep the standard ones.
+        One system for the railway and the interface. Every colour is a step on a ramp, and every
+        ramp takes its hue and chroma from a colour the MTA prints for one of its trunk lines. What
+        is adjusted for a dark web screen is lightness alone, in OKLCH, where equal lightness looks
+        equally light in any hue. A step of 500 is as bright in blue as in orange. The red of the
+        1 train and the red of a delay are one red.
+      </p>
+      <p>
+        The interface takes its colours from the same ramps. The accent is the 8 Avenue blue, a good
+        state the Lexington green, a warning the Broadway yellow, a fault the 7 Avenue red. They used
+        to be Apple&rsquo;s system colours, a few degrees from the lines beside them.
+      </p>
+      <Section title="The ramps, against what the MTA prints">
+        <p>The outlined step is the one each line is drawn in.</p>
+        <Ramps />
+      </Section>
+      <Section title="The lines on a dark screen">
+        <p>
+          Each line sits where a two-pixel stroke reads on black and a white letter reads on the
+          bullet, both at 3:1 or better. 8 Avenue moves furthest: its printed navy measures 2.1:1 on
+          black, so it is drawn lighter, and the bullet and the line are now one blue. The Crosstown
+          green and the L&rsquo;s grey are drawn darker, because white letters on the printed colours
+          measured 2.3 and 2.4.
+        </p>
+        <LineTable />
+      </Section>
+      <Section title="Neutrals, on the MTA's grey"><Swatches tokens={NEUTRALS} /></Section>
+      <Section title="Light and shade"><Swatches tokens={ALPHAS} /></Section>
+      <Section title="Surfaces and fills"><Swatches tokens={SURFACES} /></Section>
+      <Section title="Text"><Swatches tokens={LABELS} tall /></Section>
+      <Section title="Marks"><Swatches tokens={MARKS} /></Section>
+      <p>
+        A state is a mark, never words: a pip, a ring, a bar or the edge of a card carries the colour,
+        and the words beside it stay in the label hierarchy. Red text on a dark ground reads as an
+        error message whatever it says. The only state ever set as words is the countdown&rsquo;s NOW,
+        the platform sign&rsquo;s own word. Text holds 4.5:1 on every surface, measured here:
       </p>
       <ContrastTable />
 
@@ -307,14 +407,17 @@ export default function DesignPage() {
           <Inline gap={5}>
             {([["271", "trains", undefined], ["4", "held", "warn"], ["1", "delayed", "bad"]] as const).map(([v, l, t]) => (
               <Stack gap={0} key={l}>
-                <Text variant="figure" tone={t}>{v}</Text>
-                <Text variant="footnote" tone="tertiary">{l}</Text>
+                <Text variant="figure">{v}</Text>
+                <Inline gap={1}>
+                  {t && <i className={`stat-mark stat-mark--${t}`} aria-hidden="true" />}
+                  <Text variant="footnote" tone="tertiary">{l}</Text>
+                </Inline>
               </Stack>
             ))}
           </Inline>
           <Text variant="micro" tone="tertiary" caps>Tones</Text>
           <Inline gap={3} wrap>
-            {(["primary", "secondary", "tertiary", "accent", "good", "warn", "bad"] as const).map((t) => (
+            {(["primary", "secondary", "tertiary", "accent"] as const).map((t) => (
               <Text key={t} variant="subhead" tone={t}>{t}</Text>
             ))}
           </Inline>

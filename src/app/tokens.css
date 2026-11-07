@@ -7,8 +7,8 @@
  *               They mean nothing on their own, and nothing outside this file may use them.
  *   SEMANTIC    named for what they are for: --label-2, --t-headline, --r-card. Each one refers to
  *               a primitive. These are the only tokens a stylesheet or a component may use.
- *   DATA        the colours of the railway itself — the MTA's trunk lines and their inks. They are
- *               facts about New York rather than design decisions, and are written as such.
+ *   DATA        the railway: which step of which ramp each MTA trunk line is drawn in, and the
+ *               ink its bullets are lettered in.
  *
  * Why: a theme, a dark/light pair or a rebrand is then one edit to the semantic layer. When a rule
  * says --gray-400, a second theme is a search-and-replace across every file, and it will be wrong
@@ -25,22 +25,43 @@
      ========================================================================== */
 
   /*
-   * ---- Neutrals. ----
+   * ---- Colour: one set of ramps for the railway and the interface alike. ----
    *
-   * One ramp for most of the interface, dark end first. Numbered like every ramp — 1000 is black —
-   * so a step can be added between two others without renaming either.
+   * Generated from src/lib/ramps.ts by `npm run build:palette`, which measures each hue and chroma
+   * from the colour the MTA prints for one of its trunk lines and sets the steps' lightness for a
+   * dark screen. Only the steps some token below names are written out. Larger numbers are
+   * darker; gray-1000 is black.
    */
+  /* @generated ramps: scripts/build-palette.ts from src/lib/ramps.ts. Do not edit by hand. */
+  --red-500: #f53d35;
+  --orange-500: #e95500;
+  --brown-600: #9b6834;
+  --yellow-200: #ffce18;
+  --yellow-300: #e5b800;
+  --lime-500: #52a325;
+  --green-400: #49c068;
+  --green-600: #008c3b;
+  --sky-200: #b2d9ff;
+  --sky-500: #3091e1;
+  --blue-300: #9abeff;
+  --blue-400: #71a3ff;
+  --blue-500: #4b86f9;
+  --blue-600: #336dde;
+  --purple-600: #b630aa;
+  --gray-50: #f4f5f9;
+  --gray-300: #c8cacd;
+  --gray-400: #b3b5b8;
+  --gray-500: #999b9e;
+  --gray-600: #848689;
+  --gray-700: #6d6f72;
+  --gray-850: #151719;
+  --gray-900: #0f1113;
+  --gray-950: #0a0b0e;
   --gray-1000: #000000;
-  --gray-950: #0b0b0d;
-  --gray-900: #101014;
-  --gray-850: #16161a;
-  --gray-500: #9a9aa4;
-  --gray-400: #b4b4be;
-  --gray-300: #c9c9d2;
-  --gray-50: #f5f5f7;
+  /* @end generated ramps */
   --white: #ffffff;
 
-  /* Light laid over a dark material: the fills and hairlines Apple's dark appearance is built from. */
+  /* Light laid over a dark material: the fills and hairlines a dark interface is built from. */
   --white-a06: rgba(255, 255, 255, 0.06);
   --white-a08: rgba(255, 255, 255, 0.08);
   --white-a11: rgba(255, 255, 255, 0.11);
@@ -49,22 +70,6 @@
   /* And shade: shadows, and the edge of a chevron over a busy map. */
   --black-a50: rgba(0, 0, 0, 0.5);
   --black-a60: rgba(0, 0, 0, 0.6);
-
-  /*
-   * ---- Hues: Apple's system colours in their dark appearance, one accent and three states. ----
-   *
-   * The 400s are Apple's increased-contrast variants. Text is set in them, because the standard
-   * blue and red measure under 4.5:1 on a filled control (3.6:1 and 3.9:1); a mark that is not
-   * text, such as the dot that is you, keeps the 500.
-   */
-  --blue-500: #0a84ff;
-  --blue-400: #409cff;
-  --blue-300: #69b0ff;
-  --blue-200: #9fd0ff;
-  --green-500: #30d158;
-  --amber-500: #ff9f0a;
-  --amber-300: #ffb454;
-  --red-400: #ff6961;
 
   /*
    * ---- Type sizes. ----
@@ -137,16 +142,31 @@
   --label-3: var(--gray-500);
   --on-accent: var(--white);
 
-  /* ---- Accents carry meaning and nothing else. ---- */
-  --accent: var(--blue-400);
+  /*
+   * ---- The interface's colours are the railway's. ----
+   *
+   * The accent is the 8 Avenue blue; a good state is the Lexington green, a warning the Broadway
+   * yellow, a fault the 7 Avenue red. They used to be Apple's system colours, which sit at hues
+   * a few degrees from the lines they were drawn beside, so the panel and the map read as two
+   * palettes. Each is now a step on the same ramp as its line.
+   *
+   * States are marks, never words. A pip, a ring, a bar, the edge of a card carries the colour,
+   * and the words beside it stay in the label hierarchy: red text on a dark ground reads as an
+   * error message whatever it says, and a column of coloured words is louder than the thing it
+   * describes. The audit fails any rule that sets a state colour as a text colour; the one
+   * exception is the countdown's NOW, which is the platform sign's own word.
+   */
+  --accent: var(--blue-400);           /* text and glyphs: a link, a selected control */
   --accent-hover: var(--blue-300);
-  --accent-fill: color-mix(in srgb, var(--blue-500) 16%, transparent);
-  --green: var(--green-500);
-  --amber: var(--amber-500);
-  --red: var(--red-400);
-  --tint-green: color-mix(in srgb, var(--green-500) 40%, transparent);
-  --tint-amber: color-mix(in srgb, var(--amber-500) 45%, transparent);
-  --glow: color-mix(in srgb, var(--blue-200) 80%, transparent);
+  --accent-ground: var(--blue-600);    /* a filled control, the map button when it is on */
+  --accent-ground-hover: var(--blue-500);
+  --accent-fill: color-mix(in srgb, var(--blue-600) 22%, transparent);
+  --good: var(--green-400);
+  --warn: var(--yellow-300);
+  --bad: var(--red-500);
+  --good-tint: color-mix(in srgb, var(--green-400) 40%, transparent);
+  --warn-tint: color-mix(in srgb, var(--yellow-300) 45%, transparent);
+  --glow: color-mix(in srgb, var(--sky-200) 80%, transparent);
 
   /*
    * ---- The map's own palette. ----
@@ -159,11 +179,11 @@
   --map-station-edge: var(--gray-300);
   --map-label: var(--gray-300);
   --map-halo: var(--gray-1000);
-  --map-uncertain: var(--blue-200);
-  --map-hold: var(--amber-300);
+  --map-uncertain: var(--sky-200);
+  --map-hold: var(--yellow-300);
   --map-focus: var(--white-a08);
   --map-chevron-edge: var(--black-a50);
-  --map-you: var(--blue-500);
+  --map-you: var(--blue-600);
 
   /*
    * ---- Type: two voices, twelve roles, eight sizes. ----
@@ -314,41 +334,45 @@
   --ambient: 1.4s;   /* a loop that is meant to be ignored, not watched */
 
   /* ==========================================================================
-     DATA — the railway's own colours
+     DATA — the railway
      ========================================================================== */
 
   /*
    * ---- The trunk lines. ----
    *
    * The New York subway is not organised by service, it is organised by trunk line: the 1, 2 and
-   * 3 are three services on one red Broadway-7 Avenue trunk, and that is why they share a colour
+   * 3 are three services on one red Broadway–7 Avenue trunk, and that is why they share a colour
    * on every map the MTA has printed since 1979. So the colours are named for the lines rather
    * than the services, and a service is coloured by the trunk it runs on.
    *
-   * These are the feed's own hues rather than the printed manual's, which are tuned for white
-   * paper; src/lib/trunks.ts says which services run on each, and the design audit checks that
-   * every service the feed publishes has a trunk to belong to.
+   * Each trunk is the step of its own ramp nearest the colour the MTA prints, inside the band a
+   * dark screen needs: light enough that a two-pixel line reads on black (3:1 or better) and dark
+   * enough that a white letter reads on the bullet (3:1 or better, the bar for large text). Where
+   * the printed colour is already in that band it barely moves. Two move a long way, and those are
+   * the decisions to know about:
+   *
+   *   8 Avenue    printed at lightness 0.40, a navy that measures 2.1:1 on black. It is drawn at
+   *               0.56, and the bullet and the line are now the same blue; there used to be two.
+   *   Crosstown   printed at 0.72, where white letters measure 2.3:1. It is drawn at 0.64.
+   *
+   * The L and the shuttles keep the MTA's distinction between them as two steps of grey. Only the
+   * Broadway yellow is light enough to be lettered in black, as on the signs. audit-design.ts
+   * measures every one of these against the map's ground and against its ink.
    */
-  --trunk-7av: #ee352e;
-  --trunk-lexington: #00933c;
-  --trunk-flushing: #b933ad;
-  --trunk-8av: #0039a6;
-  --trunk-6av: #ff6319;
-  --trunk-broadway: #fccc0a;
-  --trunk-crosstown: #6cbe45;
-  --trunk-nassau: #996633;
-  --trunk-canarsie: #a7a9ac;
-  --trunk-shuttle: #808183;
-  --trunk-sir: #0078c6;
-  /*
-   * One line, lightened for a black ground. The emblem keeps the colour the MTA prints; #0039a6
-   * is 2.14:1 on black, which is a line you lose at two pixels. Lifting its lightness from 33 % to
-   * 48 %, hue and saturation untouched, takes it to 3.5:1.
-   */
-  --line-8av: #0053f3;
-  --route-unknown: #808183;
-  --route-unknown-text: #ffffff;
+  --trunk-7av: var(--red-500);
+  --trunk-lexington: var(--green-600);
+  --trunk-flushing: var(--purple-600);
+  --trunk-8av: var(--blue-600);
+  --trunk-6av: var(--orange-500);
+  --trunk-broadway: var(--yellow-200);
+  --trunk-crosstown: var(--lime-500);
+  --trunk-nassau: var(--brown-600);
+  --trunk-canarsie: var(--gray-600);
+  --trunk-shuttle: var(--gray-700);
+  --trunk-sir: var(--sky-500);
+  --route-unknown: var(--gray-700);
+  --route-unknown-text: var(--white);
   /* What a bullet's character is set in: the only two inks the signs use. */
-  --ink-light: #ffffff;
-  --ink-dark: #000000;
+  --ink-light: var(--white);
+  --ink-dark: var(--gray-1000);
 }

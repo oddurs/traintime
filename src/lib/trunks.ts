@@ -16,13 +16,12 @@ import { PALETTE } from "./palette";
 export interface Trunk {
   /** The line's own name, as the MTA writes it. */
   name: string;
-  /** The token its emblem colour is defined by — the colour the MTA prints. */
-  token: keyof typeof PALETTE;
   /**
-   * The token the *line* is drawn in, where a black ground needs a lighter one. An emblem is read
-   * at a centimetre across and a line at two pixels wide; only one of them can afford #0039a6.
+   * The token its colour is defined by: a step of the ramp measured from the colour the MTA
+   * prints, set for a dark screen (src/app/tokens.css says which step, and why). The bullet and
+   * the line are one colour.
    */
-  lineToken?: keyof typeof PALETTE;
+  token: keyof typeof PALETTE;
   /**
    * Which of the two inks the character is set in. The agency's own choice, everywhere.
    *
@@ -47,7 +46,7 @@ export const TRUNKS: Record<string, Trunk> = {
   "7av": { name: "Broadway–7 Avenue", token: "--trunk-7av", ink: "light", services: ["1", "2", "3"] },
   lexington: { name: "Lexington Avenue", token: "--trunk-lexington", ink: "light", services: ["4", "5", "6", "6X"] },
   flushing: { name: "Flushing", token: "--trunk-flushing", ink: "light", services: ["7", "7X"] },
-  "8av": { name: "8 Avenue", token: "--trunk-8av", lineToken: "--line-8av", ink: "light", services: ["A", "C", "E"] },
+  "8av": { name: "8 Avenue", token: "--trunk-8av", ink: "light", services: ["A", "C", "E"] },
   "6av": { name: "6 Avenue", token: "--trunk-6av", ink: "light", services: ["B", "D", "F", "FX", "M"] },
   broadway: { name: "Broadway", token: "--trunk-broadway", ink: "dark", services: ["N", "Q", "R", "W"] },
   crosstown: { name: "Brooklyn–Queens Crosstown", token: "--trunk-crosstown", ink: "light", services: ["G"] },
@@ -80,6 +79,6 @@ export function serviceColours(route: string): { color: string; textColor: strin
   return {
     color: PALETTE[t.trunk.token],
     textColor: t.trunk.ink === "dark" ? PALETTE["--ink-dark"] : PALETTE["--ink-light"],
-    lineColor: PALETTE[t.trunk.lineToken ?? t.trunk.token],
+    lineColor: PALETTE[t.trunk.token],
   };
 }

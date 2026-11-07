@@ -96,7 +96,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
         <div>
           <StationName>{name}</StationName>
           {distance !== undefined && (
-            <div className="board-sub near">
+            <div className="board-sub">
               {distance < 1000 ? `${Math.round(distance)} m away` : `${(distance / 1000).toFixed(1)} km away`}
               {walk !== undefined && ` · about ${Math.max(1, Math.round(walk / 60))} min walk`}
             </div>

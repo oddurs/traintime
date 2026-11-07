@@ -23,7 +23,7 @@ test("every service the schedule contains is drawable", () => {
   for (const route of [...TRUNKS, ...SHUTTLES, ...EXPRESS, "SI"]) {
     const r = net.net.routes[route];
     assert.ok(r, `${route} should exist in the network`);
-    assert.match(r.color, /^#[0-9A-Fa-f]{6}$/, `${route} needs a real colour, got ${r.color}`);
+    assert.match(net.routeColor(route), /^#[0-9A-Fa-f]{6}$/, `${route} needs a real colour, got ${net.routeColor(route)}`);
     const runs = net.net.routeRuns[route] ?? [];
     assert.ok(runs.length > 0, `${route} has no drawable geometry`);
     const stops = runs.flatMap((run) => run.stops);
@@ -51,7 +51,7 @@ test("express services are marked as express and share their local's colour", ()
   for (const x of EXPRESS) {
     assert.ok(isExpress(x), `${x} should render as a diamond`);
     const local = x.replace(/X$/, "");
-    assert.equal(net.net.routes[x].color, net.net.routes[local].color, `${x} runs on the ${local}'s line and takes its colour`);
+    assert.equal(net.routeColor(x), net.routeColor(local), `${x} runs on the ${local}'s line and takes its colour`);
   }
   assert.ok(!isExpress("6"), "the local is not express");
 });
