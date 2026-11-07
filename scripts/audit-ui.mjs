@@ -88,9 +88,9 @@ await step("solo a route (shift-click)", async()=>{
   await evalJs(`document.querySelectorAll(".routes .roundel")[3].dispatchEvent(new MouseEvent("click",{bubbles:true,shiftKey:true}))`);
   await sleep(2500); const r=await evalJs(`JSON.stringify({hash:location.hash, laneMode:window.__tt?.laneMode})`); return r.value??r.error;});
 await step("all / none", async()=>{
-  await evalJs(`[...document.querySelectorAll(".lines-tools .btn")].find(b=>b.innerText==="Hide all")?.click()`); await sleep(900);
+  await evalJs(`[...document.querySelectorAll(".panel .btn")].find(b=>b.innerText==="Hide all")?.click()`); await sleep(900);
   const none=await evalJs(`JSON.stringify({lines:[...document.querySelectorAll(".row[aria-expanded]")].find(x=>/Lines on the map/.test(x.innerText))?.innerText.replace(/\\n/g," · ")})`);
-  await evalJs(`[...document.querySelectorAll(".lines-tools .btn")].find(b=>b.innerText==="Show all")?.click()`); await sleep(900);
+  await evalJs(`[...document.querySelectorAll(".panel .btn")].find(b=>b.innerText==="Show all")?.click()`); await sleep(900);
   return (none.value??"");});
 await step("uncertainty toggle", async()=>{ await evalJs(`document.querySelector(".switch input")?.click()`); await sleep(800); await evalJs(`document.querySelector(".switch input")?.click()`); return "toggled";});
 await step("history panel", async()=>{

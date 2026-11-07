@@ -1,56 +1,148 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Network } from "@/lib/types";
 import { NetworkIndex } from "@/lib/network";
 import { asset, BASE_PATH } from "@/lib/basePath";
 import { TRUNKS } from "@/lib/trunks";
 import {
-  Button, Card, Chip, Disclosure, Field, Icon, IconButton, List, Meter, Notice, Row, Section,
-  Select, Switch, type IconName,
+  Button, Card, Chip, Disclosure, Field, Icon, IconButton, Inline, List, MapButton, Meter, Notice, Row, Section,
+  Segmented, Select, Stack, Switch, Text, type IconName, type TextVariant,
 } from "@/components/ui";
 import { BulletGroup, Countdown, DirectionHeading, RouteBullet, ServiceStatus, StationName, TrunkStripe } from "@/components/brand";
 
 /**
- * The component library, drawn.
+ * The design system, documented by rendering it.
  *
- * A design system that can only be read as source is a set of intentions. This is the same system
- * rendered — every token, every control, every state — so that a divergence is something you can
- * see rather than something you have to infer. scripts/audit-design.ts checks the rules; this page
- * is for the judgements the rules cannot make, like whether the tertiary label is still legible on
- * the panel material or whether two greys are doing the same job.
+ * A design system that can only be read as source is a set of intentions. This page draws every
+ * role, token and component from the same stylesheet the app uses, and the figures on it — the
+ * size a role renders at, the contrast of a label on a surface — are measured in the browser
+ * rather than typed in, so the page cannot disagree with the system it documents.
+ * scripts/audit-design.ts enforces the rules; this page is for the judgements the rules cannot make.
  */
 
-const TYPE: { token: string; role: string }[] = [
-  { token: "t-clock", role: "the countdown — the one fluid step, measured against the panel" },
-  { token: "t-large", role: "a document's title" },
-  { token: "t-title", role: "a station, a view's heading" },
-  { token: "t-headline", role: "a destination, a row's own words" },
-  { token: "t-body", role: "prose, a field, a list row" },
-  { token: "t-caption", role: "context, status, most controls" },
-  { token: "t-micro", role: "units and section headings, set in capitals" },
-  { token: "t-code", role: "a train id, an endpoint, a payload" },
+const ROLES: { variant: TextVariant; token: string; use: string; sample: string }[] = [
+  { variant: "display", token: "t-display", use: "A document's title", sample: "How accurate is this?" },
+  { variant: "title", token: "t-title", use: "A station, a train, a view's heading", sample: "14 St–Union Sq" },
+  { variant: "section", token: "t-section", use: "The header over a group", sample: "Nearby" },
+  { variant: "figure", token: "t-figure", use: "A number read before its label", sample: "271" },
+  { variant: "headline", token: "t-headline", use: "A row's own words: a destination", sample: "Pelham Bay Park" },
+  { variant: "body", token: "t-body", use: "A field, a line of interface text", sample: "Search stations" },
+  { variant: "prose", token: "t-prose", use: "Paragraphs", sample: "Trains are running with delays." },
+  { variant: "subhead", token: "t-subhead", use: "Context under a headline; controls; notices", sample: "Northbound · 2 stops away" },
+  { variant: "footnote", token: "t-footnote", use: "Fine print, a label under a figure", sample: "alerts just now" },
+  { variant: "micro", token: "t-micro", use: "Words in capitals: a unit, a direction", sample: "Northbound" },
+  { variant: "code", token: "t-code", use: "A train id, an endpoint", sample: "GET /v1/lines" },
 ];
 
-const SURFACES = ["ground", "surface-solid", "surface-sunken", "fill", "fill-2", "fill-3", "separator", "edge", "edge-strong"];
-const LABELS = ["label", "label-2", "label-3", "on-accent"];
-const ACCENTS = ["accent", "accent-hover", "accent-fill", "green", "amber", "red", "glow"];
+const NEUTRALS = ["gray-1000", "gray-950", "gray-900", "gray-850", "gray-500", "gray-400", "gray-300", "gray-50", "white"];
+const HUES = ["blue-500", "blue-400", "blue-300", "blue-200", "green-500", "amber-500", "amber-300", "red-400"];
+const ALPHAS = ["white-a06", "white-a08", "white-a11", "white-a16", "white-a35", "black-a50", "black-a60"];
+const SURFACES = ["ground", "surface-solid", "surface-sunken", "fill", "fill-2", "fill-3", "separator", "edge"];
+const LABELS = ["label", "label-2", "label-3", "accent", "green", "amber", "red"];
+const CONTRAST_ON: { name: string; over?: string }[] = [
+  { name: "ground" }, { name: "surface-solid" }, { name: "fill", over: "surface-solid" }, { name: "fill-2", over: "surface-solid" },
+];
 const SPACE = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"];
-const RADII = ["r-inner", "r-chip", "r-card", "r-panel", "r-sheet"];
+const RADII = ["r-inner", "r-control", "r-card", "r-sheet", "r-panel"];
+const SHADOWS = ["shadow-1", "shadow-2", "shadow-3"];
+const LAYERS: [string, string][] = [
+  ["z-pip", "a mark at the corner of a bullet"],
+  ["z-controls", "the buttons that float over the map"],
+  ["z-panel", "the card"],
+  ["z-popover", "search results, over the card's own contents"],
+];
+const MOTION: [string, string][] = [
+  ["fast", "a press, a hover, a chevron turning"],
+  ["slow", "the card moving between stops, the map fading in"],
+  ["ambient", "a loop meant to be ignored: a shimmer, a breathing dot"],
+];
 const ICONS: IconName[] = ["magnifyingglass", "xmark", "star", "star.fill", "location", "location.fill", "chevron.right", "chevron.up", "chevron.down", "plus", "clock", "exclamationmark"];
 
-function Swatches({ title, tokens, tall }: { title: string; tokens: string[]; tall?: boolean }) {
+/* ---- Measuring the system in the browser, so the page cannot drift from it. ---- */
+
+type RGBA = [number, number, number, number];
+/** A colour as the browser resolved it: rgb(), rgba(), or color(srgb …) for a color-mix(). */
+function parseColour(v: string): RGBA | null {
+  let m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?\s*\)/.exec(v);
+  if (m) return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])];
+  m = /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\)/.exec(v);
+  if (m) return [Number(m[1]) * 255, Number(m[2]) * 255, Number(m[3]) * 255, m[4] === undefined ? 1 : Number(m[4])];
+  return null;
+}
+function resolved(token: string): RGBA | null {
+  const probe = document.createElement("i");
+  probe.style.color = `var(--${token})`;
+  document.body.append(probe);
+  const c = parseColour(getComputedStyle(probe).color);
+  probe.remove();
+  return c;
+}
+const over = (t: RGBA, u: RGBA): RGBA => [t[0] * t[3] + u[0] * (1 - t[3]), t[1] * t[3] + u[1] * (1 - t[3]), t[2] * t[3] + u[2] * (1 - t[3]), 1];
+const lum = (c: RGBA) => {
+  const ch = (x: number) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+};
+const ratio = (a: RGBA, b: RGBA) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+
+/** The size and leading a role renders at, read from the element itself. */
+function Measured({ variant, sample }: { variant: TextVariant; sample: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [m, setM] = useState("");
+  useLayoutEffect(() => {
+    const el = ref.current?.firstElementChild;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    setM(`${parseFloat(cs.fontSize)} / ${parseFloat(cs.lineHeight) || "—"} · ${cs.fontWeight}`);
+  }, []);
   return (
-    <Section title={title}>
-      <div className="ds-swatches">
-        {tokens.map((t) => (
-          <div className="ds-swatch" key={t}>
-            <i className={tall ? "ds-chip ds-chip--tall" : "ds-chip"} style={{ ["--ds-fill" as string]: `var(--${t})` }} />
-            <code>--{t}</code>
-          </div>
+    <>
+      <td><span ref={ref}><Text variant={variant} caps={variant === "micro"}>{sample}</Text></span></td>
+      <td className="num">{m}</td>
+    </>
+  );
+}
+
+function ContrastTable() {
+  const [rows, setRows] = useState<{ label: string; cells: number[] }[] | null>(null);
+  useEffect(() => {
+    const surfaces = CONTRAST_ON.map((s) => {
+      const top = resolved(s.name);
+      const under = s.over ? resolved(s.over) : null;
+      return top && under ? over(top, under) : top;
+    });
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- measured from the live stylesheet, which render cannot read
+    setRows(LABELS.map((l) => {
+      const c = resolved(l);
+      return { label: l, cells: surfaces.map((s) => (c && s ? ratio(over(c, s), s) : 0)) };
+    }));
+  }, []);
+  if (!rows) return null;
+  return (
+    <table>
+      <thead><tr><th>text</th>{CONTRAST_ON.map((s) => <th key={s.name} className="num">on --{s.name}</th>)}</tr></thead>
+      <tbody>
+        {rows.map((r) => (
+          <tr key={r.label}>
+            <td><code>--{r.label}</code></td>
+            {r.cells.map((c, i) => <td key={i} className={`num${c >= 4.5 ? " win" : " stale"}`}>{c.toFixed(2)}</td>)}
+          </tr>
         ))}
-      </div>
-    </Section>
+      </tbody>
+    </table>
+  );
+}
+
+function Swatches({ tokens, tall }: { tokens: string[]; tall?: boolean }) {
+  return (
+    <div className="ds-swatches">
+      {tokens.map((t) => (
+        <div className="ds-swatch" key={t}>
+          <i className={tall ? "ds-chip ds-chip--tall" : "ds-chip"} style={{ ["--ds-fill" as string]: `var(--${t})` }} />
+          <code>--{t}</code>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -59,10 +151,12 @@ export default function DesignPage() {
   const [on, setOn] = useState(true);
   const [q, setQ] = useState("");
   const [speed, setSpeed] = useState(10);
+  const [radius, setRadius] = useState<5 | 10 | 20>(10);
   const [open, setOpen] = useState<string | null>("delays");
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
-    fetch(asset("/data/network-lite.json")).then((r) => r.json()).then((n: Network) => setIndex(new NetworkIndex(n))).catch(() => {});
+    fetch(asset("/data/network-lite.json")).then((r) => r.json()).then((n: Network) => setIndex(new NetworkIndex(n))).catch((e: unknown) => console.error(e));
   }, []);
 
   return (
@@ -71,198 +165,227 @@ export default function DesignPage() {
       <header>
         <h1>The system</h1>
         <p>
-          Two systems, kept apart on purpose. The <b>brand</b> layer follows the MTA — trunk colours,
-          roundels, the countdown, the words for how a line is running. The <b>interface</b> layer
-          follows the platform — buttons, fields, rows, switches. Signage where the subject is the
-          railway; interface where the subject is the application.
+          Two voices, kept apart on purpose. The <b>railway</b> is set the way the MTA sets it:
+          Helvetica, trunk colours, roundels, the countdown. The <b>application</b> is set the way
+          the platform sets it: the system face, fills instead of borders, a small vocabulary of
+          controls. Signage where the subject is the subway; interface where the subject is the app.
         </p>
       </header>
 
-      <h2>Trunk lines</h2>
+      <h2>How it is built</h2>
       <p>
-        The subway is organised by trunk, not by service: the 1, 2 and 3 are three services on one
-        red line. A service takes its colour from its trunk, and the map collapses a trunk to a
-        single line once you are too far away to tell its services apart. These are the colours the
-        MTA prints.
+        Four layers, each using only the ones above it. <b>Tokens</b> are the values, in{" "}
+        <code>src/app/tokens.css</code>. <b>Primitives</b> — <code>Stack</code>, <code>Inline</code>,{" "}
+        <code>Text</code> — are layout with no appearance of their own. <b>Components</b> in{" "}
+        <code>src/components/ui</code> are the controls. <b>Features</b> such as the station board are
+        made of components and add no styling of their own beyond arrangement.
       </p>
       <p>
-        An emblem and a line have different jobs. Ten of the eleven trunks clear 4:1 against the
-        map&rsquo;s black ground and read at a two-pixel stroke; 8 Avenue does not, so its line is
-        lifted from <code>#0039a6</code> to <code>#0053f3</code> — hue and saturation untouched —
-        while the bullet keeps the printed colour.
+        The tokens come in three layers. <b>Primitives</b> are named for what they are —{" "}
+        <code>--gray-400</code>, <code>--fs-17</code> — and nothing outside the token file may use one.{" "}
+        <b>Semantic</b> tokens are named for what they are for — <code>--label-2</code>,{" "}
+        <code>--t-headline</code> — and each names a primitive. <b>Data</b> is the railway&rsquo;s own
+        colours, which are facts about New York rather than decisions. A theme is one edit to the
+        semantic layer.
       </p>
-      <p>
-        The ink is the agency&rsquo;s everywhere, and only the Broadway yellow is set in black.
-        White on the crosstown green measures 2.3:1 and on the Canarsie grey 2.4:1, and for a while
-        those three trunks were given black on that evidence. The measurement was right and the
-        conclusion was wrong: these are the bullets from the platform signs, and a G with a black
-        character on it is not a hard-to-read G, it is one nobody in New York has ever seen. Where
-        legibility and fidelity disagree the sign wins, and the answer to a dim bullet is its size.
-      </p>
-      <div className="ds-stack">
-        {index && Object.keys(TRUNKS).map((id) => (
-          <TrunkStripe key={id} id={id}>
-            <BulletGroup index={index} routes={TRUNKS[id].services} size="md" />
-          </TrunkStripe>
-        ))}
-      </div>
-
-      <h2>Roundels</h2>
-      <p>
-        A circle for a local service and a diamond for an express, drawn from one specification —
-        the same path, the same Helvetica, the same casing — and rendered two ways: as SVG here, and
-        rasterised into the map&rsquo;s image atlas for the trains. A bullet in the panel and the
-        marker for that train on the map are one emblem rather than two drawings meant to look
-        alike. The capital is centred on the shape rather than its em box, which is what stops a
-        numeral riding high. Size is a name, not a number.
-      </p>
-      {index && (
-        <div className="ds-row">
-          {(["sm", "md", "lg", "xl"] as const).map((size) => (
-            <div className="ds-cell" key={size}>
-              <div className="ds-row">
-                <RouteBullet index={index} route="1" size={size} />
-                <RouteBullet index={index} route="6X" size={size} />
-                <RouteBullet index={index} route="SI" size={size} />
-              </div>
-              <code>{size}</code>
-            </div>
-          ))}
-          <div className="ds-cell">
-            <div className="ds-row">
-              <RouteBullet index={index} route="A" size="xl" dim />
-              <RouteBullet index={index} route="F" size="xl"><span className="alert-pip delay" /></RouteBullet>
-            </div>
-            <code>dim · alert</code>
-          </div>
-        </div>
-      )}
-
-      <h2>How a line is running</h2>
-      <p>The agency publishes four states and a rider reads them off signs all day. There is no fifth.</p>
-      <div className="ds-stack">
-        {(["good", "delay", "planned", "info"] as const).map((s) => <ServiceStatus key={s} status={s} />)}
-      </div>
-
-      <h2>The countdown</h2>
-      <p>
-        This application&rsquo;s signature element, and the only fluid type in the system: it measures
-        the panel holding it rather than the window, so it grows on a phone sheet and holds still in
-        a desktop side panel.
-      </p>
-      <div className="ds-row ds-row--wide">
-        <div className="ds-cell"><Countdown seconds={480} here={false} /><code>minutes</code></div>
-        <div className="ds-cell"><Countdown seconds={10} here /><code>at the platform</code></div>
-        <div className="ds-cell"><Countdown seconds={10} here departing /><code>leaving</code></div>
-        <div className="ds-cell"><Countdown seconds={200} here={false} missed /><code>out of reach on foot</code></div>
-      </div>
 
       <h2>Type</h2>
       <p>
-        Signage is Helvetica, the face every station is signed in; interface is whatever the platform
-        calls its own. Each step carries its own tracking and the two are never separated.
+        One scale on every device, on Apple&rsquo;s text sizes: 12, 13, 15, 17, 20, 22, 28 and 34
+        pixels at the reader&rsquo;s default of 16 to the rem. Twelve roles sit on those eight
+        sizes, with three weights. A role is a whole font and carries its own tracking. Nothing is
+        set under 12 pixels, and the audit fails the build if a role ever is.
       </p>
-      <div className="ds-stack">
-        {TYPE.map((t) => (
-          <div className="ds-type" key={t.token}>
-            <b style={{ ["--t-sample" as string]: `var(--${t.token})`, ["--tr-sample" as string]: `var(--tr-${t.token.slice(2)})` }}>14 St–Union Sq</b>
-            <code>--{t.token}</code>
-            <em>{t.role}</em>
-          </div>
-        ))}
-      </div>
+      <p>
+        The interface used to render at 81 % of these sizes. The root element had been given the
+        body&rsquo;s font, which made every rem 13 pixels, so a 12-pixel label drew at 9.75. The
+        root now keeps the browser&rsquo;s size and only the body is set.
+      </p>
+      <table>
+        <thead><tr><th>role</th><th>sample</th><th className="num">size / leading · weight</th><th>for</th></tr></thead>
+        <tbody>
+          {ROLES.map((r) => (
+            <tr key={r.variant}>
+              <td><code>--{r.token}</code></td>
+              <Measured variant={r.variant} sample={r.sample} />
+              <td>{r.use}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Section title="In use">
+        <Stack gap={1}>
+          <Text variant="title" as="h3">14 St–Union Sq</Text>
+          <Text variant="subhead" tone="secondary">3 min walk · 210 m</Text>
+        </Stack>
+        <Inline gap={3} justify="between">
+          <Stack gap={0}>
+            <Text variant="headline">Pelham Bay Park</Text>
+            <Text variant="subhead" tone="secondary">Northbound · 2 stops away</Text>
+          </Stack>
+          <Countdown seconds={240} here={false} />
+        </Inline>
+      </Section>
 
       <h2>Colour</h2>
-      <Swatches title="Surfaces and fills" tokens={SURFACES} />
-      <Swatches title="Labels" tokens={LABELS} tall />
-      <Swatches title="Accents" tokens={ACCENTS} />
+      <Section title="Primitives: neutrals"><Swatches tokens={NEUTRALS} /></Section>
+      <Section title="Primitives: hues"><Swatches tokens={HUES} /></Section>
+      <Section title="Primitives: light and shade"><Swatches tokens={ALPHAS} /></Section>
+      <Section title="Semantic: surfaces and fills"><Swatches tokens={SURFACES} /></Section>
+      <Section title="Semantic: labels and states"><Swatches tokens={LABELS} tall /></Section>
+      <p>
+        Every label and state colour, on every surface it is set on, measured here in the browser.
+        The bar is 4.5:1 for text of any size; the audit holds the same table to it. The standard
+        system blue and red fall under it on a filled control, so text is set in Apple&rsquo;s
+        increased-contrast variants and only marks keep the standard ones.
+      </p>
+      <ContrastTable />
 
-      <h2>Space and shape</h2>
-      <Section title="The eight-point grid">
-        <div className="ds-stack">
+      <h2>Space, shape, depth</h2>
+      <Section title="The 8-point grid">
+        <Stack gap={2}>
           {SPACE.map((t) => (
             <div className="ds-space" key={t}>
               <i style={{ ["--ds-size" as string]: `var(--${t})` }} />
               <code>--{t}</code>
             </div>
           ))}
-        </div>
+        </Stack>
       </Section>
       <Section title="Radii">
-        <div className="ds-row">
+        <Inline gap={4} wrap>
           {RADII.map((t) => (
             <div className="ds-cell" key={t}>
               <i className="ds-radius" style={{ ["--ds-radius" as string]: `var(--${t})` }} />
               <code>--{t}</code>
             </div>
           ))}
-        </div>
+        </Inline>
       </Section>
+      <Section title="Elevation">
+        <Inline gap={5} wrap>
+          {SHADOWS.map((t) => (
+            <div className="ds-cell" key={t}>
+              <i className="ds-radius ds-shadow" style={{ ["--ds-shadow" as string]: `var(--${t})` }} />
+              <code>--{t}</code>
+            </div>
+          ))}
+        </Inline>
+      </Section>
+      <Section title="Layers">
+        <table>
+          <tbody>{LAYERS.map(([t, d]) => <tr key={t}><td><code>--{t}</code></td><td>{d}</td></tr>)}</tbody>
+        </table>
+      </Section>
+      <Section title="Motion">
+        <p>One curve, <code>--ease</code>, and three durations. With reduced motion asked for, every duration drops to nothing.</p>
+        <table>
+          <tbody>{MOTION.map(([t, d]) => <tr key={t}><td><code>--{t}</code></td><td>{d}</td></tr>)}</tbody>
+        </table>
+      </Section>
+      <Section title="Breakpoint">
+        <p>
+          One: <code>--bp-phone</code>, 640 pixels. Under it the card becomes a sheet that swipes up
+          from the bottom. A media query cannot read a custom property, so the audit checks that
+          every query and the first-paint script say the same number.
+        </p>
+      </Section>
+
+      <h2>Primitives</h2>
+      <p>
+        <code>Stack</code> is a column and <code>Inline</code> a row, with a gap that is a step of
+        the grid by number — never a length. <code>Text</code> sets one role, in one tone, on
+        whichever element is right for it. None of them has a margin: spacing belongs to whatever
+        holds them.
+      </p>
+      <div className="ds-panel">
+        <Stack gap={3}>
+          <Inline justify="between">
+            <Text variant="section" as="h3">Lines</Text>
+            <Button variant="ghost">Show all</Button>
+          </Inline>
+          <Inline gap={5}>
+            {([["271", "trains", undefined], ["4", "held", "warn"], ["1", "delayed", "bad"]] as const).map(([v, l, t]) => (
+              <Stack gap={0} key={l}>
+                <Text variant="figure" tone={t}>{v}</Text>
+                <Text variant="footnote" tone="tertiary">{l}</Text>
+              </Stack>
+            ))}
+          </Inline>
+          <Text variant="micro" tone="tertiary" caps>Tones</Text>
+          <Inline gap={3} wrap>
+            {(["primary", "secondary", "tertiary", "accent", "good", "warn", "bad"] as const).map((t) => (
+              <Text key={t} variant="subhead" tone={t}>{t}</Text>
+            ))}
+          </Inline>
+        </Stack>
+      </div>
 
       <h2>Controls</h2>
       <p>Four weights of emphasis, and no fifth: a button that needed to look different from these would be a hole in the system.</p>
-      <div className="ds-row ds-row--wide">
+      <Inline gap={3} wrap>
         <Button>plain</Button>
         <Button variant="tinted" icon="plus">tinted</Button>
         <Button variant="filled">filled</Button>
         <Button variant="ghost">ghost</Button>
         <Button disabled>disabled</Button>
         <Button variant="ghost" on>selected</Button>
-      </div>
-      <div className="ds-row ds-row--wide">
-        <IconButton icon="star" ariaLabel="Save" />
-        <IconButton icon="star.fill" on ariaLabel="Saved" />
-        <IconButton icon="xmark" ariaLabel="Close" />
+      </Inline>
+      <Inline gap={3} wrap>
+        <Segmented ariaLabel="Walking distance" value={radius} onChange={setRadius}
+          options={[{ value: 5, label: "5 min" }, { value: 10, label: "10 min" }, { value: 20, label: "20 min" }]} />
         <Switch checked={on} onChange={setOn}>a switch, not a checkbox</Switch>
         <Select value={speed} onChange={setSpeed} parse={Number} ariaLabel="Speed"
           options={[1, 5, 10, 30].map((s) => ({ value: s, label: `${s}×` }))} />
+      </Inline>
+      <Inline gap={3} wrap>
+        <IconButton icon="star" ariaLabel="Save" />
+        <IconButton icon="star.fill" on ariaLabel="Saved" />
+        <IconButton icon="xmark" ariaLabel="Close" />
+        <MapButton icon="location" onClick={() => {}} ariaLabel="Show trains near me" />
+        <MapButton icon="location.fill" on onClick={() => {}} ariaLabel="Stop using my location" />
         <Chip tone="live">Live</Chip>
         <Chip tone="replay">Replay 10×</Chip>
         <Chip>Plain</Chip>
-      </div>
+      </Inline>
 
       <h2>Icons</h2>
-      <p>Drawn on a 16-unit grid at one stroke weight, so an icon and the words beside it read as the same voice — not borrowed from the font.</p>
-      <div className="ds-row ds-row--wide">
+      <p>Drawn on a 16-unit grid at one stroke weight, so an icon and the words beside it read as one voice.</p>
+      <Inline gap={4} wrap>
         {ICONS.map((n) => (
           <div className="ds-cell" key={n}><Icon name={n} size="lg" /><code>{n}</code></div>
         ))}
-      </div>
+      </Inline>
 
-      <h2>Fields</h2>
+      <h2>Fields, rows and groups</h2>
       <div className="ds-panel">
-        <Field value={q} onChange={setQ} placeholder="Search stations…" ariaLabel="Search" icon="magnifyingglass"
-          accessory={<Button variant="ghost" icon="location">near me</Button>} />
+        <Field value={q} onChange={setQ} placeholder="Search stations" ariaLabel="Search" icon="magnifyingglass"
+          accessory={q ? <IconButton icon="xmark" ariaLabel="Clear search" onClick={() => setQ("")} /> : undefined} />
+        {index && (
+          <Section title="Northbound">
+            <DirectionHeading direction="Northbound" toward="Woodlawn" />
+            <List leading>
+              <Row
+                leading={<RouteBullet index={index} route="4" size="lg" />}
+                title="Woodlawn" subtitle="next stop · give or take 26 s"
+                trailing={<Countdown seconds={70} here={false} />}
+              />
+              <Row
+                leading={<RouteBullet index={index} route="5" size="lg" />}
+                title="Eastchester–Dyre Av" subtitle="at the platform"
+                trailing={<Countdown seconds={0} here />}
+              />
+              <Row title="Lines on the map" subtitle="All shown" expanded={expanded} onClick={() => setExpanded((e) => !e)} />
+            </List>
+          </Section>
+        )}
       </div>
 
-      <h2>Rows and lists</h2>
-      <p>One inset grouped list, two insets: separators stop short of the leading edge so the group reads as a single object.</p>
-      {index && (
-        <div className="ds-panel">
-          <DirectionHeading direction="Northbound" toward="Woodlawn" />
-          <List leading>
-            <Row
-              leading={<RouteBullet index={index} route="4" size="lg" />}
-              title="Woodlawn" subtitle="next stop · give or take 26 s"
-              trailing={<Countdown seconds={70} here={false} />}
-            />
-            <Row
-              leading={<RouteBullet index={index} route="5" size="lg" />}
-              title="Eastchester–Dyre Av" subtitle="at the platform"
-              trailing={<Countdown seconds={0} here />}
-            />
-          </List>
-          <List>
-            <Row leading={<span className="notice-pip pip--delay" />} title="2 service changes" disclosure />
-          </List>
-        </div>
-      )}
-
-      <h2>Status, cards and disclosure</h2>
+      <h2>Status and disclosure</h2>
       <div className="ds-panel">
         <Notice tone="ok">879 trains · feed just now</Notice>
         <Notice tone="warn">feed down: ace</Notice>
-        <Notice tone="bad">not connected</Notice>
+        <Notice tone="bad" action={<Button variant="ghost">Try again</Button>}>Couldn’t load the stations.</Notice>
         <Card>
           <StationName as="h3">14 St–Union Sq</StationName>
           {index && <BulletGroup index={index} routes={["L", "N", "Q", "R", "W", "4", "5", "6", "6X"]} size="md" />}
@@ -272,6 +395,79 @@ export default function DesignPage() {
           We are holding trains while we address a signal problem.
         </Disclosure>
       </div>
+
+      <h2>The railway</h2>
+      <Section title="Trunk lines">
+        <p>
+          The subway is organised by trunk, not by service: the 1, 2 and 3 are three services on one
+          red line, and a service takes its colour from its trunk. These are the colours the MTA
+          prints. Only 8 Avenue is lifted for the map, from <code>#0039a6</code> to{" "}
+          <code>#0053f3</code>, because the printed blue measures 2.14:1 on black; its bullet keeps
+          the printed colour. The ink is the agency&rsquo;s everywhere: only the Broadway yellow is
+          set in black, because a G with a black letter on it is not a G anyone in New York has seen.
+        </p>
+        <Stack gap={2}>
+          {index && Object.keys(TRUNKS).map((id) => (
+            <TrunkStripe key={id} id={id}>
+              <BulletGroup index={index} routes={TRUNKS[id].services} size="md" />
+            </TrunkStripe>
+          ))}
+        </Stack>
+      </Section>
+      <Section title="Roundels">
+        <p>
+          A circle for a local and a diamond for an express, drawn from one specification and
+          rendered twice: as SVG here, and into the map&rsquo;s atlas for the trains. Size is a name.
+        </p>
+        {index && (
+          <Inline gap={5} wrap>
+            {(["sm", "md", "lg", "xl"] as const).map((size) => (
+              <div className="ds-cell" key={size}>
+                <Inline gap={2}>
+                  <RouteBullet index={index} route="1" size={size} />
+                  <RouteBullet index={index} route="6X" size={size} />
+                  <RouteBullet index={index} route="SI" size={size} />
+                </Inline>
+                <code>{size}</code>
+              </div>
+            ))}
+            <div className="ds-cell">
+              <Inline gap={2}>
+                <RouteBullet index={index} route="A" size="xl" dim />
+                <RouteBullet index={index} route="F" size="xl"><span className="alert-pip delay" /></RouteBullet>
+              </Inline>
+              <code>dim · alert</code>
+            </div>
+          </Inline>
+        )}
+      </Section>
+      <Section title="How a line is running">
+        <p>The agency publishes four states and a rider reads them off signs all day. There is no fifth.</p>
+        <Stack gap={2}>
+          {(["good", "delay", "planned", "info"] as const).map((s) => <ServiceStatus key={s} status={s} />)}
+        </Stack>
+      </Section>
+      <Section title="The countdown">
+        <p>
+          The signature element, and the one fluid role: it measures the panel holding it rather than
+          the window, from 28 pixels in a narrow card to 34 across a phone.
+        </p>
+        <Inline gap={5} wrap>
+          <div className="ds-cell"><Countdown seconds={480} here={false} /><code>minutes</code></div>
+          <div className="ds-cell"><Countdown seconds={10} here /><code>at the platform</code></div>
+          <div className="ds-cell"><Countdown seconds={10} here departing /><code>leaving</code></div>
+          <div className="ds-cell"><Countdown seconds={200} here={false} missed /><code>out of reach</code></div>
+          <div className="ds-cell"><Countdown seconds={200} here={false} compact /><code>compact</code></div>
+        </Inline>
+      </Section>
+
+      <h2>Rules</h2>
+      <ol>
+        <li><b>Rule of three.</b> A pattern becomes a component the third time it appears. The first is a one-off; the second is a coincidence.</li>
+        <li><b>A new component needs a real use.</b> No dialog, menu or toast exists yet because nothing in the app needs one; when something does, its behaviour comes from a headless library, not from here.</li>
+        <li><b>Changing a token is a system change.</b> Adding one is cheap. Changing one moves the whole product, which is the point, and it should be deliberate.</li>
+        <li><b>The audit is the gate.</b> <code>npm run audit:design</code> fails on a hand-written value, a primitive used outside the token file, a weight, layer or leading that is not a token, a role under 12 pixels, a second breakpoint, a label under 4.5:1, and a token nothing uses.</li>
+      </ol>
     </main>
   );
 }

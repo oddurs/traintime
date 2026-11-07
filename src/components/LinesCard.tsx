@@ -8,7 +8,7 @@ import { routeStatus } from "@/lib/alerts";
 import type { LineHealth as Health, BoundClient } from "@/lib/client";
 import type { StreamMode } from "@/lib/useTrainStream";
 import { TRUNKS } from "@/lib/trunks";
-import { Button, List, Row, Section, Switch } from "./ui";
+import { Button, Inline, List, Row, Section, Stack, Switch, Text } from "./ui";
 import { RouteBullet } from "./brand";
 import LineHealth, { WORSE } from "./LineHealth";
 import Legend from "./Legend";
@@ -70,10 +70,10 @@ export default function LinesCard(props: Props) {
       <List>
         <li className="list-static" aria-label="Service right now: trains running, trains held, lines slower than usual, lines with delays">
           <div className="stats">
-            <span className="stat"><b>{trains.length ? running : "–"}</b><span>trains</span></span>
-            <span className={`stat${held ? " is-warn" : ""}`}><b>{trains.length ? held : "–"}</b><span>held</span></span>
-            {slow !== null && <span className={`stat${slow ? " is-warn" : ""}`}><b>{slow}</b><span>slow lines</span></span>}
-            <span className={`stat${delayed ? " is-bad" : ""}`}><b>{alerts ? delayed : "–"}</b><span>delayed</span></span>
+            <Stat value={trains.length ? running : "–"} label="trains" />
+            <Stat value={trains.length ? held : "–"} label="held" tone={held ? "warn" : undefined} />
+            {slow !== null && <Stat value={slow} label="slow lines" tone={slow ? "warn" : undefined} />}
+            <Stat value={alerts ? delayed : "–"} label="delayed" tone={delayed ? "bad" : undefined} />
           </div>
         </li>
         <Row
@@ -85,7 +85,7 @@ export default function LinesCard(props: Props) {
       </List>
 
       {open && (
-        <div className="lines-body">
+        <Stack gap={4}>
           <div className="routes" role="group" aria-label="Show or hide lines">
             {GROUPS.map((group, gi) => (
               <div className="group" key={gi}>
@@ -109,13 +109,13 @@ export default function LinesCard(props: Props) {
             ))}
           </div>
 
-          <div className="lines-tools">
-            <span className="toolbar">
+          <Inline justify="between" wrap>
+            <Inline gap={2}>
               <Button onClick={() => onAll(true)}>Show all</Button>
               <Button onClick={() => onAll(false)}>Hide all</Button>
-            </span>
+            </Inline>
             <Switch checked={showRibbons} onChange={onRibbons}>Uncertainty</Switch>
-          </div>
+          </Inline>
 
           {index && health && health.length > 0 && (
             <Section title="How often trains are coming">
@@ -135,8 +135,18 @@ export default function LinesCard(props: Props) {
           <Section title="Map key">
             <Legend />
           </Section>
-        </div>
+        </Stack>
       )}
     </Section>
+  );
+}
+
+/** One figure and what it counts. The figure is read first, so it is the larger of the two. */
+function Stat({ value, label, tone }: { value: React.ReactNode; label: string; tone?: "warn" | "bad" }) {
+  return (
+    <Stack gap={0}>
+      <Text variant="figure" tone={tone}>{value}</Text>
+      <Text variant="footnote" tone="tertiary" truncate>{label}</Text>
+    </Stack>
   );
 }

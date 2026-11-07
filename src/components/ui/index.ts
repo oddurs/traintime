@@ -19,3 +19,5 @@ export { default as Select } from "./Select";
 export { default as Disclosure } from "./Disclosure";
 export { default as Callout } from "./Callout";
 export { default as Segmented } from "./Segmented";
+export { default as Text, type TextVariant, type TextTone } from "./Text";
+export { Stack, Inline, type Space } from "./Stack";

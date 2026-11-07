@@ -42,7 +42,7 @@ Make the drawn fan match the real one; the geometry turned out not to be the pro
 
 ## render-4 — Positions as arc-length
 
-`#####·····` 50% · 2 of 4 done
+`####······` 40% · 2 of 5 done
 
 Give a train no position of its own, so it cannot leave its line.
 
@@ -50,6 +50,10 @@ Give a train no position of its own, so it cannot leave its line.
 
 - [ ] `0017` Resolve arc-length against the line vertex buffer on the GPU <sup>feature · p2</sup>
 - [ ] `0020` A train reads a smooth band where its line is drawn with a stepped one <sup>bug · p1</sup>
+
+### in progress
+
+- [ ] `0029` Design system: a type scale that renders at its size, and two token layers <sup>feature · p1</sup>
 
 ### done
 

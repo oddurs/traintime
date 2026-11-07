@@ -1,7 +1,9 @@
 /**
  * Design-system audit: every value in the stylesheet must come from the token layer.
  *
- * The tokens are declared once in `:root`. Anything outside it that spells out a colour, a
+ * The tokens are declared once, in src/app/tokens.css, in three layers: primitives (named for
+ * what they are), semantic tokens (named for what they are for, and built from primitives) and the
+ * railway's own data colours. The stylesheet may use only the last two. Anything in it that spells out a colour, a
  * spacing, a radius, a type style or a duration by hand is a divergence — it is how an interface
  * drifts from a system into an assortment of near-misses, and it is invisible in review because
  * every individual value looks reasonable.
@@ -12,6 +14,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const CSS = join(process.cwd(), "src/app/globals.css");
+const TOKENS = join(process.cwd(), "src/app/tokens.css");
 /** Where the primitives live. These are allowed to render raw elements; nothing else is. */
 const UI_DIR = "src/components/ui/";
 /**
@@ -26,15 +29,37 @@ const lines = src.split("\n");
 interface Finding { line: number; kind: string; text: string; detail: string; file?: string }
 const findings: Finding[] = [];
 
-/** The token layer: what the system actually offers. */
+/**
+ * The token layer: what the system actually offers, and which of its three layers each token is
+ * in. The layers are the sections of the file, marked by their headings.
+ */
+type Layer = "primitive" | "semantic" | "data";
+const tokenSrc = readFileSync(TOKENS, "utf8");
 const tokens = new Map<string, string>();
+const layerOf = new Map<string, Layer>();
+const tokenLine = new Map<string, number>();
 {
-  const root = /:root\s*\{([\s\S]*?)\n\}/.exec(src);
-  if (!root) throw new Error("no :root block — the token layer is the whole point");
-  for (const m of root[1].matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) tokens.set(m[1], m[2].trim());
+  const root = /:root\s*\{([\s\S]*?)\n\}/.exec(tokenSrc);
+  if (!root) throw new Error("no :root block in tokens.css — the token layer is the whole point");
+  const first = tokenSrc.slice(0, root.index).split("\n").length;
+  let layer: Layer | null = null;
+  root[1].split("\n").forEach((l, i) => {
+    const head = /^\s+(PRIMITIVES|SEMANTIC|DATA)\b/.exec(l);
+    if (head) layer = head[1] === "PRIMITIVES" ? "primitive" : head[1] === "SEMANTIC" ? "semantic" : "data";
+    const m = /^\s*--([\w-]+)\s*:\s*([^;]+);/.exec(l);
+    if (!m) return;
+    tokens.set(m[1], m[2].trim());
+    tokenLine.set(m[1], first + i);
+    if (layer) layerOf.set(m[1], layer);
+  });
+}
+/** A token's value with every reference to another token replaced by what that token says. */
+function resolve(value: string, depth = 0): string {
+  return value.replace(/var\(--([\w-]+)\)/g, (whole, name: string) =>
+    depth > 8 || !tokens.has(name) ? whole : resolve(tokens.get(name)!, depth + 1));
 }
 const tokenPx = new Set<number>();
-for (const v of tokens.values()) for (const m of v.matchAll(/(-?[\d.]+)px/g)) tokenPx.add(Math.abs(Number(m[1])));
+for (const v of tokens.values()) for (const m of resolve(v).matchAll(/(-?[\d.]+)px/g)) tokenPx.add(Math.abs(Number(m[1])));
 
 /**
  * Values a token would only obscure: a hairline is a hairline, and zero is zero. Everything
@@ -44,10 +69,8 @@ const RAW_PX_OK = new Set([0, 0.5, 1]);
 /** Properties whose px values are layout, and so must come from the spacing or size scale. */
 const SPACING_PROPS = /^(padding|margin|gap|row-gap|column-gap|inset|top|right|bottom|left|width|height|min-width|min-height|max-width|max-height|flex-basis)(-(top|right|bottom|left|inline|block))?$/;
 
-/** Where in the file the `:root` block sits, so it can be skipped. */
-const rootStart = lines.findIndex((l) => /:root\s*\{/.test(l));
-let rootEnd = rootStart;
-for (let i = rootStart; i < lines.length; i++) if (/^\}/.test(lines[i])) { rootEnd = i; break; }
+/** The one breakpoint, as declared; every media query that names a width has to say this one. */
+const BREAKPOINT = Number(/(\d+)px/.exec(tokens.get("bp-phone") ?? "")?.[1] ?? NaN);
 
 /** Declarations seen per selector, to catch a rule that sets the same thing twice. */
 const seen = new Map<string, Map<string, number>>();  // scope -> prop -> where it was last set
@@ -64,7 +87,13 @@ const stack: string[] = [];
 
 lines.forEach((raw, i) => {
   const n = i + 1;
-  if (i >= rootStart && i <= rootEnd) return;
+  // Tokens live in tokens.css. A :root here is a second token layer nobody would think to audit.
+  if (/:root\s*\{/.test(raw)) findings.push({ line: n, kind: "layer", text: raw.trim(), detail: "tokens are declared in src/app/tokens.css, not here" });
+  for (const m of raw.matchAll(/(?:max|min)-width:\s*(\d+)px/g)) {
+    if (/@media/.test(raw) && Number(m[1]) !== BREAKPOINT) {
+      findings.push({ line: n, kind: "breakpoint", text: raw.trim(), detail: `the one breakpoint is --bp-phone, ${BREAKPOINT}px` });
+    }
+  }
   const line = raw.replace(/\/\*[\s\S]*?\*\//g, "");
   if (/^\s*\/\*|^\s*\*/.test(raw)) return;
   const opens = (line.match(/\{/g) ?? []).length;
@@ -81,7 +110,26 @@ lines.forEach((raw, i) => {
     const at = n * 100_000 + (d.index ?? 0);
     const prop = d[1].toLowerCase();
     const value = d[2].trim();
+    // A component-local variable may name a semantic token, never a primitive.
+    for (const v of value.matchAll(/var\(--([\w-]+)/g)) {
+      if (layerOf.get(v[1]) === "primitive") {
+        findings.push({ line: n, kind: "layer", text: `${prop}: ${value}`, detail: `--${v[1]} is a primitive; use the semantic token that says what it is for` });
+      } else if (!tokens.has(v[1]) && !/^(row-inset|bullet-size|bullet-scale|brandmark-size|saved-h|peek-h|ds-[\w-]+|stripe-color|t-sample|tr-sample)$/.test(v[1])) {
+        findings.push({ line: n, kind: "layer", text: `${prop}: ${value}`, detail: `--${v[1]} is not a token` });
+      }
+    }
     if (prop.startsWith("--")) continue;
+
+    // Layers, weights and leading are named, like everything else.
+    if (prop === "z-index" && !/^var\(--z-[\w-]+\)$/.test(value)) {
+      findings.push({ line: n, kind: "layer", text: `${prop}: ${value}`, detail: "a z-index is one of the named --z- layers" });
+    }
+    if (prop === "font-weight" && !/^(var\(--w-[\w-]+\)|inherit|normal)$/.test(value)) {
+      findings.push({ line: n, kind: "type", text: `${prop}: ${value}`, detail: "a weight is --w-strong or --w-heavy" });
+    }
+    if (prop === "line-height" && !/^(var\(--leading-[\w-]+\)|0|inherit|normal)$/.test(value)) {
+      findings.push({ line: n, kind: "type", text: `${prop}: ${value}`, detail: "leading comes with the type role, or from --leading-" });
+    }
 
     // A rule that declares the same property twice: one of them is dead, and which one is
     // whichever came last, which is never what anybody meant.
@@ -351,8 +399,8 @@ lines.forEach((raw, i) => {
     const line = text.slice(0, m.index).split("\n").length;
     if (token === undefined) {
       findings.push({ line, kind: "palette", file: rel, text: m[0], detail: `--${m[1].slice(2)} is not a token` });
-    } else if (norm(token) !== norm(m[2])) {
-      findings.push({ line, kind: "palette", file: rel, text: m[0], detail: `the stylesheet says ${token}` });
+    } else if (norm(resolve(token)) !== norm(m[2])) {
+      findings.push({ line, kind: "palette", file: rel, text: m[0], detail: `the stylesheet says ${resolve(token)}` });
     }
   }
 }
@@ -430,9 +478,126 @@ lines.forEach((raw, i) => {
   }
 }
 
+/**
+ * ---- The token layer against itself. ----
+ *
+ * The rules above keep the stylesheet inside the tokens. These keep the tokens honest: a semantic
+ * token that spells out its own colour is a primitive in disguise, and a theme would have to find
+ * it; a type role under the floor is fine print; a token nobody uses is permanent.
+ */
+{
+  const at = (name: string) => ({ line: tokenLine.get(name) ?? 0, file: "src/app/tokens.css" });
+
+  for (const [name, value] of tokens) {
+    if (layerOf.get(name) === "semantic" && /#[0-9a-fA-F]{3,8}\b|\brgba?\(/.test(value)) {
+      findings.push({ ...at(name), kind: "layer", text: `--${name}: ${value}`, detail: "a semantic colour names a primitive; it does not spell one out" });
+    }
+  }
+
+  /*
+   * The floor. Nothing is set under 12 px — Apple's smallest text size, and the size under which
+   * a label stops being read and starts being deciphered. The roles are checked as resolved, so
+   * a primitive that shrinks moves every role that uses it into view here.
+   */
+  const FLOOR_PX = 12;
+  const px = (v: string) => (v.endsWith("rem") ? parseFloat(v) * 16 : parseFloat(v));
+  for (const name of [...tokens.keys()].filter((k) => k.startsWith("t-"))) {
+    const font = resolve(tokens.get(name)!);
+    const size = /(clamp\(([^,]+),[^)]*\)|[\d.]+(?:rem|px))\s*\//.exec(font);
+    if (!size) {
+      findings.push({ ...at(name), kind: "type-floor", text: `--${name}: ${font}`, detail: "no size could be read from it — is a token it names missing?" });
+      continue;
+    }
+    const smallest = px((size[2] ?? size[1]).trim());
+    if (!(smallest >= FLOOR_PX)) {
+      findings.push({ ...at(name), kind: "type-floor", text: `--${name}`, detail: `sets text at ${smallest}px, under the ${FLOOR_PX}px floor` });
+    }
+  }
+
+  /* The breakpoint, where the script that runs before the stylesheet writes it again. */
+  const fp = readFileSync(join(process.cwd(), "src/lib/firstPaint.ts"), "utf8");
+  const q = /PHONE_QUERY\s*=\s*"\(max-width:\s*(\d+)px\)"/.exec(fp);
+  if (!q || Number(q[1]) !== BREAKPOINT) {
+    findings.push({ line: 0, file: "src/lib/firstPaint.ts", kind: "breakpoint", text: q?.[0] ?? "PHONE_QUERY", detail: `must say ${BREAKPOINT}px, as --bp-phone does` });
+  }
+
+  /*
+   * Unused tokens. A primitive is used when a semantic or data token names it; anything else is
+   * used when the stylesheet, another token or a component does. A component that builds a name
+   * — `var(--bullet-${size})` — keeps every token with that prefix. The /design page documents
+   * tokens and so does not count: documentation is not a use.
+   */
+  const code = sources.filter((r) => !r.startsWith("src/app/design/")).map((r) => readFileSync(join(process.cwd(), r), "utf8")).join("\n");
+  const prefixes = [...code.matchAll(/--([\w-]+-)\$\{/g)].map((m) => m[1]);
+  const tokenValues = [...tokens.values()].join("\n");
+  // The stylesheet and the token values reference with var(); the canvas and inline styles by name.
+  const referenced = (name: string) =>
+    src.includes(`var(--${name})`) || tokenValues.includes(`var(--${name})`)
+    || new RegExp(`["'\`(]--${name}["'\`)]`).test(code) || prefixes.some((p) => name.startsWith(p));
+  for (const name of tokens.keys()) {
+    if (name === "bp-phone") continue;   // read by this audit, since a media query cannot read it
+    if (layerOf.get(name) === "primitive" ? !tokenValues.includes(`var(--${name})`) : !referenced(name)) {
+      findings.push({ ...at(name), kind: "unused", text: `--${name}`, detail: "nothing uses it: delete it, or use it" });
+    }
+  }
+}
+
+/**
+ * ---- Contrast, measured. ----
+ *
+ * Every label and every status colour, on every surface it is set on, at 4.5:1 or better — the
+ * bar for text of any size. The surfaces are the solid ones and the fills composited over them,
+ * which is what a reader actually sees; a material over the map is checked over the map's black.
+ */
+{
+  type RGBA = [number, number, number, number];
+  const parse = (v: string): RGBA | null => {
+    v = v.trim();
+    let m = /^#([0-9a-f]{6})$/i.exec(v);
+    if (m) { const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1]; }
+    m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+))?\s*\)$/.exec(v);
+    if (m) return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] === undefined ? 1 : Number(m[4])];
+    m = /^color-mix\(in srgb,\s*(.+?)\s+([\d.]+)%,\s*transparent\)$/.exec(v);
+    if (m) { const c = parse(m[1]); return c ? [c[0], c[1], c[2], c[3] * Number(m[2]) / 100] : null; }
+    return null;
+  };
+  const colour = (name: string) => parse(resolve(tokens.get(name) ?? ""));
+  const over = (top: RGBA, under: RGBA): RGBA => {
+    const a = top[3];
+    return [top[0] * a + under[0] * (1 - a), top[1] * a + under[1] * (1 - a), top[2] * a + under[2] * (1 - a), 1];
+  };
+  const lum = (c: RGBA) => {
+    const ch = (x: number) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * ch(c[0]) + 0.7152 * ch(c[1]) + 0.0722 * ch(c[2]);
+  };
+  const ratio = (a: RGBA, b: RGBA) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+
+  const ground = colour("ground")!, panel = colour("surface-solid")!;
+  const SURFACES: [string, RGBA][] = [
+    ["--ground", ground],
+    ["--surface-solid", panel],
+    ["--surface-sunken", colour("surface-sunken")!],
+    ["--fill on --surface-solid", over(colour("fill")!, panel)],
+    ["--fill-2 on --surface-solid", over(colour("fill-2")!, panel)],
+    ["--mat-regular on --ground", over(colour("mat-regular")!, ground)],
+  ];
+  const TEXT = ["label", "label-2", "label-3", "accent", "green", "amber", "red"];
+  const MIN = 4.5;
+  for (const t of TEXT) {
+    const c = colour(t);
+    if (!c) { findings.push({ ...{ line: tokenLine.get(t) ?? 0, file: "src/app/tokens.css" }, kind: "contrast", text: `--${t}`, detail: "could not be read as a colour" }); continue; }
+    for (const [where, s] of SURFACES) {
+      const r = ratio(over(c, s), s);
+      if (r < MIN) findings.push({ line: tokenLine.get(t) ?? 0, file: "src/app/tokens.css", kind: "contrast", text: `--${t} on ${where}`, detail: `${r.toFixed(2)}:1, under ${MIN}:1` });
+    }
+  }
+}
+
 const byKind = new Map<string, Finding[]>();
 for (const f of findings) (byKind.get(f.kind) ?? byKind.set(f.kind, []).get(f.kind)!).push(f);
-const order = ["duplicate", "colour", "raw-control", "palette", "contrast", "unknown-class", "inline-style", "type", "tracking", "spacing", "radius", "motion", "tap-target"];
+const order = ["layer", "duplicate", "colour", "raw-control", "palette", "contrast", "type-floor", "unknown-class", "inline-style", "type", "tracking", "spacing", "radius", "motion", "breakpoint", "unused", "tap-target"];
+// A kind that is not in the list is still a failure, so it is still printed.
+for (const k of byKind.keys()) if (!order.includes(k)) order.push(k);
 
 console.log(`design audit — ${tokens.size} tokens, ${cssClasses.size} classes, ${sources.length} components, ${findings.length} divergences\n`);
 for (const kind of order) {

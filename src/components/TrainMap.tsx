@@ -608,11 +608,11 @@ export default function TrainMap(props: Props) {
       // The walking radius, under the lines: it is the ground the list is about, not a mark on it.
       map.addLayer({
         id: "nearby-fill", type: "fill", source: "nearby",
-        paint: { "fill-color": paint("--accent"), "fill-opacity": 0.08 },
+        paint: { "fill-color": paint("--map-you"), "fill-opacity": 0.08 },
       });
       map.addLayer({
         id: "nearby-edge", type: "line", source: "nearby",
-        paint: { "line-color": paint("--accent"), "line-opacity": 0.55, "line-width": 1.5 },
+        paint: { "line-color": paint("--map-you"), "line-opacity": 0.55, "line-width": 1.5 },
       });
 
       /*
@@ -681,7 +681,9 @@ export default function TrainMap(props: Props) {
         layout: {
           "text-field": ["get", "name"],
           "text-font": ["case", ["get", "interchange"], ["literal", ["Noto Sans Bold"]], ["literal", ["Noto Sans Regular"]]],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, ["case", ["get", "interchange"], 11, 10], 16, ["case", ["get", "interchange"], 13, 11]],
+          // Under the panel's 12 px floor only at the zoom where a label first appears, and only
+          // for a plain stop; an interchange is never smaller than the panel's own fine print.
+          "text-size": ["interpolate", ["linear"], ["zoom"], 13.5, ["case", ["get", "interchange"], 12, 11], 16, ["case", ["get", "interchange"], 15, 13]],
           "text-offset": [0, 0.9], "text-anchor": "top", "text-optional": true,
         },
         paint: {
@@ -735,7 +737,7 @@ export default function TrainMap(props: Props) {
           // "×4" beside the bullet: four trains are waiting here, not one.
           "text-field": ["concat", "×", ["to-string", ["get", "stacked"]]],
           "text-font": ["Noto Sans Bold"],
-          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 9, 15, 11],
+          "text-size": ["interpolate", ["linear"], ["zoom"], 12, 11, 15, 13],
           "text-offset": [1.1, -0.9], "text-anchor": "left",
           "text-allow-overlap": true, "text-ignore-placement": true,
         },
@@ -748,12 +750,12 @@ export default function TrainMap(props: Props) {
       // You, as Maps draws you: a blue dot ringed in white, with a soft halo, over everything.
       map.addLayer({
         id: "you-halo", type: "circle", source: "you",
-        paint: { "circle-radius": 18, "circle-color": paint("--accent"), "circle-opacity": 0.18 },
+        paint: { "circle-radius": 18, "circle-color": paint("--map-you"), "circle-opacity": 0.18 },
       });
       map.addLayer({
         id: "you", type: "circle", source: "you",
         paint: {
-          "circle-radius": 7, "circle-color": paint("--accent"),
+          "circle-radius": 7, "circle-color": paint("--map-you"),
           "circle-stroke-color": paint("--ink-light"), "circle-stroke-width": 2.5,
         },
       });
