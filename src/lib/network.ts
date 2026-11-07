@@ -1,6 +1,6 @@
 import type { LonLat, Network, Station } from "./types";
 import { distM, makePath, type Path } from "./geo";
-import { PALETTE } from "./palette";
+import { serviceColours } from "./trunks";
 import { LineEngine } from "./layout";
 
 export const parentOf = (id: string) => id.replace(/[NS]$/, "");
@@ -116,14 +116,14 @@ export class NetworkIndex {
     return this.station(id)?.name ?? id;
   }
 
-  /** The emblem colour: what a bullet is printed in. */
+  /** The colour a service's bullet and line are drawn in: its trunk's, from the palette. */
   routeColor(route: string): string {
-    return this.net.routes[route]?.color ?? PALETTE["--route-unknown"];
+    return serviceColours(route).color;
   }
 
-  /** What this service's line is drawn in on the map's black ground. */
-  routeLineColor(route: string): string {
-    return this.net.routes[route]?.lineColor ?? this.routeColor(route);
+  /** The ink its bullet is lettered in. */
+  routeInk(route: string): string {
+    return serviceColours(route).textColor;
   }
 
   /**

@@ -8,11 +8,11 @@ export type VehicleStatus = "INCOMING_AT" | "STOPPED_AT" | "IN_TRANSIT_TO";
 export interface RouteInfo {
   id: string;
   name: string;
-  /** The emblem colour: what the MTA prints on a bullet. */
-  color: string;
-  textColor: string;
-  /** What the line is drawn in on the map's black ground, which is not always the same thing. */
-  lineColor: string;
+  /*
+   * No colour: a service's colour is its trunk's, from the palette (serviceColours in trunks.ts).
+   * The network file used to carry a copy of it, baked in at build time, which made the palette
+   * two palettes: changing a token changed the panel and left the map as it was.
+   */
   sortOrder: number;
 }
 

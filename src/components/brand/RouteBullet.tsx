@@ -34,7 +34,7 @@ interface Props {
 }
 
 export default function RouteBullet({ index, route, size = "md", title, dim, onClick, children }: Props) {
-  const r = index?.net.routes[route] ?? { ...serviceColours(route), name: undefined };
+  const r = { ...serviceColours(route), name: index?.net.routes[route]?.name };
   const label = serviceLabel(route);
   const express = isExpress(route);
   // An express diamond is drawn wider than the circle beside it so its character can be the same

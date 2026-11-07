@@ -85,7 +85,7 @@ function bullet(route: string, index: NetworkIndex, state: BulletState, ratio: n
   g.strokeStyle = state === "hold" ? paint("--map-hold") : state === "parked" ? colour : paint("--map-casing");
   g.stroke(path);
 
-  g.fillStyle = state === "parked" ? colour : index.net.routes[route]?.textColor ?? paint("--route-unknown-text");
+  g.fillStyle = state === "parked" ? colour : index.routeInk(route);
   g.font = `${FONT_WEIGHT} ${characterSize(label)}px ${FONT_STACK}`;
   g.textAlign = "center";
   g.textBaseline = "alphabetic";
@@ -136,7 +136,7 @@ export function buildTrainAtlas(index: NetworkIndex): TrainAtlas | null {
   const ratio = Math.min(3, Math.max(2, Math.round((globalThis.devicePixelRatio || 1) * SCALE)));
   const marks: { id: string; img: ImageData; ratio: number }[] = [];
   for (const route of Object.keys(index.net.routes)) {
-    const ch = chevron(index.routeLineColor(route), ratio);
+    const ch = chevron(index.routeColor(route), ratio);
     if (ch) marks.push({ id: chevronId(route), img: ch, ratio });
     for (const state of ["plain", "hold", "parked"] as BulletState[]) {
       const b = bullet(route, index, state, BULLET_RATIO);
@@ -185,7 +185,7 @@ export function addRouteIcons(map: MapLibreMap, index: NetworkIndex) {
     const id = chevronId(route);
     if (!map.hasImage(id)) {
       // A chevron sits on the map, on black, so it takes the colour the line does.
-      const img = chevron(index.routeLineColor(route), ratio);
+      const img = chevron(index.routeColor(route), ratio);
       if (img) map.addImage(id, img, { pixelRatio: ratio });
     }
     for (const state of ["plain", "hold", "parked"] as BulletState[]) {

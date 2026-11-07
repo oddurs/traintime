@@ -23,6 +23,11 @@ const UI_DIR = "src/components/ui/";
  * cannot drift from the original without failing the build.
  */
 const PALETTE_SOURCE = "src/lib/palette.ts";
+/**
+ * Where colours are allowed as literals: the ramps they are generated from, which quote the MTA's
+ * printed colours they were measured against, and the canvas's generated copy.
+ */
+const COLOUR_SOURCES = new Set([PALETTE_SOURCE, "src/lib/ramps.ts"]);
 const src = readFileSync(CSS, "utf8");
 const lines = src.split("\n");
 
@@ -69,6 +74,8 @@ const RAW_PX_OK = new Set([0, 0.5, 1]);
 /** Properties whose px values are layout, and so must come from the spacing or size scale. */
 const SPACING_PROPS = /^(padding|margin|gap|row-gap|column-gap|inset|top|right|bottom|left|width|height|min-width|min-height|max-width|max-height|flex-basis)(-(top|right|bottom|left|inline|block))?$/;
 
+/** The rules allowed to set words in a state colour. */
+const STATE_TEXT_OK = new Set([".clock--here b"]);
 /** The one breakpoint, as declared; every media query that names a width has to say this one. */
 const BREAKPOINT = Number(/(\d+)px/.exec(tokens.get("bp-phone") ?? "")?.[1] ?? NaN);
 
@@ -119,6 +126,14 @@ lines.forEach((raw, i) => {
       }
     }
     if (prop.startsWith("--")) continue;
+
+    /*
+     * A state is a mark, never the colour of words. Red text on a dark ground reads as an error
+     * message whatever it says. The one exception is the countdown's NOW, the platform sign's word.
+     */
+    if (prop === "color" && /var\(--(good|warn|bad)\)/.test(value) && !STATE_TEXT_OK.has(selector)) {
+      findings.push({ line: n, kind: "state-text", text: `${selector} { ${prop}: ${value} }`, detail: "a state colours a mark beside the words, not the words" });
+    }
 
     // Layers, weights and leading are named, like everything else.
     if (prop === "z-index" && !/^var\(--z-[\w-]+\)$/.test(value)) {
@@ -278,7 +293,7 @@ for (const rel of sources) {
     const line = raw.replace(/\/\*[\s\S]*?\*\//g, "");
 
     // Colours. One file is allowed them, because it is the one that reads them back.
-    if (rel !== PALETTE_SOURCE) {
+    if (!COLOUR_SOURCES.has(rel)) {
       for (const c of line.matchAll(/["'`]#[0-9a-fA-F]{3,8}["'`]|["'`]rgba?\([^)]*\)["'`]/g)) {
         if (/rgba?\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\s*\)/.test(c[0])) continue;
         // An SVG mask is a stencil: its luminance says what survives, so its black and white are
@@ -489,8 +504,8 @@ lines.forEach((raw, i) => {
   const at = (name: string) => ({ line: tokenLine.get(name) ?? 0, file: "src/app/tokens.css" });
 
   for (const [name, value] of tokens) {
-    if (layerOf.get(name) === "semantic" && /#[0-9a-fA-F]{3,8}\b|\brgba?\(/.test(value)) {
-      findings.push({ ...at(name), kind: "layer", text: `--${name}: ${value}`, detail: "a semantic colour names a primitive; it does not spell one out" });
+    if (layerOf.get(name) !== "primitive" && /#[0-9a-fA-F]{3,8}\b|\brgba?\(/.test(value)) {
+      findings.push({ ...at(name), kind: "layer", text: `--${name}: ${value}`, detail: "only a primitive spells out a colour; this names one (a ramp step from src/lib/ramps.ts)" });
     }
   }
 
@@ -581,7 +596,8 @@ lines.forEach((raw, i) => {
     ["--fill-2 on --surface-solid", over(colour("fill-2")!, panel)],
     ["--mat-regular on --ground", over(colour("mat-regular")!, ground)],
   ];
-  const TEXT = ["label", "label-2", "label-3", "accent", "green", "amber", "red"];
+  // Text: the label hierarchy, the accent, and the one state ever set as words (the countdown's NOW).
+  const TEXT = ["label", "label-2", "label-3", "accent", "good"];
   const MIN = 4.5;
   for (const t of TEXT) {
     const c = colour(t);
@@ -590,6 +606,33 @@ lines.forEach((raw, i) => {
       const r = ratio(over(c, s), s);
       if (r < MIN) findings.push({ line: tokenLine.get(t) ?? 0, file: "src/app/tokens.css", kind: "contrast", text: `--${t} on ${where}`, detail: `${r.toFixed(2)}:1, under ${MIN}:1` });
     }
+  }
+  // Marks — a pip, a ring, a bar, a filled control — need 3:1 against what they sit on.
+  const MARK_MIN = 3;
+  // A mark sits on a ground or a panel, not inside a field, so the field's fill is not one of its surfaces.
+  const MARK_ON = SURFACES.filter(([where]) => !where.startsWith("--fill-2"));
+  for (const t of ["good", "warn", "bad", "accent-ground"]) {
+    const c = colour(t);
+    for (const [where, s] of MARK_ON) {
+      if (!c) break;
+      const r = ratio(over(c, s), s);
+      if (r < MARK_MIN) findings.push({ line: tokenLine.get(t) ?? 0, file: "src/app/tokens.css", kind: "contrast", text: `--${t} on ${where}`, detail: `${r.toFixed(2)}:1, under ${MARK_MIN}:1 for a mark` });
+    }
+  }
+  /*
+   * The lines, on the map's black and under their own ink. A two-pixel line under 3:1 is a line
+   * you lose; a letter under 3:1 on its bullet is one you guess. Both used to be accepted for the
+   * sake of the printed colours; the colours are now steps chosen for a dark screen, and held to it.
+   */
+  const casing = colour("map-casing")!;
+  const trunkSrc = readFileSync(join(process.cwd(), "src/lib/trunks.ts"), "utf8");
+  for (const m of trunkSrc.matchAll(/(\w+):\s*\{\s*name:\s*"[^"]+",\s*token:\s*"--([\w-]+)",\s*ink:\s*"(light|dark)"/g)) {
+    const [, id, token, ink] = m;
+    const c = colour(token), letter = colour(ink === "dark" ? "ink-dark" : "ink-light");
+    if (!c || !letter) continue;
+    const onBlack = ratio(c, casing), lettered = ratio(letter, c);
+    if (onBlack < MARK_MIN) findings.push({ line: tokenLine.get(token) ?? 0, file: "src/app/tokens.css", kind: "contrast", text: `--${token} on the map`, detail: `${onBlack.toFixed(2)}:1 against the map's black, under ${MARK_MIN}:1` });
+    if (lettered < MARK_MIN) findings.push({ line: tokenLine.get(token) ?? 0, file: "src/app/tokens.css", kind: "contrast", text: `${id}: ${ink} ink on --${token}`, detail: `${lettered.toFixed(2)}:1, under ${MARK_MIN}:1 for a bullet's letter` });
   }
 }
 

@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit --strict --skipLibCheck --moduleResolution bundler --module esnext --target es2022 .railway/railway.ts",
     "build:network": "tsx scripts/build-network.ts && tsx scripts/build-poster.ts",
     "build:poster": "tsx scripts/build-poster.ts",
+    "build:palette": "tsx scripts/build-palette.ts",
     "prepare:assets": "v=$(node -p \"require('maplibre-gl/package.json').version\") && rm -rf public/maplibre && mkdir -p public/maplibre/$v && cp node_modules/maplibre-gl/dist/maplibre-gl.mjs node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs node_modules/maplibre-gl/dist/maplibre-gl-shared.mjs public/maplibre/$v/ && cp services/poller/proto/nyct-subway.proto public/data/",
     "snapshot": "cp data/timing.json data/eta-model.json public/data/",
     "rebuild-events": "tsx scripts/rebuild-events.ts",

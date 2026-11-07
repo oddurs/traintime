@@ -281,9 +281,10 @@ test("every service belongs to exactly one trunk line, and takes its colour from
   }
   for (const route of Object.keys(net.routes)) {
     assert.ok(seen.has(route), `${route} runs on no trunk line — add it to src/lib/trunks.ts`);
-    const { color, textColor } = serviceColours(route);
-    assert.equal(net.routes[route].color, color, `${route} is not drawn in its trunk's colour`);
-    assert.equal(net.routes[route].textColor, textColor, `${route}'s character is not set in its trunk's ink`);
+    // Drawn in its trunk's colour by construction: the colour is read from the palette at draw
+    // time and the network file no longer carries one to disagree with it.
+    assert.equal(idx.routeColor(route), serviceColours(route).color);
+    assert.ok(!("color" in net.routes[route]), `${route} still carries a baked colour in network.json`);
   }
   // And the trunks are actually distinguishable from one another.
   const colours = new Set(Object.values(TRUNKS).map((t) => t.token));

@@ -11,8 +11,12 @@ export type TextVariant =
   | "display" | "title" | "section" | "figure" | "headline"
   | "body" | "prose" | "subhead" | "footnote" | "micro" | "code";
 
-/** The label hierarchy, and the three states. Colour never carries meaning alone: pair it with words. */
-export type TextTone = "primary" | "secondary" | "tertiary" | "accent" | "good" | "warn" | "bad";
+/**
+ * The label hierarchy, and the accent for something you can act on. There is no red, yellow or
+ * green text: a state is a mark beside the words (a pip, a ring, a bar), and the words stay in the
+ * label hierarchy. tokens.css says why.
+ */
+export type TextTone = "primary" | "secondary" | "tertiary" | "accent";
 
 type Element = "span" | "p" | "div" | "h1" | "h2" | "h3" | "b" | "em" | "strong" | "small" | "time" | "label";
 

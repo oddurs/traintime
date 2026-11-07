@@ -188,7 +188,7 @@ async function main() {
    * services sharing no track in different boroughs. A colour is a statement about the network,
    * so it comes from the table that describes the network.
    */
-  const routes: Record<string, { id: string; name: string; color: string; textColor: string; lineColor: string; sortOrder: number }> = {};
+  const routes: Record<string, { id: string; name: string; sortOrder: number }> = {};
   const unTrunked: string[] = [];
   for (const r of rows(read("routes.txt"))) {
     const trunk = trunkOf(r.route_id);
@@ -196,7 +196,6 @@ async function main() {
     routes[r.route_id] = {
       id: r.route_id,
       name: r.route_long_name,
-      ...serviceColours(r.route_id),
       sortOrder: Number(r.route_sort_order || 999),
     };
   }
@@ -768,7 +767,7 @@ async function main() {
     const band = [...(groupCorridor.get(corridorRoot.get(key) ?? key) ?? [])];
     for (const r of routeSegments_.get(key) ?? []) if (!band.includes(r)) band.push(r);
     const n = band.length;
-    const colourOf = (r: string) => routes[r]?.color ?? r;
+    const colourOf = (r: string) => (routes[r] ? serviceColours(r).color : r);
     const colours: string[] = [];
     for (const r of band) if (!colours.includes(colourOf(r))) colours.push(colourOf(r));
     const slots: Record<string, [number, number]> = {};

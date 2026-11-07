@@ -36,7 +36,7 @@
  */
 import type { LonLat, Network } from "./types";
 import { distM, offsetPolylineRamped } from "./geo";
-import { trunkOf } from "./trunks";
+import { serviceColours, trunkOf } from "./trunks";
 
 const parentOf = (id: string) => id.replace(/[NS]$/, "");
 
@@ -424,10 +424,9 @@ export class LineEngine {
       // A diamond service has no line of its own; it rides its parent's. Its trains still carry the
       // diamond bullet, which is where the express now lives.
       if (DRAWN_AS[route]) continue;
-      // The line takes the colour a line is drawn in, which on a black ground is not always the
-      // colour the emblem is printed in.
-      const colour = this.net.routes[route]?.lineColor ?? this.net.routes[route]?.color;
-      if (!colour) continue;
+      if (!this.net.routes[route]) continue;
+      // The trunk's colour, from the palette: the line and the bullet are one colour.
+      const colour = serviceColours(route).lineColor;
       for (let r = 0; r < runs.length; r++) {
         const run = runs[r];
         const side = run.side ?? 1;
