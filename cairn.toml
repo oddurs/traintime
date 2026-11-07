@@ -54,6 +54,27 @@ template = """
 1.
 """
 
+# A question with a deadline. It closes with a written answer, and usually with the items the
+# answer calls for; work that depends on the answer depends on the spike.
+[[type]]
+name = "spike"
+icon = "?"
+color = "magenta"
+template = """
+## Question
+
+## Leading hypothesis
+
+## How to answer it
+
+## Acceptance criteria
+
+- [ ] the Answer section below says what was found, with the evidence
+- [ ] the items the answer calls for exist and depend on this one
+
+## Answer
+"""
+
 [[type]]
 name = "chore"
 icon = "~"
@@ -158,7 +179,13 @@ description = "Rough size, not an estimate"
 
 [[field]]
 name = "area"
-kind = "text"
+kind = "enum"
+# The subsystems, from the module layout: the map renderer (src/lib/layout, lineLayer, trainLayer,
+# TrainMap), the tracker and its kinematics (src/lib/tracker, kinematics), the poller service
+# (services/poller), the app's interface (src/components, src/app/page), the static site and its
+# pages (services/site, accuracy, design, embed), the recorded data and the learners (scripts/learn,
+# evaluate), the public API, and the platform (PWA, service worker, notifications, install).
+values = ["map", "tracker", "poller", "front-end", "site", "data", "api", "platform"]
 description = "Subsystem this touches"
 
 # ─── Milestones ──────────────────────────────────────────────────────────────

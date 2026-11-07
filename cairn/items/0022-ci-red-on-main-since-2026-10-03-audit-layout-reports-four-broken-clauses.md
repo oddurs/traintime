@@ -8,7 +8,7 @@ created: 2026-11-05
 updated: 2026-11-06
 closed_at: 2026-11-06
 priority: p1
-area: map layout
+area: map
 ---
 
 ## What happens

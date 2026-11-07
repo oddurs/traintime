@@ -59,6 +59,66 @@ Give a train no position of its own, so it cannot leave its line.
 - [x] `0030` Colour: one system for the railway and the interface, grounded in the MTA's hues <sup>feature · p1</sup>
 - [x] `0031` UX: back closes what you opened, recents in search, a train view for riders <sup>feature · p1</sup>
 
+## commute — Leave on time
+
+`··········` 0% · 0 of 9 done
+
+The answer a commuter opens the app for, before they ask it: which train to leave for, and when.
+
+### backlog
+
+- [ ] `0036` Write down what bound is, and what it refuses to be <sup>docs · p1</sup>
+- [ ] `0037` Make bound installable, and say why it is worth it <sup>feature · p1</sup>
+- [ ] `0038` Remember which way a rider goes from each station, by time of day <sup>feature · p0</sup>
+- [ ] `0039` Leave-by: the next train you can catch, on the home view <sup>feature · p0</sup>
+- [ ] `0040` Score leave-by advice against recorded history <sup>feature · p1</sup>
+- [ ] `0041` Web push for leave-by alerts: what the platforms allow, and where it runs <sup>spike · p1</sup>
+- [ ] `0042` Leave-by alerts: a push when the answer changes <sup>feature · p2</sup>
+- [ ] `0043` Can we honestly say how likely a transfer is? <sup>spike · p2</sup>
+- [ ] `0044` Show how likely a transfer is on the faster-connection offer <sup>feature · p2</sup>
+
+## ride — Ride it
+
+`··········` 0% · 0 of 5 done
+
+The app for the train you are on, not the one you are waiting for.
+
+### backlog
+
+- [ ] `0045` Riding mode: Follow becomes the display for the train you are on <sup>feature · p0</sup>
+- [ ] `0046` Tell a rider before their stop <sup>feature · p0</sup>
+- [ ] `0047` Open with no connection <sup>feature · p1</sup>
+- [ ] `0048` Keep a followed train moving without a connection <sup>spike · p1</sup>
+- [ ] `0049` Works in the tunnel: dead reckoning for the followed train <sup>feature · p1</sup>
+
+## record — The public record
+
+`··········` 0% · 0 of 6 done
+
+The subway's own track record, measured and shareable.
+
+### backlog
+
+- [ ] `0050` What 'normal' means for a line, and how much history a weekly report needs <sup>spike · p0</sup>
+- [ ] `0051` A weekly report per line from the poller <sup>feature · p0</sup>
+- [ ] `0052` Line report cards, published weekly <sup>feature · p0</sup>
+- [ ] `0053` Share a moment: any recorded time and view as a link <sup>feature · p1</sup>
+- [ ] `0054` A stable API for researchers: versioned, documented, rate-limited <sup>feature · p1</sup>
+- [ ] `0055` Open data: a daily download of recorded arrivals <sup>feature · p2</sup>
+
+## reach — Beyond the platform
+
+`··········` 0% · 0 of 4 done
+
+Where bound can go once the three horizons hold: screens in places people wait, step-free
+
+### backlog
+
+- [ ] `0056` Departure board mode for a screen in a lobby or a café <sup>feature · p2</sup>
+- [ ] `0057` What the MTA's elevator and escalator feed says, and what step-free travel needs <sup>spike · p2</sup>
+- [ ] `0058` Step-free status on a station's board <sup>feature · p2</sup>
+- [ ] `0059` What a second GTFS-realtime system breaks: PATH first <sup>spike · p3</sup>
+
 ## Unscheduled
 
 `#########·` 88% · 7 of 8 done
