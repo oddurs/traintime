@@ -57,13 +57,19 @@ export default function Sheet({ raiseOn, expandOn, header, children }: Props) {
   // Start undefined, so a sheet that mounts with a selection already made still rises to show it.
   const [lastRaise, setLastRaise] = useState<string | undefined>(undefined);
   const [lastExpand, setLastExpand] = useState<string | undefined>(undefined);
+  // Where the card was before an answer raised it, so closing the answer can put it back.
+  const [beforeRaise, setBeforeRaise] = useState<SheetStop | null>(null);
   const ref = useRef<HTMLElement>(null);
   const handle = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
 
   if (raiseOn !== lastRaise) {
     setLastRaise(raiseOn);
+    if (raiseOn && !lastRaise) setBeforeRaise(stop);
     if (raiseOn) setStop((s) => (s === "peek" ? "half" : s));
+    // Closing what raised the card puts it back where it was, the way a place card in Maps does:
+    // a rider who had the map to themselves gets it back, rather than half a screen of home.
+    else if (beforeRaise) { setStop(beforeRaise); setBeforeRaise(null); }
   }
   if (expandOn !== lastExpand) {
     setLastExpand(expandOn);

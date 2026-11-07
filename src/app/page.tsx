@@ -12,7 +12,8 @@ import { fetchAlerts, type AlertIndex } from "@/lib/alerts";
 import { useGeolocation, useWakeLock } from "@/lib/geolocation";
 import { nearbyStations, radiusMetres, type RadiusMin } from "@/lib/nearby";
 import { usePlaces } from "@/lib/places";
-import { readHash, writeHash } from "@/lib/urlState";
+import { useRecents } from "@/lib/recents";
+import { closePlace, openPlace, readHash, writeHash } from "@/lib/urlState";
 import { asset } from "@/lib/basePath";
 import { posterTransform } from "@/lib/home";
 import { Button, Notice } from "@/components/ui";
@@ -189,15 +190,22 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
     });
   }, [hydrated, selection, visible, view, mode, destination]);
 
+  /*
+   * Back, from anywhere: the browser's button, the phone's edge swipe, Android's back key. Each
+   * opened place is a history entry (openPlace), so going back hands us the entry before it, and
+   * the app becomes whatever that entry says.
+   */
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (follow) setFollow(false);
-      else setSelection({ kind: "none" });
+    const onPop = () => {
+      const h = readHash();
+      setSelection(h.station ? { kind: "station", id: h.station } : h.train ? { kind: "train", id: h.train } : { kind: "none" });
+      setDestination(h.to);
+      setFollow(false);
+      setFocusKey((k) => k + 1);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [follow]);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   /*
    * What is arriving within a walk of the viewer, while they have asked to be located. It used to
@@ -236,21 +244,42 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [hydrated, placesLoaded, autoOpened, index, selection.kind, places, geo.lat, geo.lon]);
 
-  // Remember which station was looked at, so the saved list can lead with it next time.
+  // Remember which station was looked at: the saved list leads with it next time, and search
+  // offers it before anything is typed.
+  const { recents, add: addRecent, clear: clearRecents } = useRecents();
   useEffect(() => {
-    if (selection.kind === "station") touchPlace(selection.id);
-  }, [selection, touchPlace]);
+    if (selection.kind !== "station") return;
+    touchPlace(selection.id);
+    if (index) addRecent(selection.id, index.complexName(selection.id));
+  }, [selection, touchPlace, index, addRecent]);
+
+  // The selection as of the last render, for deciding whether a choice is a new place to go.
+  const selectionRef = useRef(selection);
+  useEffect(() => { selectionRef.current = selection; }, [selection]);
 
   const select = useCallback((s: Selection) => {
-    setSelection((cur) => {
-      // Changing where you are starting from ends the old journey: keeping the destination gives
-      // an empty board that reads like broken data rather than a finished trip.
-      if (s.kind === "station" && !(cur.kind === "station" && cur.id === s.id)) setDestination(undefined);
-      return s;
-    });
+    const cur = selectionRef.current;
+    const same = s.kind === cur.kind && (s.kind === "none" || (cur.kind !== "none" && s.id === cur.id));
+    // Closing goes back to the entry it was opened from; the popstate handler does the rest.
+    if (s.kind === "none" && !same && closePlace()) return;
+    if (s.kind !== "none" && !same) openPlace(s.kind === "station" ? { station: s.id } : { train: s.id });
+    // Changing where you are starting from ends the old journey: keeping the destination gives
+    // an empty board that reads like broken data rather than a finished trip.
+    if (s.kind === "station" && !same) setDestination(undefined);
+    setSelection(s);
     setFollow(false);
     setFocusKey((k) => k + 1);
   }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (follow) setFollow(false);
+      else select({ kind: "none" });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [follow, select]);
 
   const onToggle = useCallback((route: string, solo: boolean) => {
     if (solo) {
@@ -355,6 +384,7 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
           distance={selectedDistance}
           destination={destination} onDestination={(id) => setDestination(id ?? undefined)}
           places={places} placesLoaded={placesLoaded} onToggleSave={togglePlace} isSaved={isSaved}
+          recents={recents} onClearRecents={clearRecents}
       />
     </main>
   );

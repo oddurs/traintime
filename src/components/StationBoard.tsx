@@ -5,7 +5,7 @@ import type { Selection, TrainState } from "@/lib/types";
 import type { NetworkIndex } from "@/lib/network";
 import type { AlertIndex } from "@/lib/alerts";
 import { arrivalsAt } from "@/lib/arrivals";
-import { directionLabel, fmtClock } from "@/lib/format";
+import { directionLabel, fmtClock, fmtSpread } from "@/lib/format";
 import { walkSeconds } from "@/lib/places";
 import { IconButton, List, Row } from "./ui";
 import { BulletGroup, Countdown, DirectionHeading, RouteBullet, StationName } from "./brand";
@@ -44,7 +44,7 @@ function spoken(index: NetworkIndex, route: string, dest: string, secs: number, 
     ? "at the platform now"
     : secs < 45
       ? "arriving now"
-      : `in ${Math.round(secs / 60)} minute${Math.round(secs / 60) === 1 ? "" : "s"}${sigma ? `, give or take ${Math.round(sigma)} seconds` : ""}`;
+      : `in ${Math.round(secs / 60)} minute${Math.round(secs / 60) === 1 ? "" : "s"}${sigma >= 60 ? `, give or take ${Math.round(sigma / 60)} minute${Math.round(sigma / 60) === 1 ? "" : "s"}` : ""}`;
   return `${route} train to ${index.stationName(dest)}, ${when}`;
 }
 
@@ -154,7 +154,7 @@ export default function StationBoard({ index, station, trains, now, alerts, dist
                     : a.atPlatform ? "at the platform"
                     : catchable === false ? "too soon to reach on foot"
                     : held !== null ? `held ${held} min · ${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stops away`}`
-                    : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${a.sigma ? ` · give or take ${Math.round(a.sigma)} s` : ""}`;
+                    : `${a.stopsAway === 0 ? "next stop" : `${a.stopsAway} stop${a.stopsAway > 1 ? "s" : ""} away`}${fmtSpread(a.sigma) ? ` · ${fmtSpread(a.sigma)}` : ""}`;
                 return (
                   <Row
                     key={a.id}
