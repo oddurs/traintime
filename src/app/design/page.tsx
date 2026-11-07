@@ -37,7 +37,7 @@ const LABELS = ["label", "label-2", "label-3", "on-accent"];
 const ACCENTS = ["accent", "accent-hover", "accent-fill", "green", "amber", "red", "glow"];
 const SPACE = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"];
 const RADII = ["r-inner", "r-chip", "r-card", "r-panel", "r-sheet"];
-const ICONS: IconName[] = ["magnifyingglass", "xmark", "star", "star.fill", "location", "chevron.right", "chevron.up", "chevron.down", "plus", "clock", "exclamationmark"];
+const ICONS: IconName[] = ["magnifyingglass", "xmark", "star", "star.fill", "location", "location.fill", "chevron.right", "chevron.up", "chevron.down", "plus", "clock", "exclamationmark"];
 
 function Swatches({ title, tokens, tall }: { title: string; tokens: string[]; tall?: boolean }) {
   return (

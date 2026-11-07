@@ -13,6 +13,7 @@
 export const PALETTE = {
   "--ground": "#000000",
   "--label": "#f5f5f7",
+  "--accent": "#0a84ff",
   "--map-casing": "#000000",
   "--map-station-fill": "#0b0b0d",
   "--map-station-edge": "#c9c9d2",

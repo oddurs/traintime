@@ -26,23 +26,3 @@ export function useTicker(clock: () => number, hz = 2): number {
   }, [clock, hz]);
   return now;
 }
-
-/** Persisted boolean, e.g. "has the legend been dismissed". */
-export function useStoredFlag(key: string, initial: boolean): [boolean, (v: boolean) => void] {
-  const [value, setValue] = useState(initial);
-  useEffect(() => {
-    let stored: boolean | null = null;
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw !== null) stored = raw === "1";
-    } catch {}
-    if (stored === null) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of a store that render cannot touch
-    setValue(stored);
-  }, [key]);
-  const set = (v: boolean) => {
-    setValue(v);
-    try { localStorage.setItem(key, v ? "1" : "0"); } catch {}
-  };
-  return [value, set];
-}

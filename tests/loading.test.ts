@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 import { loadPhase, loadingHint } from "../src/lib/loading";
 import { HOME, posterTransform, project } from "../src/lib/home";
-import { FIRST_PAINT_SCRIPT, LEGEND_KEY, PLACES_KEY, SAVED_HEIGHT_KEY } from "../src/lib/firstPaint";
+import { FIRST_PAINT_SCRIPT, PLACES_KEY, SAVED_HEIGHT_KEY } from "../src/lib/firstPaint";
 
 test("an open stream with no trains yet is connecting, not live with zero trains", () => {
   // es.onopen sets connected and clears the error before the first snapshot; that is not data.
@@ -42,11 +42,6 @@ function firstPaint(store: Record<string, string>, phone = false) {
   runInNewContext(FIRST_PAINT_SCRIPT, { document, localStorage, matchMedia: () => ({ matches: phone }), JSON });
   return { classes, props };
 }
-
-test("the first paint hides a legend dismissed on an earlier visit", () => {
-  assert.ok(firstPaint({ [LEGEND_KEY]: "1" }).classes.has("legend-dismissed"));
-  assert.ok(!firstPaint({}).classes.has("legend-dismissed"));
-});
 
 test("the first paint holds the saved list's last height, for the layout it is drawn in", () => {
   const store = { [PLACES_KEY]: JSON.stringify([{ id: "127", name: "Times Sq" }]), [SAVED_HEIGHT_KEY]: JSON.stringify({ phone: 96, wide: 120 }) };

@@ -16,6 +16,7 @@ export type IconName =
   | "star.fill"
   | "magnifyingglass"
   | "location"
+  | "location.fill"
   | "chevron.right"
   | "chevron.up"
   | "chevron.down"
@@ -72,10 +73,13 @@ export default function Icon({ name, size = "md", className }: Props) {
   if (name === "exclamationmark") {
     return <svg {...common}><circle cx="8" cy="8" r="6.2" /><path d={STROKE[name]} /></svg>;
   }
-  if (name === "location") {
-    // A heading arrow, filled: it means "you", and a filled shape reads as a position rather
-    // than an outline that could be mistaken for a control.
-    return <svg {...common} fill="currentColor" stroke="none"><path d="M14.2 2.2 2.4 7.1a.5.5 0 0 0 .05.94l4.3 1.2 1.2 4.3a.5.5 0 0 0 .94.05Z" /></svg>;
+  if (name === "location" || name === "location.fill") {
+    // The heading arrow Maps uses: outlined while it is a control you could press, filled once it
+    // is following you, because then it means "you" rather than "find me".
+    const d = "M14.2 2.2 2.4 7.1a.5.5 0 0 0 .05.94l4.3 1.2 1.2 4.3a.5.5 0 0 0 .94.05Z";
+    return name === "location.fill"
+      ? <svg {...common} fill="currentColor" stroke="none"><path d={d} /></svg>
+      : <svg {...common}><path d={d} /></svg>;
   }
   return <svg {...common}><path d={STROKE[name]} /></svg>;
 }
