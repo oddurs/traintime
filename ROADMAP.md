@@ -42,7 +42,7 @@ Make the drawn fan match the real one; the geometry turned out not to be the pro
 
 ## render-4 — Positions as arc-length
 
-`#####·····` 50% · 3 of 6 done
+`#######···` 67% · 4 of 6 done
 
 Give a train no position of its own, so it cannot leave its line.
 
@@ -51,15 +51,12 @@ Give a train no position of its own, so it cannot leave its line.
 - [ ] `0017` Resolve arc-length against the line vertex buffer on the GPU <sup>feature · p2</sup>
 - [ ] `0020` A train reads a smooth band where its line is drawn with a stepped one <sup>bug · p1</sup>
 
-### in progress
-
-- [ ] `0030` Colour: one system for the railway and the interface, grounded in the MTA's hues <sup>feature · p1</sup>
-
 ### done
 
 - [x] `0016` Make (segment, s) the wire format for a train position <sup>feature · p2</sup>
 - [x] `0028` Interface: map first, a swipe-up card, nearby trains and line health <sup>feature · p2</sup>
 - [x] `0029` Design system: a type scale that renders at its size, and two token layers <sup>feature · p1</sup>
+- [x] `0030` Colour: one system for the railway and the interface, grounded in the MTA's hues <sup>feature · p1</sup>
 
 ## Unscheduled
 
