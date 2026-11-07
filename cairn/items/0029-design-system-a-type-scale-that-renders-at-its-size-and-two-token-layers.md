@@ -3,10 +3,11 @@ id: 29
 uid: b4dd0bc8-8dfb-4e37-b047-be0057594fea
 title: 'Design system: a type scale that renders at its size, and two token layers'
 type: feature
-status: doing
+status: done
 milestone: render-4
 created: 2026-11-07
 updated: 2026-11-07
+closed_at: 2026-11-07
 priority: p1
 area: front-end
 effort: l
@@ -63,8 +64,12 @@ The token layer is one flat list. Semantic tokens (`--label-2`) hold literal col
 - [x] The audit fails a literal `font-weight`, `z-index` or `line-height`, a type step under 12 px, a breakpoint other than the declared one, a label under 4.5:1 on a surface, and an unused token.
 - [x] `Stack`, `Inline` and `Text` exist in `src/components/ui`, take only token values, and are used by Nearby, LinesCard and the panel foot.
 - [x] `/design` shows the type roles, both colour layers with contrast figures, the z layers and the governance rules.
-- [ ] `npm test`, lint, typecheck, `audit:design`, `audit:layout`, `audit:a11y` and `audit-ui` (desktop and phone) pass, and the live site is checked after the deploy.
+- [x] `npm test`, lint, typecheck, `audit:design`, `audit:layout`, `audit:a11y` and `audit-ui` (desktop and phone) pass, and the live site is checked after the deploy.
 
 ## 2026-11-07
 
 Measured on the local build, desktop panel, every text node: 12 px at the smallest (the counts under the bullets), 13 the footnotes, 15 the subtitles and controls, 17 the row titles, 20 the section headers. html computes 16 px; code 13 px. Before: 8.9, 9.75, 11.4, 12.2. Contrast: the gate found --label-3 on the search field at 3.87:1, and the standard system blue and red at 3.6 and 3.9 on a filled control; label-2/label-3 were lifted to #b4b4be/#9a9aa4 and text now uses Apple's increased-contrast blue and red, with the map's position dot keeping the standard blue as --map-you. Every new audit rule was proved by planting one violation of each and seeing it reported. Not built: Dialog, Menu, Tooltip, Toast, Checkbox, Radio — nothing in the app uses one, and the governance rules say a component waits for a real use. Not built: a light theme; the semantic layer is where it would go, but the basemap style is dark-only.
+
+## 2026-11-07
+
+Deployed as traintime-site ba94fb7c. Live desktop census: 12, 13, 15, 17, 20 px and nothing smaller; html 16 px; /design serves 200.
