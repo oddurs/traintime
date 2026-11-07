@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { NetworkIndex } from "@/lib/network";
 import { searchStations } from "@/lib/arrivals";
-import { Button, Field, Row } from "./ui";
+import { Field, IconButton, Row } from "./ui";
 import { BulletGroup } from "./brand";
 
 interface Props {
@@ -14,15 +14,14 @@ interface Props {
    */
   index: NetworkIndex | null;
   onPick: (stationId: string) => void;
-  onNearby: () => void;
-  nearby: boolean;
-  locating: boolean;
+  /** The field took focus: on a phone the card opens all the way, the way Maps does. */
+  onFocus?: () => void;
 }
 
 type Result = { id: string; name: string; routes: string[]; meters?: number };
 
-/** Station search with a "near me" shortcut. `/` focuses it from anywhere. */
-export default function SearchBox({ index, onPick, onNearby, nearby, locating }: Props) {
+/** Station search. `/` focuses it from anywhere. */
+export default function SearchBox({ index, onPick, onFocus }: Props) {
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
   const [open, setOpen] = useState(false);
@@ -73,22 +72,16 @@ export default function SearchBox({ index, onPick, onNearby, nearby, locating }:
     <Field
       value={q}
       onChange={(v) => { setQ(v); setCursor(0); setOpen(true); }}
-      placeholder="Search stations…"
+      placeholder="Search stations"
       ariaLabel="Search stations"
       icon="magnifyingglass"
       inputRef={inputRef}
       boxRef={boxRef}
-      onFocus={() => setOpen(true)}
+      onFocus={() => { setOpen(true); onFocus?.(); }}
       onKeyDown={onKeyDown}
-      accessory={
-        <Button
-          variant="ghost" on={nearby} onClick={onNearby} ariaPressed={nearby}
-          icon={nearby ? "location" : undefined}
-          title={nearby ? "Stop following my location" : "Show the station nearest me and keep it up to date"}
-        >
-          {locating ? "locating…" : nearby ? "following you" : "near me"}
-        </Button>
-      }
+      accessory={q ? (
+        <IconButton icon="xmark" ariaLabel="Clear search" onClick={() => { setQ(""); inputRef.current?.focus(); }} />
+      ) : undefined}
     >
       {open && q && !index && (
         <div className="popover" role="status"><div className="popover-empty">loading stations…</div></div>

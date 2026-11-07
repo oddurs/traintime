@@ -10,7 +10,7 @@ import { useTrainStream, type StreamMode } from "@/lib/useTrainStream";
 import { useReducedMotion, useTicker } from "@/lib/hooks";
 import { fetchAlerts, type AlertIndex } from "@/lib/alerts";
 import { useGeolocation, useWakeLock } from "@/lib/geolocation";
-import { nearestStations } from "@/lib/arrivals";
+import { nearbyStations, radiusMetres, type RadiusMin } from "@/lib/nearby";
 import { usePlaces } from "@/lib/places";
 import { readHash, writeHash } from "@/lib/urlState";
 import { asset } from "@/lib/basePath";
@@ -107,6 +107,7 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
   const [view, setView] = useState<View | undefined>(undefined);
   const [hydrated, setHydrated] = useState(false);
   const [nearby, setNearby] = useState(false);
+  const [radius, setRadius] = useState<RadiusMin>(10);
   const [destination, setDestination] = useState<string | undefined>(undefined);
   const positionsRef = useRef(new Map<string, TrainPosition>());
 
@@ -198,21 +199,21 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
     return () => window.removeEventListener("keydown", onKey);
   }, [follow]);
 
-  // Following the viewer's location: the nearest station's board is what someone standing on a
-  // platform actually wants. Any deliberate choice takes over and stops the following.
-  const nearest = useMemo(
-    () => (nearby && index && geo.lat !== undefined && geo.lon !== undefined
-      ? nearestStations(index, geo.lat, geo.lon, 1)[0]
-      : undefined),
-    [nearby, index, geo.lat, geo.lon],
+  /*
+   * What is arriving within a walk of the viewer, while they have asked to be located. It used to
+   * open the single nearest station and follow from one to the next, which answered "where is the
+   * closest platform" rather than "which trains can I catch".
+   */
+  const hereLat = nearby ? geo.lat : undefined;
+  const hereLon = nearby ? geo.lon : undefined;
+  const nearbyList = useMemo(
+    () => (hereLat !== undefined && hereLon !== undefined && index ? nearbyStations(index, trains, hereLat, hereLon, radiusMetres(radius)) : null),
+    [index, trains, hereLat, hereLon, radius],
   );
-  useEffect(() => {
-    if (!nearest) return;
-    /* eslint-disable react-hooks/set-state-in-effect -- responds to the device's position, an external signal */
-    setSelection((cur) => (cur.kind === "station" && cur.id === nearest.id ? cur : { kind: "station", id: nearest.id }));
-    setFocusKey((k) => k + 1);
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, [nearest]);
+  const nearbyArea = useMemo(
+    () => (hereLat !== undefined && hereLon !== undefined ? { lat: hereLat, lon: hereLon, radius: radiusMetres(radius) } : null),
+    [hereLat, hereLon, radius],
+  );
 
   // A commuter opens the app to see their own station. With a location, that is the nearest
   // saved one; without, the one they looked at last. Only when nothing was asked for by URL.
@@ -248,7 +249,6 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
       return s;
     });
     setFollow(false);
-    setNearby(false);
     setFocusKey((k) => k + 1);
   }, []);
 
@@ -279,16 +279,21 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
     return Math.hypot((st.lon - geo.lon) * 111_320 * cos, (st.lat - geo.lat) * 111_320);
   }, [selection, index, geo.lat, geo.lon]);
 
-  // Trains listed on the open station board get a ring on the map.
+  // Trains listed on the open station board get a ring on the map; with nothing open, the trains
+  // in the nearby list do, so the list and the map point at the same trains.
   const highlight = useMemo(() => {
-    if (selection.kind !== "station") return new Set<string>();
-    const target = selection.id;
     const ids = new Set<string>();
+    if (selection.kind === "none" && nearbyList) {
+      for (const s of nearbyList) for (const a of s.arrivals) ids.add(a.id);
+      return ids;
+    }
+    if (selection.kind !== "station") return ids;
+    const target = selection.id;
     for (const t of trains) {
       if (t.stops.some((s) => s.id.replace(/[NS]$/, "") === target) || t.nextStop.replace(/[NS]$/, "") === target) ids.add(t.id);
     }
     return ids;
-  }, [selection, trains]);
+  }, [selection, trains, nearbyList]);
 
   // Where the poster stands in for the map, which is home unless a shared link says otherwise.
   const poster = hydrated ? posterTransform(view) : "";
@@ -326,6 +331,7 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
         reducedMotion={reducedMotion}
         onReady={() => setMapDrawn(true)}
         onShown={() => setMapShown(true)}
+        nearby={nearbyArea}
       />}
       {(mapFailed || engineFailed) && (
         <div className="map-notice">
@@ -342,8 +348,11 @@ function App({ index, failed }: { index: NetworkIndex | null; failed?: () => voi
           visible={visible} onToggle={onToggle} onAll={onAll}
           showRibbons={showRibbons} onRibbons={setShowRibbons}
           mode={mode} onMode={setMode}
-          nearby={nearby} onNearby={() => setNearby((n) => !n)}
-          locating={geo.status === "asking"} distance={selectedDistance}
+          nearby={{
+            on: nearby, geo: geo.status, stations: nearbyList, radius, onRadius: setRadius,
+            onLocate: () => setNearby((n) => !n),
+          }}
+          distance={selectedDistance}
           destination={destination} onDestination={(id) => setDestination(id ?? undefined)}
           places={places} placesLoaded={placesLoaded} onToggleSave={togglePlace} isSaved={isSaved}
       />

@@ -59,7 +59,7 @@ const step=async(name,fn)=>{const before=problems.length; let note;
 
 await send("Page.navigate",{url:BASE+"/"}); await sleep(14000);
 
-await step("initial load", async()=>{ const r=await evalJs(`JSON.stringify({trains:document.querySelector(".status")?.innerText, map:!!document.querySelector(".maplibregl-canvas")})`); return r.value??r.error; });
+await step("initial load", async()=>{ const r=await evalJs(`JSON.stringify({status:document.querySelector(".map-badge")?.innerText, map:!!document.querySelector(".maplibregl-canvas")})`); return r.value??r.error; });
 await step("search + pick a station", async()=>{
   await evalJs(`(()=>{const i=document.querySelector(".field input");const s=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;s.call(i,"Union Sq");i.dispatchEvent(new Event("input",{bubbles:true}));})()`);
   await sleep(900);
@@ -75,6 +75,9 @@ await step("follow the train", async()=>{
   const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".detail-actions button")].find(x=>/follow/i.test(x.innerText)); if(!b) return "no follow"; b.click(); return b.innerText;})()`);
   await sleep(2500); const s=await evalJs(`document.querySelector(".detail-actions button")?.innerText`); return (r.value??r.error)+" -> "+(s.value??s.error);});
 await step("back to map", async()=>{const r=await evalJs(`(()=>{const b=document.querySelector(".detail .icon-btn:last-of-type"); if(b) b.click(); return "closed";})()`); await sleep(1500); return r.value??r.error;});
+await step("open the lines group", async()=>{
+  const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".row[aria-expanded]")].find(x=>/Lines on the map/.test(x.innerText)); if(!b) return "no lines row"; b.click(); return "opened";})()`);
+  await sleep(800); const n=await evalJs(`document.querySelectorAll(".routes .roundel").length`); return (r.value??r.error)+" | "+(n.value??n.error)+" toggles";});
 await step("toggle a route off and on", async()=>{
   await evalJs(`document.querySelectorAll(".routes .roundel")[0].click()`); await sleep(1200);
   const off=await evalJs(`JSON.stringify({hash:location.hash})`);
@@ -85,13 +88,13 @@ await step("solo a route (shift-click)", async()=>{
   await evalJs(`document.querySelectorAll(".routes .roundel")[3].dispatchEvent(new MouseEvent("click",{bubbles:true,shiftKey:true}))`);
   await sleep(2500); const r=await evalJs(`JSON.stringify({hash:location.hash, laneMode:window.__tt?.laneMode})`); return r.value??r.error;});
 await step("all / none", async()=>{
-  await evalJs(`[...document.querySelectorAll(".toolbar .btn")].find(b=>b.innerText==="none")?.click()`); await sleep(900);
-  const none=await evalJs(`JSON.stringify({trains:document.querySelector(".status")?.innerText})`);
-  await evalJs(`[...document.querySelectorAll(".toolbar .btn")].find(b=>b.innerText==="all")?.click()`); await sleep(900);
+  await evalJs(`[...document.querySelectorAll(".lines-tools .btn")].find(b=>b.innerText==="Hide all")?.click()`); await sleep(900);
+  const none=await evalJs(`JSON.stringify({lines:[...document.querySelectorAll(".row[aria-expanded]")].find(x=>/Lines on the map/.test(x.innerText))?.innerText.replace(/\\n/g," · ")})`);
+  await evalJs(`[...document.querySelectorAll(".lines-tools .btn")].find(b=>b.innerText==="Show all")?.click()`); await sleep(900);
   return (none.value??"");});
 await step("uncertainty toggle", async()=>{ await evalJs(`document.querySelector(".switch input")?.click()`); await sleep(800); await evalJs(`document.querySelector(".switch input")?.click()`); return "toggled";});
 await step("history panel", async()=>{
-  const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".toolbar .btn--ghost")].find(x=>/history/i.test(x.innerText)); if(!b) return "no history button"; b.click(); return "opened";})()`);
+  const r=await evalJs(`(()=>{const b=[...document.querySelectorAll(".sect-accessory .btn--ghost")].find(x=>/replay/i.test(x.innerText)); if(!b) return "no history button"; b.click(); return "opened";})()`);
   await sleep(4000);
   const d=await evalJs(`JSON.stringify({timeline:!!document.querySelector(".tl-bar"), bars:document.querySelectorAll(".tl-bar i").length, health:document.querySelectorAll(".health tbody tr").length})`);
   return (r.value??r.error)+" | "+(d.value??d.error);});

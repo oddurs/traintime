@@ -5,7 +5,7 @@
  * scripts/audit-design.ts fails the build if a component outside this directory renders a raw
  * <button>, <input> or <select>, or writes a colour or a font size of its own.
  */
-export { default as Button, IconButton } from "./Button";
+export { default as Button, IconButton, MapButton } from "./Button";
 export { default as Icon, type IconName } from "./Icon";
 export { List, Row } from "./List";
 export { default as Field } from "./Field";
@@ -18,3 +18,4 @@ export { default as Notice } from "./Notice";
 export { default as Select } from "./Select";
 export { default as Disclosure } from "./Disclosure";
 export { default as Callout } from "./Callout";
+export { default as Segmented } from "./Segmented";

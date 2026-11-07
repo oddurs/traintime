@@ -70,3 +70,24 @@ export function IconButton({ icon, onClick, on, title, ariaLabel, ariaPressed, s
     </button>
   );
 }
+
+interface MapButtonProps {
+  icon: IconName;
+  onClick: () => void;
+  on?: boolean;
+  ariaLabel: string;
+  ariaPressed?: boolean;
+  title?: string;
+}
+
+/** A control that floats over the map, on its own material, in the corner Maps puts them. */
+export function MapButton({ icon, onClick, on, ariaLabel, ariaPressed, title }: MapButtonProps) {
+  return (
+    <button
+      className={`map-btn${on ? " is-on" : ""}`} onClick={onClick} title={title}
+      aria-label={ariaLabel} aria-pressed={ariaPressed}
+    >
+      <Icon name={icon} size="lg" />
+    </button>
+  );
+}

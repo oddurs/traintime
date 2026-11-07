@@ -17,10 +17,12 @@ interface Props {
   departing?: boolean;
   /** Known to be uncatchable on foot: still true, but no longer an offer. */
   missed?: boolean;
+  /** Where a list holds many: a figure the size of the row, not the platform sign. */
+  compact?: boolean;
 }
 
-export default function Countdown({ seconds, here, departing, missed }: Props) {
-  const cls = ["clock", here && "clock--here", missed && "clock--missed"].filter(Boolean).join(" ");
+export default function Countdown({ seconds, here, departing, missed, compact }: Props) {
+  const cls = ["clock", compact && "clock--md", here && "clock--here", missed && "clock--missed"].filter(Boolean).join(" ");
   return (
     <span className={cls}>
       <b>{here ? (departing ? "go" : "now") : fmtMin(seconds)}</b>

@@ -143,37 +143,46 @@
    * larger on small screens — an override of the scale rather than a part of it.
    */
   /*
-   * One knob for reading distance. A phone is held at about 35 cm and a desktop screen sits at
-   * about 55 cm, which is why iOS sets its body text larger than macOS does for the same purpose.
+   * Two scales, the way Apple ships two: the macOS sizes for a pointer, here, and the iOS sizes
+   * for a finger, in the `pointer: coarse` block below. A phone is held at about 35 cm and a
+   * desktop screen sits at about 55 cm, so iOS sets a list row's title at 17 points where macOS
+   * sets it at 13. This used to be one scale multiplied by 1.12 on touch, which made the small
+   * steps too big and the large ones too small at once: a 12-point caption on a phone and a
+   * 17-point headline are not the same ratio apart as their desktop counterparts.
+   *
    * The scale asks about the pointer rather than the window: a narrow window on a desk is still a
-   * desk, and a touchscreen is still an arm's length away however wide it is. Every step is
-   * multiplied by it, so the whole scale moves together and the proportions never change — which
-   * is the difference between a scale that responds and a pile of media queries overriding it.
+   * desk, and a touch screen is still an arm's length away however wide it is.
    */
-  --type-scale: 1;
-  --t-clock: 700 calc(clamp(1.75rem, 0.4rem + 6cqi, 2.4rem) * var(--type-scale))/1 var(--font-signage);
+  --t-clock: 700 clamp(1.5rem, 0.4rem + 5cqi, 2rem)/1 var(--font-signage);
   --tr-clock: -0.024em;
-  --t-large: 700 calc(1.75rem * var(--type-scale))/1.14 var(--font-signage);
+  --t-large: 700 1.75rem/1.14 var(--font-signage);
   --tr-large: -0.022em;
-  --t-title: 700 calc(1.25rem * var(--type-scale))/1.2 var(--font-signage);
+  --t-title: 700 1.25rem/1.2 var(--font-signage);
   --tr-title: -0.018em;
-  --t-headline: 500 calc(0.9375rem * var(--type-scale))/1.3 var(--font-signage);
+  /* A section's header: the "Favourites" over a group in Maps, not a page heading. */
+  --t-section: 700 0.9375rem/1.25 var(--font-ui);
+  --tr-section: -0.01em;
+  --t-headline: 600 0.875rem/1.3 var(--font-signage);
   --tr-headline: -0.006em;
-  --t-body: 400 calc(0.8125rem * var(--type-scale))/1.45 var(--font-ui);
+  /* A number that is read before its label: a statistic, the countdown in a list of several. */
+  --t-figure: 700 1.0625rem/1.1 var(--font-signage);
+  --tr-figure: -0.016em;
+  --t-body: 400 0.8125rem/1.4 var(--font-ui);
   --tr-body: 0em;
-  --t-caption: 400 calc(0.75rem * var(--type-scale))/1.35 var(--font-ui);
+  --t-caption: 400 0.75rem/1.33 var(--font-ui);
   --tr-caption: -0.003em;
-  --t-micro: 590 calc(0.625rem * var(--type-scale))/1.3 var(--font-ui);
-  --tr-micro: 0.055em;
+  --t-micro: 590 0.6875rem/1.3 var(--font-ui);
+  --tr-micro: 0.04em;
   --t-code: 400 calc(0.75rem * var(--type-scale))/1.55 var(--font-mono);
   --tr-code: 0em;
 
   /* ---- Radii, continuous rather than circular wherever the shape is large. ---- */
   --r-inner: 6px;
   --r-chip: 8px;
+  --r-field: 10px;
   --r-card: 12px;
   --r-panel: 18px;
-  --r-sheet: 24px;
+  --r-sheet: 16px;
   --r-pill: 999px;
 
   /* ---- Elevation: three steps, so depth is a decision rather than a habit. ---- */
@@ -201,6 +210,8 @@
   --tap: 44px;              /* the smallest thing a finger is asked to hit */
   --control-h: 32px;        /* a button or field with a pointer on it */
   --control-h-sm: 28px;
+  --field-h: 34px;          /* the search field: Maps sets it shorter than a row */
+  --map-btn: 40px;          /* a floating control over the map */
   --icon: 16px;
   --icon-lg: 20px;
   --dot: 6px;
@@ -213,11 +224,12 @@
   --switch-h: 22px;
   --switch-knob: 18px;
   --grabber-w: 36px;
-  --panel-w: 336px;
+  --grabber-h: 5px;
+  --panel-w: 360px;
   --doc-w: 720px;
   --embed-w: 304px;
-  --sheet-half: 52vh;
-  --sheet-full: 88vh;
+  --sheet-half: 50dvh;
+  --sheet-full: 92dvh;
 
   /* ---- One easing and one duration scale, so everything that moves moves the same way. ---- */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
@@ -226,9 +238,19 @@
   --ambient: 1.4s;   /* a loop that is meant to be ignored, not watched */
 }
 
-/* Held at arm's length rather than across a desk: the whole scale steps up by one notch. */
+/* Held at arm's length rather than across a desk: the iOS sizes, and a finger's controls. */
 @media (pointer: coarse) {
-  :root { --type-scale: 1.12; }
+  :root {
+    --t-title: 700 1.375rem/1.18 var(--font-signage);
+    --t-section: 700 1.25rem/1.2 var(--font-ui);
+    --t-headline: 600 1.0625rem/1.29 var(--font-signage);
+    --t-figure: 700 1.25rem/1.1 var(--font-signage);
+    --t-body: 400 0.9375rem/1.33 var(--font-ui);
+    --t-caption: 400 0.8125rem/1.38 var(--font-ui);
+    --t-micro: 590 0.75rem/1.3 var(--font-ui);
+    --field-h: 38px;
+    --map-btn: 44px;
+  }
 }
 
 /* ===========================================================================
@@ -328,17 +350,25 @@ a { color: inherit; }
 
 /* ---- Field: one text input, with room for a leading icon and a trailing action ---- */
 .field { position: relative; }
+/*
+ * The search field, in the shape Maps gives it: a filled capsule-ish rectangle, shorter than a
+ * row, with a quiet glyph. Focus is the caret and nothing else — Maps draws no ring round a field
+ * that is already the only thing on the card.
+ */
 .field-row {
   display: flex; align-items: center; gap: var(--s2);
-  background: var(--fill); border-radius: var(--r-chip); padding: 0 var(--s3); min-height: var(--tap);
-  transition: box-shadow var(--fast) var(--ease);
+  background: var(--fill-2); border-radius: var(--r-field); padding: 0 var(--s2); min-height: var(--field-h);
+  transition: background var(--fast) var(--ease);
 }
-.field-row:focus-within { box-shadow: inset 0 0 0 var(--ring) var(--accent); }
-.field-icon { color: var(--label-3); flex: none; }
+.field-row:focus-within { background: var(--fill-3); }
+.field-icon { color: var(--label-2); flex: none; }
 .field input {
-  flex: 1; min-width: 0; background: none; border: none; padding: 0; border-radius: 0;
+  flex: 1; min-width: 0; background: none; border: none; padding: 0; border-radius: 0; align-self: stretch;
   color: var(--label); font: var(--t-body); letter-spacing: var(--tr-body); color-scheme: dark;
+  caret-color: var(--accent);
 }
+.field input::-webkit-search-cancel-button { display: none; }
+.field .icon-btn { width: var(--control-h-sm); height: var(--control-h-sm); }
 .field input::placeholder { color: var(--label-3); }
 .field input:focus { outline: none; }
 /* A field with no chrome around it, used where the container already provides one. */
@@ -399,18 +429,48 @@ a { color: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .row-trailing { flex: none; display: flex; align-items: center; gap: var(--s2); color: var(--label-3); font: var(--t-caption); letter-spacing: var(--tr-caption); font-variant-numeric: tabular-nums; }
-.row-disclosure { color: var(--label-3); flex: none; }
+.row-disclosure { color: var(--label-3); flex: none; transition: transform var(--fast) var(--ease); }
+/* A row that opens in place turns its chevron rather than pointing somewhere else. */
+.row.is-expanded .row-disclosure { transform: rotate(90deg); }
+/* A row that leads with an icon rather than a roundel: the glyph sits in a tinted square. */
+.row-glyph {
+  display: grid; place-items: center; flex: none; width: var(--bullet-lg); height: var(--bullet-lg);
+  border-radius: var(--r-inner); background: var(--accent-fill); color: var(--accent);
+}
+/* A plain, non-pressable row inside a list: a set of figures, a note. */
+.list-static { padding: var(--s3); }
 
 /* ---- Card: a raised, rounded container inside the panel ---- */
 .card { background: var(--fill); border-radius: var(--r-card); padding: var(--s3); }
 .card--flush { padding: 0; }
 
-/* ---- Section: a micro-caps header over a group ---- */
+/*
+ * ---- Section: a bold sentence-case header over a group, with room for a control. ----
+ *
+ * The header Maps sets over "Favourites" and "Recents": the label's own colour, a step above the
+ * rows, and a control at the trailing end when the group has one. It was micro-caps in tertiary
+ * grey, which is the system's voice for a table column, and read as fine print over the very
+ * things the card was for.
+ */
 .sect { display: flex; flex-direction: column; gap: var(--s2); }
-.sect-title {
-  margin: 0; font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase;
-  color: var(--label-3);
+.sect-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: var(--control-h); }
+.sect-title { margin: 0; font: var(--t-section); letter-spacing: var(--tr-section); color: var(--label); }
+.sect-accessory { flex: none; display: flex; align-items: center; }
+.sect-stack { display: flex; flex-direction: column; gap: var(--s3); }
+
+/* ---- Segmented control: one of a few, the iOS way ---- */
+.seg {
+  display: inline-grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: var(--s0);
+  padding: var(--s0); border-radius: var(--r-chip); background: var(--fill-2);
 }
+.seg-opt {
+  min-height: var(--control-h-sm); padding: 0 var(--s3); border: none; border-radius: var(--r-inner);
+  background: none; color: var(--label-2); cursor: pointer; white-space: nowrap;
+  font: var(--t-caption); letter-spacing: var(--tr-caption); font-weight: 590; font-variant-numeric: tabular-nums;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.seg-opt:hover { color: var(--label); }
+.seg-opt.is-on { background: var(--fill-3); color: var(--label); box-shadow: var(--shadow-1); }
 
 /* ---- Switch: the native toggle, in place of a checkbox ---- */
 .switch { display: inline-flex; align-items: center; gap: var(--s2); cursor: pointer; min-height: var(--control-h); color: var(--label-2); font: var(--t-caption); letter-spacing: var(--tr-caption); }
@@ -474,6 +534,9 @@ a { color: inherit; }
 }
 .clock--here b { font: var(--t-title); letter-spacing: var(--tr-micro); text-transform: uppercase; color: var(--green); }
 .clock--missed b { color: var(--label-3); }
+/* In a list of several stations the countdowns are many, so each is a figure rather than a sign. */
+.clock--md b { font: var(--t-figure); letter-spacing: var(--tr-figure); }
+.clock--md.clock--here b { font: var(--t-headline); letter-spacing: var(--tr-micro); text-transform: uppercase; }
 
 /* ===========================================================================
    Panel — the one piece of chrome the map is read through
@@ -486,9 +549,13 @@ a { color: inherit; }
  * bright coloured lines and white station labels is not a panel you can read. So the ground is
  * opaque by default and steps back to material only where `backdrop-filter` is supported.
  */
+/*
+ * The card. On a desktop it floats at the top left and is as tall as what is in it, up to the
+ * window — a map with a card on it, not a sidebar with a map beside it.
+ */
 .panel {
   position: absolute; top: var(--s3); left: var(--s3); z-index: 5;
-  width: var(--panel-w); max-height: calc(100vh - var(--s5));
+  width: var(--panel-w); max-height: calc(100dvh - var(--s5));
   background: var(--surface-solid);
   border-radius: var(--r-panel);
   box-shadow: var(--shadow-3), inset 0 0 0 var(--hairline) var(--edge);
@@ -500,7 +567,7 @@ a { color: inherit; }
   .panel { background: var(--mat-regular); backdrop-filter: var(--blur-regular); }
 }
 
-.panel-head { padding: var(--s4) var(--s4) var(--s3); flex: none; position: relative; }
+.panel-head { padding: var(--s3); flex: none; position: relative; display: flex; flex-direction: column; gap: var(--s2); }
 /* The scroll edge: a hairline that appears only once there is something above the fold. */
 .panel-head::after {
   content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: var(--hairline);
@@ -509,24 +576,74 @@ a { color: inherit; }
 .panel.is-scrolled .panel-head::after { opacity: 1; }
 .panel-scroll {
   flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-  padding: 0 var(--s4) var(--s4); display: flex; flex-direction: column; gap: var(--s4);
+  padding: var(--s1) var(--s3) var(--s3); display: flex; flex-direction: column; gap: var(--s5);
   scroll-behavior: smooth;
 }
+/* The card has nothing below its search field: no empty scroll area, no padding under nothing. */
+.panel-scroll:empty { display: none; }
+/* The fine print, at the end of the content rather than pinned under it. */
 .panel-foot {
-  flex: none; display: flex; align-items: center; gap: var(--s3); justify-content: space-between;
-  color: var(--label-3); border-top: var(--hairline) solid var(--separator);
-  padding: var(--s3) var(--s4); font: var(--t-caption); letter-spacing: var(--tr-caption);
+  display: flex; align-items: center; gap: var(--s3); justify-content: space-between; flex-wrap: wrap;
+  color: var(--label-3); padding: 0 var(--s1); font: var(--t-caption); letter-spacing: var(--tr-caption);
 }
 
-.title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
-.panel-head h1 { margin: 0; font: var(--t-title); letter-spacing: var(--tr-title); }
-.panel-head h1 a { text-decoration: none; }
-.status { display: flex; align-items: center; gap: var(--s2); color: var(--label-2); margin-top: var(--s2); font: var(--t-caption); letter-spacing: var(--tr-caption); font-variant-numeric: tabular-nums; }
 .muted { color: var(--label-2); }
 .hint { font: var(--t-caption); letter-spacing: var(--tr-caption); }
 .link-a { color: var(--label-3); text-decoration: none; }
 .link-a:hover { color: var(--label); }
 .grabber { display: none; }
+
+/*
+ * ---- The controls that float over the map. ----
+ *
+ * Where Maps puts them: the top trailing corner, out of the way of the card. A location button,
+ * and the state of the feed as a small badge under it — the one piece of status worth keeping on
+ * screen, and only as big as a word.
+ */
+.map-controls {
+  position: absolute; z-index: 4; top: calc(var(--s3) + env(safe-area-inset-top)); right: var(--s3);
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--s2);
+}
+.map-btn {
+  display: grid; place-items: center; width: var(--map-btn); height: var(--map-btn); padding: 0;
+  border: none; border-radius: var(--r-field); cursor: pointer; color: var(--accent);
+  background: var(--surface-solid); box-shadow: var(--shadow-2), inset 0 0 0 var(--hairline) var(--edge);
+  transition: transform var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.map-btn:active { transform: scale(0.94); }
+.map-btn.is-on { background: var(--accent); color: var(--on-accent); }
+.map-badge {
+  display: inline-flex; align-items: center; gap: var(--s1); padding: var(--s1) var(--s2);
+  border-radius: var(--r-pill); background: var(--surface-solid); color: var(--label-2);
+  box-shadow: var(--shadow-1), inset 0 0 0 var(--hairline) var(--edge);
+  font: var(--t-micro); letter-spacing: var(--tr-micro); text-transform: uppercase; font-variant-numeric: tabular-nums;
+}
+@supports (backdrop-filter: blur(1px)) {
+  .map-btn:not(.is-on), .map-badge { background: var(--mat-regular); backdrop-filter: var(--blur-regular); }
+}
+.map-badge i { width: var(--dot); height: var(--dot); border-radius: 50%; background: var(--label-3); flex: none; }
+.map-badge--live i { background: var(--green); }
+.map-badge--replay { color: var(--amber); }
+.map-badge--replay i { background: var(--amber); }
+.map-badge--wait i { animation: breathe var(--ambient) var(--ease) infinite alternate; }
+@keyframes breathe { from { opacity: 1; } to { opacity: 0.25; } }
+
+/*
+ * ---- Line status at a glance: four figures in one strip. ----
+ *
+ * The first thing the Lines group says is how the railway is doing, as numbers a rider reads in
+ * one look; the toggles that used to be the whole group are one row beneath them.
+ */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: var(--s2); }
+.stat { display: flex; flex-direction: column; gap: var(--s0); min-width: 0; }
+.stat b { font: var(--t-figure); letter-spacing: var(--tr-figure); color: var(--label); font-variant-numeric: tabular-nums; }
+.stat span { font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat.is-warn b { color: var(--amber); }
+.stat.is-bad b { color: var(--red); }
+.lines-body { display: flex; flex-direction: column; gap: var(--s4); padding: var(--s1) 0 0; }
+.lines-tools { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); flex-wrap: wrap; }
+/* A group inside a group: the header steps down to a row's size, so the outer one still leads. */
+.sect .sect .sect-title { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label-2); }
 
 /* ---- Route bullets ---- */
 /*
@@ -633,8 +750,9 @@ button.roundel:active { transform: scale(0.98); }
 .stripe-name { font: var(--t-headline); letter-spacing: var(--tr-headline); color: var(--label); flex: 1; min-width: 0; }
 .stripe-services { flex: none; }
 
-.routes { display: flex; flex-direction: column; gap: var(--s2); }
-.group { display: flex; flex-wrap: wrap; gap: var(--s2); }
+/* The toggles: one line of bullets per trunk, laid out as the map groups them. */
+.routes { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }
+.group { display: flex; flex-wrap: wrap; gap: var(--s1); }
 
 /* ---- Search ---- */
 .res-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--t-body); letter-spacing: var(--tr-body); }
@@ -643,8 +761,6 @@ button.roundel:active { transform: scale(0.98); }
 
 /* ---- Legend ---- */
 .legend { display: flex; flex-direction: column; gap: var(--s3); }
-/* Dismissed on an earlier visit: hidden from the first paint, not removed at hydration (firstPaint.ts). */
-.legend-dismissed .legend { display: none; }
 /* The saved list's space, held from the first paint until storage has been read (firstPaint.ts). */
 .saved-reserve { display: none; }
 .has-saved .saved-reserve {
@@ -755,7 +871,7 @@ button.roundel:active { transform: scale(0.98); }
 .health .num em { font-style: normal; color: var(--label-3); font: var(--t-micro); letter-spacing: var(--tr-micro); margin-left: var(--s1); }
 .health .num.worse { color: var(--red); }
 .health .wide { width: 42%; }
-.health .meter { display: inline-block; width: calc(100% - var(--s6)); margin-right: var(--s2); vertical-align: middle; }
+.health .meter { display: inline-block; width: var(--s7); margin-right: var(--s2); vertical-align: middle; }
 
 /* ===========================================================================
    MapLibre's own chrome, brought into the system
@@ -861,57 +977,46 @@ button.roundel:active { transform: scale(0.98); }
    Phones — the panel becomes a sheet
    =========================================================================== */
 
+/*
+ * The card that swipes up, the way Maps does it.
+ *
+ * Collapsed, it is a grabber and the search field and nothing else, so the map has the screen.
+ * The middle stop holds an answer — a station, a train, what is near you — and the top stop is
+ * for reading. The heights are the stylesheet's; the drag between them is Sheet.tsx's, which
+ * sets the height directly while a finger is on the card and hands it back to the stop on release.
+ */
 @media (max-width: 640px) {
   .panel.sheet {
-    top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 92vh;
+    top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: var(--sheet-full);
     border-radius: var(--r-sheet) var(--r-sheet) 0 0;
     background: var(--surface-solid);
-    transition: height var(--slow) var(--ease), transform var(--fast) var(--ease);
+    transition: height var(--slow) var(--ease);
     padding-bottom: env(safe-area-inset-bottom);
   }
   @supports (backdrop-filter: blur(1px)) {
     .panel.sheet { background: var(--mat-thick); backdrop-filter: var(--blur-thick); }
   }
-  .panel.sheet.peek { height: auto; }
+  /* The collapsed height is measured from the head (Sheet.tsx), so it can be animated to and from. */
+  .panel.sheet.peek { height: calc(var(--peek-h, auto) + env(safe-area-inset-bottom)); }
   .panel.sheet.half { height: var(--sheet-half); }
   .panel.sheet.full { height: var(--sheet-full); }
-  .panel.sheet .grabber { display: block; padding: var(--s3) 0 var(--s0); cursor: grab; touch-action: none; min-height: var(--tap); }
-  .panel.sheet .grabber i { display: block; width: var(--grabber-w); height: var(--s1); border-radius: var(--r-pill); background: var(--fill-3); margin: 0 auto; }
-  .panel.sheet .panel-head { padding-top: var(--s2); }
-  /*
-   * Once the sheet has an answer in it, the brand stands down. On a 390-point screen the title
-   * and the running train count were costing about seventy points above the station name — which
-   * is the difference between seeing your train and having to scroll for it.
-   */
-  .panel.sheet.has-answer .panel-head h1 { font: var(--t-caption); letter-spacing: var(--tr-caption); color: var(--label-3); }
-  .panel.sheet.has-answer .status { display: none; }
-  .panel.sheet.has-answer .panel-head { padding-bottom: var(--s2); }
-  /*
-   * Collapsed, the sheet shows the first answers and fades the rest away. Without this the list
-   * is simply cut through the middle of a row, which reads as a rendering fault rather than as
-   * "there is more here" — and a pinned footer under a sliced row makes it worse.
-   * The gradient is a mask: it is read for its alpha, so `black` here means "keep", not a colour.
-   */
-  .panel.sheet.peek .panel-scroll {
-    max-height: 28vh;
-    mask-image: linear-gradient(to bottom, black calc(100% - var(--s5)), transparent);
-  }
-  .panel.sheet.peek .routes, .panel.sheet.peek .legend, .panel.sheet.peek .history, .panel.sheet.peek .alerts-section { display: none; }
-  /* In the collapsed state the answer comes first; search moves below it, a drag away. */
-  .panel.sheet .panel-scroll { display: flex; flex-direction: column; }
-  .panel.sheet .board, .panel.sheet .detail { order: 1; }
-  .panel.sheet .field { order: 2; }
-  .panel.sheet .routes, .panel.sheet .legend, .panel.sheet .toolbar, .panel.sheet .history, .panel.sheet .alerts-section { order: 3; }
-  .panel.sheet .panel-foot { padding-bottom: calc(var(--s3) + env(safe-area-inset-bottom)); }
-  .panel.sheet.peek .board-group + .board-group { display: none; }
+  .panel.sheet.is-dragging { transition: none; }
+  .panel.sheet.peek .panel-scroll { visibility: hidden; }
+  /* The whole head is the handle: a finger anywhere above the content moves the card. */
+  .sheet-handle { touch-action: none; flex: none; }
+  .panel.sheet .grabber { display: block; padding: var(--s1) 0 0; cursor: grab; }
+  .panel.sheet .grabber i { display: block; width: var(--grabber-w); height: var(--grabber-h); border-radius: var(--r-pill); background: var(--fill-3); margin: 0 auto; }
+  .panel.sheet .panel-head { padding: var(--s2) var(--s4) var(--s3); }
+  .panel.sheet .panel-scroll { padding: var(--s1) var(--s4) var(--s5); }
   .maplibregl-ctrl-bottom-right .maplibregl-ctrl-group { display: none; }
-  .maplibregl-ctrl-bottom-right { bottom: var(--s1); }
-  .row { padding: var(--s3) var(--s2); }
+  /* Above the collapsed card, so the attribution is never under it. */
+  .maplibregl-ctrl-bottom-right { bottom: calc(var(--s8) + var(--s5) + env(safe-area-inset-bottom)); }
 
   /* Touch targets: at least 44px on the short side for anything you can press. */
   .panel.sheet .btn, .panel.sheet .icon-btn, .panel.sheet .switch { min-height: var(--tap); }
   .panel.sheet .icon-btn { min-width: var(--tap); width: var(--tap); }
-  .panel.sheet .panel-head h1 a { display: inline-flex; align-items: center; min-height: var(--tap); }
+  /* Inside the field the field is the target: a 44-point clear button would make it taller. */
+  .panel.sheet .field .icon-btn { min-width: 0; min-height: 0; width: var(--control-h-sm); height: var(--control-h-sm); }
   .panel.sheet .panel-foot a { display: inline-flex; align-items: center; min-height: var(--tap); }
 }
 

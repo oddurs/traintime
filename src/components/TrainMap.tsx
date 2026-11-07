@@ -124,6 +124,28 @@ interface Props {
   onReady?: () => void;
   /** Called once, when the map has faded in: its lines are drawn and the basemap is under them. */
   onShown?: () => void;
+  /** Where the viewer is and how far they will walk: drawn as a dot inside a circle. */
+  nearby?: { lat: number; lon: number; radius: number } | null;
+}
+
+/** A circle on the ground, as a polygon: MapLibre has no geographic circle of its own. */
+function circle(lat: number, lon: number, metres: number, steps = 72): GeoJSON.Feature<GeoJSON.Polygon> {
+  const cos = Math.cos((lat * Math.PI) / 180);
+  const ring: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * 2 * Math.PI;
+    ring.push([lon + (Math.cos(a) * metres) / (111_320 * cos), lat + (Math.sin(a) * metres) / 111_320]);
+  }
+  return { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } };
+}
+
+/**
+ * Where a framed point should sit on a phone: in the part of the map the half-open card leaves
+ * showing, not at the centre of a screen whose lower half the card is covering.
+ */
+function phoneOffset(map: MapLibreMap): [number, number] {
+  const { width, height } = map.getCanvas().getBoundingClientRect();
+  return width <= 640 ? [0, -height / 4] : [0, 0];
 }
 
 const EMPTY: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -208,7 +230,7 @@ function applyVisibilityFactory(applied: { scale: number | null; served: string 
 
 export default function TrainMap(props: Props) {
   const { index, statesRef, positionsRef, clock, speed, visibleRoutes, showRibbons, selection, onSelect,
-    follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal, onReady, onShown } = props;
+    follow, onFollowEnd, highlight, focusKey, fitRoute, onView, reducedMotion, minimal, onReady, onShown, nearby } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -580,6 +602,18 @@ export default function TrainMap(props: Props) {
       map.addSource("trains", { type: "geojson", data: EMPTY });
       map.addSource("train-stacks", { type: "geojson", data: EMPTY });
       map.addSource("focus", { type: "geojson", data: EMPTY });
+      map.addSource("nearby", { type: "geojson", data: EMPTY });
+      map.addSource("you", { type: "geojson", data: EMPTY });
+
+      // The walking radius, under the lines: it is the ground the list is about, not a mark on it.
+      map.addLayer({
+        id: "nearby-fill", type: "fill", source: "nearby",
+        paint: { "fill-color": paint("--accent"), "fill-opacity": 0.08 },
+      });
+      map.addLayer({
+        id: "nearby-edge", type: "line", source: "nearby",
+        paint: { "line-color": paint("--accent"), "line-opacity": 0.55, "line-width": 1.5 },
+      });
 
       /*
        * The weave, drawn by us.
@@ -711,6 +745,19 @@ export default function TrainMap(props: Props) {
         },
       });
 
+      // You, as Maps draws you: a blue dot ringed in white, with a soft halo, over everything.
+      map.addLayer({
+        id: "you-halo", type: "circle", source: "you",
+        paint: { "circle-radius": 18, "circle-color": paint("--accent"), "circle-opacity": 0.18 },
+      });
+      map.addLayer({
+        id: "you", type: "circle", source: "you",
+        paint: {
+          "circle-radius": 7, "circle-color": paint("--accent"),
+          "circle-stroke-color": paint("--ink-light"), "circle-stroke-width": 2.5,
+        },
+      });
+
       const cursor = (on: boolean) => () => (map.getCanvas().style.cursor = on ? "pointer" : "");
       for (const id of ["stations", "station-labels"]) {
         map.on("mouseenter", id, cursor(true));
@@ -822,7 +869,7 @@ export default function TrainMap(props: Props) {
       const s = index.station(selection.id);
       if (s) {
         focus?.setData({ type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [s.lon, s.lat] } }] });
-        const opts = { center: [s.lon, s.lat] as [number, number], zoom: Math.max(map.getZoom(), 13.5) };
+        const opts = { center: [s.lon, s.lat] as [number, number], zoom: Math.max(map.getZoom(), 13.5), offset: phoneOffset(map) };
         if (reducedMotion) map.jumpTo(opts); else map.flyTo({ ...opts, duration: 900, essential: true });
       }
       return;
@@ -831,12 +878,50 @@ export default function TrainMap(props: Props) {
     if (selection.kind === "train") {
       const p = positionsRef.current.get(selection.id);
       if (p) {
-        const opts = { center: [p.lon, p.lat] as [number, number], zoom: Math.max(map.getZoom(), 13) };
+        const opts = { center: [p.lon, p.lat] as [number, number], zoom: Math.max(map.getZoom(), 13), offset: phoneOffset(map) };
         if (reducedMotion) map.jumpTo(opts); else map.flyTo({ ...opts, duration: 900, essential: true });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selection.kind, selId, focusKey, index]);
+
+  // --- where you are, and how far you will walk
+  const nearbyKey = nearby ? `${nearby.radius}` : "";
+  const framed = useRef("");
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !layersReady) return;
+    const area = map.getSource("nearby") as GeoJSONSource | undefined;
+    const you = map.getSource("you") as GeoJSONSource | undefined;
+    if (!nearby) {
+      area?.setData(EMPTY);
+      you?.setData(EMPTY);
+      framed.current = "";
+      return;
+    }
+    const ring = circle(nearby.lat, nearby.lon, nearby.radius);
+    area?.setData({ type: "FeatureCollection", features: [ring] });
+    you?.setData({ type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [nearby.lon, nearby.lat] } }] });
+    // Frame the circle when it first appears and when the radius changes — not every time the
+    // position updates, which would take the map away from someone who had moved it.
+    if (framed.current === nearbyKey) return;
+    framed.current = nearbyKey;
+    const b = new maplibregl.LngLatBounds();
+    for (const p of ring.geometry.coordinates[0]) b.extend(p as [number, number]);
+    const { width, height } = map.getCanvas().getBoundingClientRect();
+    const narrow = width <= 640;
+    const pad = (v: number, extent: number) => Math.max(16, Math.min(v, extent / 2 - 40));
+    map.fitBounds(b, {
+      padding: {
+        top: pad(64, height),
+        bottom: pad(narrow ? height * 0.5 + 48 : 48, height),
+        left: pad(narrow ? 24 : 384, width),
+        right: pad(narrow ? 24 : 64, width),
+      },
+      maxZoom: 16,
+      duration: reducedMotion ? 0 : 900,
+    });
+  }, [nearby, nearbyKey, layersReady, reducedMotion]);
 
   // --- zoom to a soloed route
   useEffect(() => {
