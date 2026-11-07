@@ -3,10 +3,11 @@ id: 30
 uid: df1896dc-d342-4ab9-99b7-30b169a28005
 title: 'Colour: one system for the railway and the interface, grounded in the MTA''s hues'
 type: feature
-status: doing
+status: done
 milestone: render-4
 created: 2026-11-07
 updated: 2026-11-07
+closed_at: 2026-11-07
 priority: p1
 area: front-end
 effort: m
@@ -57,8 +58,12 @@ On one screen the panel and the map read as two systems.
 - [x] `network.json` and `network-lite.json` carry no colour, and the map, the bullets and the poster read their colours from the palette.
 - [x] `npx tsx scripts/build-palette.ts --check` passes, and `tests/palette.test.ts` fails when the generated layer is stale.
 - [x] `/design` shows the ramps beside the MTA's printed colours, which step each line is drawn in, and each line's contrast.
-- [ ] Tests, lint, typecheck, `audit:design`, `audit:layout`, `audit:a11y` and `audit-ui` (desktop and phone) pass, and the live site is checked after the deploy.
+- [x] Tests, lint, typecheck, `audit:design`, `audit:layout`, `audit:a11y` and `audit-ui` (desktop and phone) pass, and the live site is checked after the deploy.
 
 ## 2026-11-07
 
 Line contrast, printed → drawn (on black / letter): 7 Av 5.2/4.1 → 5.6/3.7; Lexington 5.2/4.0 → 4.8/4.4; Flushing 4.1/5.1 → 4.0/5.3; 8 Av 2.1/9.8 → 4.4/4.8 (one blue now, the separate line colour is gone); 6 Av 7.1/3.0 → 5.8/3.6; Broadway 13.8/13.8 → 14.1/14.1; Crosstown 9.1/2.3 → 6.6/3.2; Nassau 4.3/4.9 → 4.4/4.7; Canarsie 8.9/2.4 → 5.8/3.7; Shuttle 5.4/3.9 → 4.2/5.0; SIR 4.5/4.7 → 6.3/3.4. The stripped network files are byte-identical to a JS re-serialisation of the old ones minus the three colour fields, so no geometry changed and the GTFS was not re-fetched.
+
+## 2026-11-07
+
+Deployed as traintime-site f4d30f6a. Live: network-lite.json carries no colour fields; poster.svg strokes the 8 Av in #336dde; the page resolves --trunk-8av #336dde, --accent #71a3ff, --bad #f53d35, --warn #e5b800, and bullets render in the new steps. The poller does not read line colours, so it was not redeployed.
